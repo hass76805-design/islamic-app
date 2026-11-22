@@ -120,15 +120,21 @@ export interface StoryEntry {
   lessonAr: string;
 }
 
-export interface ScholarLecture {
+export interface ScholarVideo {
+  videoId: string;
+  titleAr: string;
+  duration: string;
+  thumbnail: string;
+}
+
+export interface ScholarProfile {
   id: string;
-  scholarNameAr: string;
-  scholarTitleAr: string;
-  lectureTitleAr: string;
-  durationAr: string;
+  number: number;
+  nameAr: string;
+  fullNameAr: string;
   categoryAr: string;
-  transcriptAr: string;
-  keyPointsAr: string[];
+  avatarUrl: string;
+  videos: ScholarVideo[];
 }
 
 export type CalculationMethodId =

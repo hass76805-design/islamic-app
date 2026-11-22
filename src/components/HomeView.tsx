@@ -275,8 +275,8 @@ export const HomeView: React.FC<HomeViewProps> = ({
     },
     {
       id: 'scholars',
-      titleAr: 'محاضرات وخطب 20 عالمًا',
-      descAr: 'الشعراوي وكشك وابن عثيمين و17 عالمًا — دروس مكتوبة',
+      titleAr: 'محاضرات فيديو 30 شيخًا',
+      descAr: '300 فيديو يوتيوب لـ 30 شيخًا من العالم مع التحميل أوفلاين',
       icon: <Mic className="h-5 w-5 text-[#C9A227]" />,
       onClick: () => onOpenMoreSubPage('scholars'),
     },

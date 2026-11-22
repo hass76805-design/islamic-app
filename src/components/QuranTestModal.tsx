@@ -350,7 +350,6 @@ export const QuranTestModal: React.FC<QuranTestModalProps> = ({
 
   const recRef = useRef<SpeechRecLike | null>(null);
   const listeningRef = useRef(false);
-  const restartTimerRef = useRef<number | null>(null);
   const cueTimerRef = useRef<number | null>(null);
   const processedPerResultRef = useRef<Record<number, number>>({});
   const wordsBoxScrollRef = useRef<HTMLDivElement | null>(null);
@@ -417,10 +416,6 @@ export const QuranTestModal: React.FC<QuranTestModalProps> = ({
   }, [revealedWordItems.length]);
 
   const stopLoops = useCallback(() => {
-    if (restartTimerRef.current !== null) {
-      window.clearTimeout(restartTimerRef.current);
-      restartTimerRef.current = null;
-    }
     if (cueTimerRef.current !== null) {
       window.clearTimeout(cueTimerRef.current);
       cueTimerRef.current = null;
@@ -601,17 +596,6 @@ export const QuranTestModal: React.FC<QuranTestModalProps> = ({
     setMicError(null);
     setCuePlaying(false);
 
-    if (restartTimerRef.current !== null) {
-      window.clearTimeout(restartTimerRef.current);
-      restartTimerRef.current = null;
-    }
-
-    const isMobileUA =
-      typeof navigator !== 'undefined' &&
-      /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
-        navigator.userAgent,
-      );
-
     const SpeechRec =
       (window as unknown as {SpeechRecognition?: new () => SpeechRecLike})
         .SpeechRecognition ||
@@ -627,130 +611,98 @@ export const QuranTestModal: React.FC<QuranTestModalProps> = ({
       return;
     }
 
-    try {
-      recRef.current?.stop();
-    } catch {
-      // ignore
+    // Avoid recreating/stopping if already actively listening once
+    if (listeningRef.current && recRef.current) {
+      return;
     }
 
-    const bindHandlers = (rec: SpeechRecLike) => {
-      rec.lang = 'ar-SA';
-      rec.continuous = !isMobileUA;
-      rec.interimResults = true;
+    const rec = new SpeechRec();
+    rec.lang = 'ar-SA';
+    rec.continuous = true;
+    rec.interimResults = true;
 
-      rec.onaudiostart = () => {
-        setMicPermissionState('granted');
-      };
+    rec.onaudiostart = () => {
+      setMicPermissionState('granted');
+    };
 
-      rec.onresult = (e) => {
-        setMicPermissionState('granted');
-        let fullTranscript = '';
-        for (let i = 0; i < e.results.length; i++) {
-          const segment = e.results[i];
-          const segText = segment[0]?.transcript || '';
-          if (segText) {
-            fullTranscript += (fullTranscript ? ' ' : '') + segText;
+    rec.onresult = (e) => {
+      setMicPermissionState('granted');
+      let fullTranscript = '';
+      for (let i = 0; i < e.results.length; i++) {
+        const segment = e.results[i];
+        const segText = segment[0]?.transcript || '';
+        if (segText) {
+          fullTranscript += (fullTranscript ? ' ' : '') + segText;
+        }
+        if (i < e.resultIndex) continue;
+
+        const tokens = segText.trim().split(/\s+/).filter(Boolean);
+        const already = processedPerResultRef.current[i] || 0;
+
+        if (segment.isFinal) {
+          if (tokens.length > already) {
+            processWords(tokens.slice(already));
+            processedPerResultRef.current[i] = tokens.length;
           }
-          if (i < e.resultIndex) continue;
-
-          const tokens = segText.trim().split(/\s+/).filter(Boolean);
-          const already = processedPerResultRef.current[i] || 0;
-
-          if (segment.isFinal) {
-            if (tokens.length > already) {
-              processWords(tokens.slice(already));
-              processedPerResultRef.current[i] = tokens.length;
-            }
-          } else if (tokens.length > already) {
-            // Confirm completed earlier words in interim stream immediately
-            if (tokens.length - 1 > already) {
-              processWords(tokens.slice(already, tokens.length - 1));
-              processedPerResultRef.current[i] = tokens.length - 1;
-            }
-            // Instant green confirmation on matching trailing word
-            const snap = stateRef.current;
-            const currentAlready = processedPerResultRef.current[i] || 0;
-            if (
-              tokens.length > currentAlready &&
-              snap.finishedScore === null
-            ) {
-              const targetAyah = preparedAyahs[snap.ayahIdx];
-              const expected = targetAyah?.tokens[snap.wordIdx];
-              const trailingToken = tokens[tokens.length - 1];
-              if (expected && trailingToken) {
-                const check = compareArabicWords(
-                  trailingToken,
-                  expected.norm,
-                  expected.hamzaNorm,
-                  expected.altVariants,
-                );
-                if (check.isMatch) {
-                  processWords([trailingToken]);
-                  processedPerResultRef.current[i] = tokens.length;
-                }
+        } else if (tokens.length > already) {
+          // Confirm completed earlier words in interim stream immediately
+          if (tokens.length - 1 > already) {
+            processWords(tokens.slice(already, tokens.length - 1));
+            processedPerResultRef.current[i] = tokens.length - 1;
+          }
+          // Instant green confirmation on matching trailing word
+          const snap = stateRef.current;
+          const currentAlready = processedPerResultRef.current[i] || 0;
+          if (
+            tokens.length > currentAlready &&
+            snap.finishedScore === null
+          ) {
+            const targetAyah = preparedAyahs[snap.ayahIdx];
+            const expected = targetAyah?.tokens[snap.wordIdx];
+            const trailingToken = tokens[tokens.length - 1];
+            if (expected && trailingToken) {
+              const check = compareArabicWords(
+                trailingToken,
+                expected.norm,
+                expected.hamzaNorm,
+                expected.altVariants,
+              );
+              if (check.isMatch) {
+                processWords([trailingToken]);
+                processedPerResultRef.current[i] = tokens.length;
               }
             }
           }
         }
-        setLiveTranscript(fullTranscript.trim());
-      };
+      }
+      setLiveTranscript(fullTranscript.trim());
+    };
 
-      rec.onerror = (err) => {
-        if (err.error === 'no-speech' || err.error === 'aborted') {
-          return;
-        }
-        if (
-          err.error === 'not-allowed' ||
-          err.error === 'service-not-allowed'
-        ) {
-          setMicPermissionState('denied');
-          setShowTypingBar(true);
-          setMicError('يرجى السماح بالميكروفون أو الكتابة أدناه للتصحيح.');
-          releaseMic();
-        } else if (err.error === 'audio-capture') {
-          setMicError('تأكد من اتصال الميكروفون ثم اضغط مرة أخرى.');
-        }
-      };
+    rec.onerror = (err) => {
+      if (err.error === 'no-speech' || err.error === 'aborted') {
+        return;
+      }
+      if (
+        err.error === 'not-allowed' ||
+        err.error === 'service-not-allowed'
+      ) {
+        setMicPermissionState('denied');
+        setShowTypingBar(true);
+        setMicError('يرجى السماح بالميكروفون أو الكتابة أدناه للتصحيح.');
+        listeningRef.current = false;
+        setListening(false);
+      } else if (err.error === 'audio-capture') {
+        setMicError('تأكد من اتصال الميكروفون ثم اضغط مرة أخرى.');
+      }
+    };
 
-      // Keep listening continuously without stopping until user taps "إنهاء القراءة"
-      rec.onend = () => {
-        if (!listeningRef.current) return;
-        processedPerResultRef.current = {};
-        if (restartTimerRef.current !== null) {
-          window.clearTimeout(restartTimerRef.current);
-        }
-        restartTimerRef.current = window.setTimeout(() => {
-          if (!listeningRef.current) return;
-          try {
-            const fresh = new SpeechRec();
-            bindHandlers(fresh);
-            recRef.current = fresh;
-            fresh.start();
-          } catch {
-            try {
-              rec.start();
-            } catch {
-              // Retry once more silently after 250ms so user's continuous session doesn't drop
-              restartTimerRef.current = window.setTimeout(() => {
-                if (!listeningRef.current) return;
-                try {
-                  const retry = new SpeechRec();
-                  bindHandlers(retry);
-                  recRef.current = retry;
-                  retry.start();
-                } catch {
-                  releaseMic();
-                }
-              }, 250);
-            }
-          }
-        }, 70);
-      };
+    // Single continuous session: never auto-restart in onend (prevents repeated mic beep sound)
+    rec.onend = () => {
+      listeningRef.current = false;
+      setListening(false);
     };
 
     try {
-      const rec = new SpeechRec();
-      bindHandlers(rec);
       processedPerResultRef.current = {};
       recRef.current = rec;
       listeningRef.current = true;
@@ -758,9 +710,11 @@ export const QuranTestModal: React.FC<QuranTestModalProps> = ({
       setMicPermissionState('granted');
       rec.start();
     } catch {
+      listeningRef.current = false;
+      setListening(false);
       setShowTypingBar(true);
     }
-  }, [preparedAyahs, processWords, releaseMic]);
+  }, [preparedAyahs, processWords]);
 
   // Tap gold "ابدأ" button -> Real male Sheikh offline MP3 says "ابدأ القراءة" -> Mic starts right after
   const handleStartWithSheikhCue = useCallback(() => {
@@ -980,7 +934,7 @@ export const QuranTestModal: React.FC<QuranTestModalProps> = ({
   return (
     <div
       dir="rtl"
-      className="fixed inset-y-0 left-1/2 z-50 flex h-dvh w-full max-w-[400px] -translate-x-1/2 flex-col overflow-hidden overscroll-none touch-none select-none border-x border-[#C9A227]/60 bg-[#000000] text-white"
+      className="fixed inset-y-0 left-1/2 z-50 flex h-dvh w-full max-w-[400px] -translate-x-1/2 flex-col overflow-y-auto border-x border-[#C9A227]/60 bg-[#000000] text-white"
     >
       {/* FIXED COMPACT TOP HEADER: Back | Surah | Timer | فهرس | بحث */}
       <header className="flex shrink-0 items-center justify-between gap-1.5 border-b border-[#C9A227]/40 bg-[#050401] px-2.5 py-2">

@@ -57,7 +57,7 @@ export const DreamsView: React.FC = () => {
             </div>
           </div>
 
-          <div className="relative w-full sm:w-72">
+          <div className="relative w-full">
             <Search className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#C9A227]" />
             <input
               type="text"

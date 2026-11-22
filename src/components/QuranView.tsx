@@ -742,7 +742,7 @@ export const QuranView: React.FC<QuranViewProps> = ({
                   )}
 
                   <div
-                    className="font-quran select-none text-justify leading-[2.5] tracking-normal text-slate-900 dark:text-white"
+                    className="font-quran text-justify leading-[2.5] tracking-normal text-slate-900 dark:text-white"
                     style={{fontSize: `${fontSize}px`}}
                   >
                     {ayahs.map((ayah) => {

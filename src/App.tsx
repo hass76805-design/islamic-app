@@ -26,6 +26,7 @@ import {
   ADHAN_VOICES_9,
   EID_TAKBEERAT_VOICES_3,
   FRIDAY_KAHF_VOICES_3,
+  getAyahAudioUrl,
   IQAMAH_VOICES_3,
   POST_PRAYER_AZKAR_AUDIO_URLS,
   PRE_ADHAN_VOICES_3,
@@ -50,6 +51,7 @@ import {
 } from './types';
 import {pushNavigationState, setRootBackHandler} from './utils/backNavigation';
 import {getDateKey, getHijriParts} from './utils/hijri';
+import {cacheBatchUrls} from './utils/offlineAudioCache';
 import {
   computeDailyPrayerData,
   DEFAULT_PRAYER_OFFSETS,
@@ -236,6 +238,25 @@ function AppContent({
     return () => setRootBackHandler(null);
   }, []);
 
+  // Quietly pre-warm Al-Fatihah recitation audio + core Azkar MP3s once online after splash
+  const prewarmedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (showSplash || typeof navigator === 'undefined' || !navigator.onLine) {
+      return;
+    }
+    const reciterKey = settings.preferredReciter;
+    if (prewarmedRef.current === reciterKey) return;
+    prewarmedRef.current = reciterKey;
+
+    const timer = window.setTimeout(() => {
+      const urls = [1, 2, 3, 4, 5, 6, 7].map((ayah) =>
+        getAyahAudioUrl(reciterKey, 1, ayah),
+      );
+      void cacheBatchUrls(urls);
+    }, 2500);
+    return () => window.clearTimeout(timer);
+  }, [showSplash, settings.preferredReciter]);
+
   const showSystemNotification = useCallback(
     (title: string, body: string, tag: string) => {
       if (
@@ -355,7 +376,11 @@ function AppContent({
           mode: isIqamahMode ? 'iqamah' : 'adhan',
         });
       } else {
-        setAdhanBanner({text: 'تنبيه المؤذن الإلكتروني — حان وقت الصلاة'});
+        setAdhanBanner({
+          text: prayerParam
+            ? `تنبيه المؤذن الإلكتروني — ${prayerParam}`
+            : 'تنبيه المؤذن الإلكتروني — حان وقت الذكر أو الصلاة',
+        });
         playManagedAudio(playAlertUrl);
       }
       window.history.replaceState({}, '', window.location.pathname);
@@ -391,20 +416,33 @@ function AppContent({
             mode: isIqamahMode ? 'iqamah' : 'adhan',
           });
         } else {
-          setAdhanBanner({text: 'الأذان الإلكتروني — حان وقت الصلاة'});
+          setAdhanBanner({
+            text: data.title || 'الأذان الإلكتروني — حان وقت التنبيه',
+          });
           if (data.audioUrl) {
             playManagedAudio(data.audioUrl);
           }
         }
       }
     };
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        navigator.serviceWorker.ready
+          .then((reg) => {
+            reg.active?.postMessage({type: 'CHECK_DUE_ADHAN_ALERTS'});
+          })
+          .catch(() => {});
+      }
+    };
     navigator.serviceWorker.addEventListener('message', onSwMessage);
+    document.addEventListener('visibilitychange', onVisibility);
     return () => {
       navigator.serviceWorker.removeEventListener('message', onSwMessage);
+      document.removeEventListener('visibilitychange', onVisibility);
     };
   }, [playManagedAudio]);
 
-  // Sync future Adhan/Pre-Adhan/Iqamah alerts to Service Worker for background execution
+  // Sync Today + Tomorrow Adhan, Pre-Adhan, Iqamah, Tawasih, Azkar, Kahf & Eid alerts to Service Worker + Background Sync
   const scheduleDateKey = getDateKey(now);
   useEffect(() => {
     if (
@@ -414,15 +452,6 @@ function AppContent({
     ) {
       return;
     }
-    const baseDate = new Date();
-    const {schedule} = computeDailyPrayerData(
-      location.latitude,
-      location.longitude,
-      baseDate,
-      settings.calculationMethod,
-      settings.madhab,
-      settings.prayerOffsets,
-    );
 
     const activePreSound =
       PRE_ADHAN_VOICES_3.find(
@@ -431,6 +460,16 @@ function AppContent({
     const activeIqamahVoice =
       IQAMAH_VOICES_3.find((iq) => iq.id === settings.preferredIqamah) ||
       IQAMAH_VOICES_3[0];
+    const activeTawasihVoice =
+      TAWASIH_VOICES_3.find((t) => t.id === settings.preferredTawasih) ||
+      TAWASIH_VOICES_3[0];
+    const activeEidVoice =
+      EID_TAKBEERAT_VOICES_3.find(
+        (e) => e.id === settings.preferredEidTakbeer,
+      ) || EID_TAKBEERAT_VOICES_3[0];
+    const activeKahfVoice =
+      FRIDAY_KAHF_VOICES_3.find((k) => k.id === settings.preferredFridayKahf) ||
+      FRIDAY_KAHF_VOICES_3[0];
 
     const alerts: Array<{
       tag: string;
@@ -443,31 +482,48 @@ function AppContent({
       type: string;
     }> = [];
 
-    for (const item of schedule) {
-      if (item.key === 'sunrise') continue;
-      const prayerKey = item.key as TrackablePrayer;
-      const voiceId =
-        settings.perPrayerAdhan[prayerKey] || settings.preferredAdhan;
-      const voice =
-        ADHAN_VOICES_9.find((a) => a.id === voiceId) || ADHAN_VOICES_9[0];
-      const ts = item.time.getTime();
-      if (ts > Date.now()) {
-        alerts.push({
-          tag: `adhan-${scheduleDateKey}-${item.key}`,
-          title: 'البرنامج الإسلامي الذهبي',
-          body: `حان الآن موعد أذان ${item.nameAr} (${voice.nameAr})`,
-          prayerName: item.nameAr,
-          voiceId: voice.id,
-          timestamp: ts,
-          audioUrl: voice.url,
-          type: 'adhan',
-        });
+    const nowMs = Date.now();
+    for (let dayOffset = 0; dayOffset <= 1; dayOffset++) {
+      const targetDate = new Date();
+      targetDate.setDate(targetDate.getDate() + dayOffset);
+      const dayKey = getDateKey(targetDate);
+      const hijriDay = getHijriParts(targetDate);
+      const {schedule} = computeDailyPrayerData(
+        location.latitude,
+        location.longitude,
+        targetDate,
+        settings.calculationMethod,
+        settings.madhab,
+        settings.prayerOffsets,
+      );
+
+      for (const item of schedule) {
+        if (item.key === 'sunrise') continue;
+        const prayerKey = item.key as TrackablePrayer;
+        const voiceId =
+          settings.perPrayerAdhan[prayerKey] || settings.preferredAdhan;
+        const voice =
+          ADHAN_VOICES_9.find((a) => a.id === voiceId) || ADHAN_VOICES_9[0];
+        const ts = item.time.getTime();
+
+        if (ts > nowMs) {
+          alerts.push({
+            tag: `adhan-${dayKey}-${item.key}`,
+            title: 'البرنامج الإسلامي الذهبي',
+            body: `حان الآن موعد أذان ${item.nameAr} (${voice.nameAr})`,
+            prayerName: item.nameAr,
+            voiceId: voice.id,
+            timestamp: ts,
+            audioUrl: voice.url,
+            type: 'adhan',
+          });
+        }
 
         if (settings.preAdhanMinutes > 0) {
           const preTs = ts - settings.preAdhanMinutes * 60 * 1000;
-          if (preTs > Date.now()) {
+          if (preTs > nowMs) {
             alerts.push({
-              tag: `preadhan-${scheduleDateKey}-${item.key}`,
+              tag: `preadhan-${dayKey}-${item.key}`,
               title: 'تنبيه اقتراب الصلاة — البرنامج الإسلامي الذهبي',
               body: `متبقي ${settings.preAdhanMinutes} دقائق على أذان ${item.nameAr}`,
               prayerName: item.nameAr,
@@ -481,9 +537,9 @@ function AppContent({
 
         if (settings.iqamahEnabled ?? true) {
           const iqamahTs = ts + 12 * 60 * 1000;
-          if (iqamahTs > Date.now()) {
+          if (iqamahTs > nowMs) {
             alerts.push({
-              tag: `iqamah-${scheduleDateKey}-${item.key}`,
+              tag: `iqamah-${dayKey}-${item.key}`,
               title: `إقامة صلاة ${item.nameAr} — البرنامج الإسلامي الذهبي`,
               body: `حان وقت إقامة صلاة ${item.nameAr} (${activeIqamahVoice.nameAr})`,
               prayerName: item.nameAr,
@@ -494,15 +550,142 @@ function AppContent({
             });
           }
         }
+
+        if (settings.fajrTawasihEnabled && item.key === 'fajr') {
+          const tawasihTs = ts - 20 * 60 * 1000;
+          if (tawasihTs > nowMs) {
+            alerts.push({
+              tag: `tawasih-${dayKey}`,
+              title: 'تواشيح وابتهالات الفجر — البرنامج الإسلامي الذهبي',
+              body: `${activeTawasihVoice.titleAr} (${activeTawasihVoice.reciterAr})`,
+              prayerName: 'تواشيح الفجر',
+              voiceId: activeTawasihVoice.id,
+              timestamp: tawasihTs,
+              audioUrl: activeTawasihVoice.url,
+              type: 'tawasih',
+            });
+          }
+        }
+
+        if (settings.postPrayerAzkarEnabled) {
+          const postAzkarTs = ts + 18 * 60 * 1000;
+          if (postAzkarTs > nowMs) {
+            alerts.push({
+              tag: `azkar-post-${dayKey}-${item.key}`,
+              title: `أذكار بعد صلاة ${item.nameAr}`,
+              body: 'لا تنسَ أذكار ما بعد الصلاة — البرنامج الإسلامي الذهبي',
+              prayerName: `أذكار بعد ${item.nameAr}`,
+              voiceId: 'post-prayer-azkar',
+              timestamp: postAzkarTs,
+              audioUrl: POST_PRAYER_AZKAR_AUDIO_URLS[0],
+              type: 'post-prayer-azkar',
+            });
+          }
+        }
+
+        if (item.key === 'fajr') {
+          const morningAzkarTs = ts + 25 * 60 * 1000;
+          if (morningAzkarTs > nowMs) {
+            alerts.push({
+              tag: `azkar-morning-${dayKey}`,
+              title: 'أذكار الصباح — البرنامج الإسلامي الذهبي',
+              body: 'حان وقت أذكار الصباح والأدعية المباركة',
+              prayerName: 'أذكار الصباح',
+              voiceId: 'pre-istighfar',
+              timestamp: morningAzkarTs,
+              audioUrl: '/audio/pre-istighfar.mp3',
+              type: 'morning-azkar',
+            });
+          }
+        }
+
+        if (item.key === 'asr') {
+          const eveningAzkarTs = ts + 25 * 60 * 1000;
+          if (eveningAzkarTs > nowMs) {
+            alerts.push({
+              tag: `azkar-evening-${dayKey}`,
+              title: 'أذكار المساء — البرنامج الإسلامي الذهبي',
+              body: 'حان وقت أذكار المساء والدعاء والتحصين',
+              prayerName: 'أذكار المساء',
+              voiceId: 'pre-istighfar',
+              timestamp: eveningAzkarTs,
+              audioUrl: '/audio/pre-istighfar.mp3',
+              type: 'evening-azkar',
+            });
+          }
+        }
+      }
+
+      // Friday Surah Al-Kahf reminder at 09:30 AM
+      if (settings.fridayKahfReminder && targetDate.getDay() === 5) {
+        const kahfTime = new Date(targetDate);
+        kahfTime.setHours(9, 30, 0, 0);
+        if (kahfTime.getTime() > nowMs) {
+          alerts.push({
+            tag: `kahf-${dayKey}`,
+            title: 'جمعة مباركة — سورة الكهف',
+            body: `تلاوة سورة الكهف (${activeKahfVoice.reciterAr})`,
+            prayerName: 'سورة الكهف',
+            voiceId: activeKahfVoice.id,
+            timestamp: kahfTime.getTime(),
+            audioUrl: activeKahfVoice.url,
+            type: 'kahf',
+          });
+        }
+      }
+
+      // Eid Takbeerat at 06:30 AM on Eid days
+      const isEid =
+        (hijriDay.month === 10 && hijriDay.day === 1) ||
+        (hijriDay.month === 12 && hijriDay.day >= 10 && hijriDay.day <= 13);
+      if (settings.eidTakbeeratEnabled && isEid) {
+        const eidTime = new Date(targetDate);
+        eidTime.setHours(6, 30, 0, 0);
+        if (eidTime.getTime() > nowMs) {
+          alerts.push({
+            tag: `eid-${dayKey}`,
+            title: 'عيدكم مبارك — تكبيرات العيد',
+            body: `${activeEidVoice.titleAr} (${activeEidVoice.reciterAr})`,
+            prayerName: 'تكبيرات العيد',
+            voiceId: activeEidVoice.id,
+            timestamp: eidTime.getTime(),
+            audioUrl: activeEidVoice.url,
+            type: 'eid',
+          });
+        }
       }
     }
 
     navigator.serviceWorker.ready
-      .then((reg) => {
+      .then(async (reg) => {
         reg.active?.postMessage({
           type: 'SCHEDULE_ADHAN_ALERTS',
           alerts,
         });
+
+        const regWithSync = reg as ServiceWorkerRegistration & {
+          sync?: {register: (tag: string) => Promise<void>};
+          periodicSync?: {
+            register: (tag: string, opts: {minInterval: number}) => Promise<void>;
+          };
+        };
+
+        if (regWithSync.sync) {
+          try {
+            await regWithSync.sync.register('adhan-background-check');
+          } catch {
+            // ignore unsupported sync errors
+          }
+        }
+        if (regWithSync.periodicSync) {
+          try {
+            await regWithSync.periodicSync.register('adhan-background-check', {
+              minInterval: 15 * 60 * 1000,
+            });
+          } catch {
+            // ignore unsupported periodicSync permission errors
+          }
+        }
       })
       .catch(() => {});
   }, [
@@ -516,6 +699,13 @@ function AppContent({
     settings.preAdhanMinutes,
     settings.preferredAdhan,
     settings.perPrayerAdhan,
+    settings.preferredTawasih,
+    settings.preferredEidTakbeer,
+    settings.preferredFridayKahf,
+    settings.fajrTawasihEnabled,
+    settings.postPrayerAzkarEnabled,
+    settings.fridayKahfReminder,
+    settings.eidTakbeeratEnabled,
     settings.calculationMethod,
     settings.madhab,
     settings.prayerOffsets,
@@ -949,7 +1139,7 @@ function AppContent({
   return (
     <div className="min-h-dvh w-full bg-[#000000]">
       <div
-        className={`relative mx-auto flex min-h-dvh w-full max-w-[400px] flex-col overflow-x-hidden border-x border-[#C9A227]/35 ${
+        className={`relative mx-auto flex min-h-dvh w-full max-w-[400px] flex-col overflow-x-clip border-x border-[#C9A227]/35 ${
           isForcedBlackGold ? 'bg-[#000000] text-white' : 'bg-white text-slate-900'
         }`}
       >

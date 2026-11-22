@@ -1,4 +1,5 @@
-export const AUDIO_CACHE_NAME = 'ana-muslim-offline-audio-v1';
+export const AUDIO_CACHE_NAME = 'alzahabi-offline-audio-v1';
+export const IMAGE_CACHE_NAME = 'alzahabi-offline-images-v1';
 
 export async function isAudioCached(url: string): Promise<boolean> {
   if (typeof caches === 'undefined' || !url) return false;
@@ -11,10 +12,13 @@ export async function isAudioCached(url: string): Promise<boolean> {
   }
 }
 
-export async function cacheAudioUrl(url: string): Promise<boolean> {
+export async function cacheAssetInBucket(
+  bucketName: string,
+  url: string,
+): Promise<boolean> {
   if (typeof caches === 'undefined' || !url) return false;
   try {
-    const cache = await caches.open(AUDIO_CACHE_NAME);
+    const cache = await caches.open(bucketName);
     const existing = await cache.match(url);
     if (existing) return true;
 
@@ -34,6 +38,14 @@ export async function cacheAudioUrl(url: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+export async function cacheAudioUrl(url: string): Promise<boolean> {
+  return cacheAssetInBucket(AUDIO_CACHE_NAME, url);
+}
+
+export async function cacheImageUrl(url: string): Promise<boolean> {
+  return cacheAssetInBucket(IMAGE_CACHE_NAME, url);
 }
 
 export async function removeCachedAudio(url: string): Promise<void> {

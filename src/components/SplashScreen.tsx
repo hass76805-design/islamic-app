@@ -37,7 +37,7 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({onComplete}) => {
           animate={{opacity: 1}}
           exit={{opacity: 0, scale: 1.03}}
           transition={{duration: 0.45, ease: 'easeInOut'}}
-          className="fixed inset-0 z-[100] flex flex-col items-center justify-center overflow-hidden bg-[#000000] select-none"
+          className="fixed inset-y-0 left-1/2 z-[100] flex w-full max-w-[400px] -translate-x-1/2 flex-col items-center justify-center overflow-hidden bg-[#000000]"
           aria-label="البرنامج الإسلامي الذهبي"
         >
           {/* Soft ambient golden halo behind full-screen splash artwork */}

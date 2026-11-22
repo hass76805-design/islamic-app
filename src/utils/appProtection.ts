@@ -94,49 +94,6 @@ export function initAppProtection(): void {
     {capture: true},
   );
 
-  // Disable pinch zoom (multi-touch) and double-tap zoom completely
-  let lastTouchEndAt = 0;
-  document.addEventListener(
-    'touchstart',
-    (e) => {
-      if (e.touches.length > 1) {
-        e.preventDefault();
-      }
-    },
-    {passive: false},
-  );
-
-  document.addEventListener(
-    'touchmove',
-    (e) => {
-      if (e.touches.length > 1) {
-        e.preventDefault();
-      }
-    },
-    {passive: false},
-  );
-
-  document.addEventListener(
-    'touchend',
-    (e) => {
-      const now = Date.now();
-      if (now - lastTouchEndAt <= 300) {
-        const target = e.target as HTMLElement | null;
-        if (!isEditableTarget(target)) {
-          e.preventDefault();
-        }
-      }
-      lastTouchEndAt = now;
-    },
-    {passive: false},
-  );
-
-  // Disable Safari pinch gesture events
-  const blockGesture = (e: Event) => e.preventDefault();
-  document.addEventListener('gesturestart', blockGesture, {passive: false});
-  document.addEventListener('gesturechange', blockGesture, {passive: false});
-  document.addEventListener('gestureend', blockGesture, {passive: false});
-
   // Disable Ctrl/Meta + mouse wheel zoom
   window.addEventListener(
     'wheel',

@@ -68,7 +68,7 @@ export const DuasView: React.FC = () => {
             </p>
           </div>
 
-          <div className="relative w-full sm:w-64">
+          <div className="relative w-full">
             <Search className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#C9A227]" />
             <input
               type="text"

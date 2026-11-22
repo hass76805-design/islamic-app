@@ -19,6 +19,8 @@ export default defineConfig(() => {
           'pwa-maskable-512x512.png',
           'assets/aistudio/IMG-20261120-WA4940_5880b328.jpg',
           'adhan-sw-ext.js',
+          'offline.html',
+          'audio/sheikh-start-reading.mp3',
           'data/quran.json',
           'data/tafsir.json',
         ],
@@ -27,7 +29,7 @@ export default defineConfig(() => {
           name: 'البرنامج الإسلامي الذهبي',
           short_name: 'الذهبي',
           description:
-            'البرنامج الإسلامي الذهبي: القرآن الكريم، اختبر حفظك بالميكروفون، المؤذن الإلكتروني المتكامل، الأذكار بالصوت والنص، الفقه والمسابقة، وقصص الأنبياء والصحابة.',
+            'البرنامج الإسلامي الذهبي: القرآن الكريم، اختبر حفظك بالميكروفون، المؤذن الإلكتروني المتكامل، محاضرات 30 شيخًا، الأذكار، الفقه والمسابقة، وقصص الأنبياء والصحابة.',
           theme_color: '#000000',
           background_color: '#000000',
           display: 'standalone',
@@ -123,7 +125,21 @@ export default defineConfig(() => {
               options: {
                 cacheName: 'alzahabi-offline-audio-v1',
                 expiration: {
-                  maxEntries: 500,
+                  maxEntries: 1000,
+                  maxAgeSeconds: 60 * 60 * 24 * 365,
+                },
+                cacheableResponse: {
+                  statuses: [0, 200],
+                },
+              },
+            },
+            {
+              urlPattern: /^https:\/\/(i\.ytimg\.com|yt3\.ggpht\.com)\/.*/i,
+              handler: 'CacheFirst',
+              options: {
+                cacheName: 'alzahabi-offline-images-v1',
+                expiration: {
+                  maxEntries: 400,
                   maxAgeSeconds: 60 * 60 * 24 * 180,
                 },
                 cacheableResponse: {
