@@ -1,0 +1,6 @@
+{
+  "name": "أنا مسلم — Ana Muslim",
+  "description": "تطبيق إسلامي شامل يعمل دون إنترنت: مواقيت الصلاة، القرآن الكريم 604 صفحة مع التفسير والصوت، الأذكار، بوصلة القبلة، المسبحة الإلكترونية، أسماء الله الحسنى، والتقويم الهجري.",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,196 @@
+{
+  "entities": {
+    "UserSyncState": {
+      "title": "UserSyncState",
+      "description": "Cloud-synced reading position, Khatma progress count, and Islamic preferences for a verified user",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Firebase Authentication user UID",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "displayName": {
+          "type": "string",
+          "description": "User display name",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "lastReadSurah": {
+          "type": "integer",
+          "description": "Last read or tested Surah number (1-114)"
+        },
+        "lastReadAyah": {
+          "type": "integer",
+          "description": "Last read or tested Ayah number (1-286)"
+        },
+        "lastReadPage": {
+          "type": "integer",
+          "description": "Last read Mushaf page (1-604)"
+        },
+        "khatmaCompletedPagesCount": {
+          "type": "integer",
+          "description": "Count of completed Khatma pages (0-604)"
+        },
+        "preferredReciter": {
+          "type": "string",
+          "description": "Selected Sheikh reciter ID",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "preferredAdhan": {
+          "type": "string",
+          "description": "Selected Adhan voice ID",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp"
+        }
+      },
+      "required": [
+        "uid",
+        "displayName",
+        "lastReadSurah",
+        "lastReadAyah",
+        "lastReadPage",
+        "khatmaCompletedPagesCount",
+        "preferredReciter",
+        "preferredAdhan",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "MemorizationResult": {
+      "title": "MemorizationResult",
+      "description": "Quran memorization test result saved under a user's subcollection",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Owner Firebase Authentication UID",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "surahNumber": {
+          "type": "integer",
+          "description": "Tested Surah number (1-114)"
+        },
+        "surahName": {
+          "type": "string",
+          "description": "Arabic Surah name",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "ayahNumber": {
+          "type": "integer",
+          "description": "Starting Ayah number in Surah (1-286)"
+        },
+        "score": {
+          "type": "integer",
+          "description": "Memorization test score (0-100)"
+        },
+        "mistakesCount": {
+          "type": "integer",
+          "description": "Total detected mistakes count (>= 0)"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp"
+        }
+      },
+      "required": [
+        "uid",
+        "surahNumber",
+        "surahName",
+        "ayahNumber",
+        "score",
+        "mistakesCount",
+        "createdAt"
+      ]
+    },
+    "QuranBookmarkDoc": {
+      "title": "QuranBookmarkDoc",
+      "description": "Saved Mushaf bookmark stored under a user's bookmarks subcollection",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Owner Firebase Authentication UID",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "page": {
+          "type": "integer",
+          "description": "Mushaf page number (1-604)"
+        },
+        "surahNumber": {
+          "type": "integer",
+          "description": "Surah number (1-114)"
+        },
+        "surahName": {
+          "type": "string",
+          "description": "Arabic Surah name",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "ayahNumber": {
+          "type": "integer",
+          "description": "Ayah number (1-286)"
+        },
+        "snippet": {
+          "type": "string",
+          "description": "Short Ayah text preview",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp"
+        }
+      },
+      "required": [
+        "uid",
+        "page",
+        "surahNumber",
+        "surahName",
+        "ayahNumber",
+        "snippet",
+        "createdAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": {
+        "$ref": "#/entities/UserSyncState"
+      },
+      "description": "Per-user reading position, Khatma progress, and reciter/adhan settings"
+    },
+    "/users/{userId}/testResults/{resultId}": {
+      "schema": {
+        "$ref": "#/entities/MemorizationResult"
+      },
+      "description": "User memorization test scores and audit log"
+    },
+    "/users/{userId}/bookmarks/{bookmarkId}": {
+      "schema": {
+        "$ref": "#/entities/QuranBookmarkDoc"
+      },
+      "description": "User saved Mushaf page and Ayah bookmarks"
+    }
+  }
+}

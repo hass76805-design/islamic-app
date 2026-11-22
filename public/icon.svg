@@ -1,0 +1,111 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="goldRich" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FCE38A" />
+      <stop offset="45%" stop-color="#D4AF37" />
+      <stop offset="100%" stop-color="#9A7210" />
+    </linearGradient>
+    <linearGradient id="goldBright" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#FFF0B3" />
+      <stop offset="50%" stop-color="#C9A227" />
+      <stop offset="100%" stop-color="#8A640A" />
+    </linearGradient>
+    <radialGradient id="obsidianBg" cx="50%" cy="42%" r="65%">
+      <stop offset="0%" stop-color="#141108" />
+      <stop offset="70%" stop-color="#040404" />
+      <stop offset="100%" stop-color="#000000" />
+    </radialGradient>
+  </defs>
+
+  <!-- Pure Luxury Black Rounded Canvas with Double Golden Rounded Borders -->
+  <rect x="0" y="0" width="512" height="512" rx="108" fill="url(#obsidianBg)" />
+  <rect x="18" y="18" width="476" height="476" rx="94" fill="none" stroke="url(#goldRich)" stroke-width="10" />
+  <rect x="34" y="34" width="444" height="444" rx="80" fill="none" stroke="#C9A227" stroke-opacity="0.45" stroke-width="2.5" />
+
+  <!-- Unique Bespoke Geometric 8-Pointed Rub al-Hizb Aura -->
+  <g transform="translate(256, 206)" opacity="0.24" stroke="url(#goldRich)" stroke-width="2.5" fill="none">
+    <rect x="-126" y="-126" width="252" height="252" rx="18" />
+    <rect x="-126" y="-126" width="252" height="252" rx="18" transform="rotate(45)" />
+    <circle cx="0" cy="0" r="146" stroke-dasharray="6 8" />
+  </g>
+
+  <!-- Corner Golden Islamic Ornament Arcs -->
+  <g stroke="#C9A227" stroke-opacity="0.55" stroke-width="2" fill="none">
+    <path d="M58 94 Q58 58 94 58" />
+    <path d="M454 94 Q454 58 418 58" />
+    <path d="M58 418 Q58 454 94 454" />
+    <path d="M454 418 Q454 454 418 454" />
+  </g>
+
+  <!-- Crown: Small Golden Crescent + Golden Geometric Star -->
+  <g transform="translate(256, 108)">
+    <!-- Small Golden Crescent (Hilal) -->
+    <path
+      d="M 10,-32 A 26,26 0 1,0 10,20 A 21,21 0 1,1 10,-32 Z"
+      fill="url(#goldRich)"
+    />
+    <!-- Crisp Golden 8-Point Star beside Crescent -->
+    <polygon
+      points="34,-18 38,-8 48,-4 38,0 34,10 30,0 20,-4 30,-8"
+      fill="#FCE38A"
+    />
+  </g>
+
+  <!-- Sculpted Open Golden Mushaf (Geometric Fold Design) -->
+  <g transform="translate(256, 232)">
+    <!-- Outer Golden Stand / Base Frame -->
+    <path
+      d="M -138,44 L -120,-62 Q -62,-76 0,-48 Q 62,-76 120,-62 L 138,44 Q 68,26 0,54 Q -68,26 -138,44 Z"
+      fill="#080703"
+      stroke="url(#goldRich)"
+      stroke-width="6.5"
+      stroke-linejoin="round"
+    />
+    <!-- Inner Left & Right Pages -->
+    <path
+      d="M -124,33 L -108,-50 Q -54,-62 -4,-38 L -4,44 Q -62,18 -124,33 Z"
+      fill="none"
+      stroke="#F3D56B"
+      stroke-width="2.5"
+      stroke-opacity="0.8"
+    />
+    <path
+      d="M 124,33 L 108,-50 Q 54,-62 4,-38 L 4,44 Q 62,18 124,33 Z"
+      fill="none"
+      stroke="#F3D56B"
+      stroke-width="2.5"
+      stroke-opacity="0.8"
+    />
+    <!-- Spine Center Fold + Diamond -->
+    <line x1="0" y1="-48" x2="0" y2="54" stroke="url(#goldRich)" stroke-width="5" />
+    <polygon points="0,48 11,59 0,70 -11,59" fill="url(#goldRich)" />
+
+    <!-- Geometric Illuminated Lines Inside Left & Right Pages -->
+    <g stroke="url(#goldRich)" stroke-width="3.2" stroke-linecap="round" opacity="0.9">
+      <line x1="-88" y1="-28" x2="-22" y2="-16" />
+      <line x1="-92" y1="-8" x2="-22" y2="3" />
+      <line x1="-96" y1="12" x2="-24" y2="22" />
+      <line x1="88" y1="-28" x2="22" y2="-16" />
+      <line x1="92" y1="-8" x2="22" y2="3" />
+      <line x1="96" y1="12" x2="24" y2="22" />
+    </g>
+  </g>
+
+  <!-- Unique Arabic Calligraphy Wordmark: الذهبي -->
+  <g transform="translate(256, 398)">
+    <line x1="-112" y1="-46" x2="-40" y2="-46" stroke="url(#goldRich)" stroke-width="2" stroke-opacity="0.6" />
+    <circle cx="0" cy="-46" r="4.5" fill="#FCE38A" />
+    <line x1="40" y1="-46" x2="112" y2="-46" stroke="url(#goldRich)" stroke-width="2" stroke-opacity="0.6" />
+    <text
+      x="0"
+      y="20"
+      text-anchor="middle"
+      direction="rtl"
+      fill="url(#goldBright)"
+      font-family="'Amiri', 'Noto Naskh Arabic', 'Noto Kufi Arabic', serif"
+      font-size="84"
+      font-weight="700"
+      letter-spacing="1"
+    >الذهبي</text>
+  </g>
+</svg>
