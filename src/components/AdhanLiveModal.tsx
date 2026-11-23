@@ -14,7 +14,7 @@ import makkahKaabaImg from '../assets/images/makkah_kaaba_night_1795340358494.jp
 import mosqueCourtyardImg from '../assets/images/mosque_courtyard_arch_1795340357980.jpg';
 import mosqueMihrabImg from '../assets/images/mosque_gold_mihrab_1795340358298.jpg';
 import nabawiDomeImg from '../assets/images/nabawi_green_dome_1795340358652.jpg';
-import {ADHAN_TONE_DESCRIPTIONS} from '../data/reciters';
+import {ADHAN_TONE_DESCRIPTIONS, POST_ADHAN_DUA} from '../data/reciters';
 import {AdhanVoice, PrayerScheduleItem} from '../types';
 import {useHardwareBack} from '../utils/backNavigation';
 import {formatGregorianAr, getHijriParts} from '../utils/hijri';
@@ -31,7 +31,7 @@ interface AdhanLiveModalProps {
   countryAr: string;
   now: Date;
   schedule?: PrayerScheduleItem[];
-  mode?: 'adhan' | 'iqamah';
+  mode?: 'adhan' | 'iqamah' | 'dua';
   isPreview?: boolean;
   onClose: () => void;
   onPlayPostAzkar?: () => void;
@@ -97,6 +97,7 @@ export const AdhanLiveModal: React.FC<AdhanLiveModalProps> = ({
   const [currentSec, setCurrentSec] = useState(0);
   const [audioErr, setAudioErr] = useState<string | null>(null);
   const [photoIdx, setPhotoIdx] = useState(0);
+  const [showPostAdhanDua, setShowPostAdhanDua] = useState(mode === 'dua');
 
   useHardwareBack(true, onClose);
 
@@ -115,11 +116,14 @@ export const AdhanLiveModal: React.FC<AdhanLiveModalProps> = ({
   const usedFallbackRef = useRef(false);
 
   const isIqamah = mode === 'iqamah';
-  const fallbackOfflineUrl = isIqamah
+  const isDuaMode = mode === 'dua';
+  const defaultOfflineUrl = isIqamah
     ? '/audio/iqamah-makkah.mp3'
     : '/audio/adhan-makkah.mp3';
+  const fallbackOfflineUrl = voice.fallbackUrl || defaultOfflineUrl;
   const isFajr =
     !isIqamah &&
+    !isDuaMode &&
     (prayerNameAr.includes('الفجر') || voice.id === 'adhan-fajr');
   const lines = useMemo(
     () => (isIqamah ? buildIqamahLines() : buildAdhanLines(isFajr)),
@@ -203,6 +207,9 @@ export const AdhanLiveModal: React.FC<AdhanLiveModalProps> = ({
     const onEnded = () => {
       setIsPlaying(false);
       setProgress(1);
+      if (mode === 'adhan') {
+        setShowPostAdhanDua(true);
+      }
     };
     const onError = () => {
       if (
@@ -226,11 +233,13 @@ export const AdhanLiveModal: React.FC<AdhanLiveModalProps> = ({
     audio.addEventListener('ended', onEnded);
     audio.addEventListener('error', onError);
 
-    audio.src = voice.url;
-    audio.load();
-    audio.play().catch(() => {
-      setIsPlaying(false);
-    });
+    if (mode !== 'dua') {
+      audio.src = voice.url;
+      audio.load();
+      audio.play().catch(() => {
+        setIsPlaying(false);
+      });
+    }
 
     return () => {
       audio.removeEventListener('play', onPlay);
@@ -241,7 +250,7 @@ export const AdhanLiveModal: React.FC<AdhanLiveModalProps> = ({
       audio.removeEventListener('error', onError);
       audio.pause();
     };
-  }, [voice.url, fallbackOfflineUrl]);
+  }, [voice.url, fallbackOfflineUrl, mode]);
 
   const togglePlayPause = () => {
     const audio = audioRef.current;
@@ -324,11 +333,13 @@ export const AdhanLiveModal: React.FC<AdhanLiveModalProps> = ({
           </span>
           <div className="min-w-0">
             <h2 className="truncate text-sm font-bold text-[#FCE38A]">
-              {isIqamah
-                ? `إقامة ${prayerNameAr}`
-                : isPreview
-                ? `المؤذن الإلكتروني — ${prayerNameAr}`
-                : `حان الآن أذان ${prayerNameAr}`}
+              {isDuaMode
+                ? `دعاء ما بعد أذان ${prayerNameAr}`
+                : isIqamah
+                  ? `إقامة ${prayerNameAr}`
+                  : isPreview
+                    ? `المؤذن الإلكتروني — ${prayerNameAr}`
+                    : `حان الآن أذان ${prayerNameAr}`}
             </h2>
             <p className="flex items-center gap-1 truncate text-[10px] font-semibold text-[#C9A227]">
               <MapPin className="h-3 w-3 shrink-0" />
@@ -427,32 +438,73 @@ export const AdhanLiveModal: React.FC<AdhanLiveModalProps> = ({
           </div>
         </div>
 
-        {/* 2. Full Synchronized Adhan / Iqamah Text */}
-        <div className="space-y-1.5 rounded-3xl border-2 border-[#C9A227] bg-[#070501] p-3 text-center">
-          <p className="text-[11px] font-bold text-[#C9A227]">
-            {isIqamah ? 'نص الإقامة الكامل' : 'نص الأذان الكامل'} ·{' '}
-            {TO_ARABIC_DIGITS(activeLineIdx + 1)}/{TO_ARABIC_DIGITS(lines.length)}
-          </p>
-          {lines.map((line, idx) => {
-            const isCurrent = idx === activeLineIdx;
-            const isPassed = idx < activeLineIdx;
-            return (
-              <p
-                key={`${idx}-${line}`}
-                ref={isCurrent ? activeLineRef : null}
-                className={`font-quran rounded-xl border px-2.5 py-1.5 ${
-                  isCurrent
-                    ? 'border-[#FCE38A] bg-[#1C1504] text-xl font-bold text-[#FCE38A]'
-                    : isPassed
-                    ? 'border-transparent text-sm text-[#C9A227]/75'
-                    : 'border-transparent text-sm text-zinc-200'
-                }`}
-              >
-                {line}
-              </p>
-            );
-          })}
-        </div>
+        {/* 2. Post-Adhan Dua Switcher & Full Synchronized Adhan / Iqamah Text */}
+        {!isIqamah && (
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={() => setShowPostAdhanDua(false)}
+              className={`min-h-[36px] rounded-2xl border px-3 text-xs font-bold transition-colors ${
+                !showPostAdhanDua
+                  ? 'border-[#C9A227] bg-[#C9A227] text-black'
+                  : 'border-[#C9A227]/45 bg-[#070501] text-[#FCE38A]'
+              }`}
+            >
+              نص الأذان المتزامن
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowPostAdhanDua(true)}
+              className={`min-h-[36px] rounded-2xl border px-3 text-xs font-bold transition-colors ${
+                showPostAdhanDua
+                  ? 'border-[#FCE38A] bg-[#C9A227] text-black'
+                  : 'border-[#C9A227]/45 bg-[#070501] text-[#FCE38A]'
+              }`}
+            >
+              دعاء ما بعد الأذان
+            </button>
+          </div>
+        )}
+
+        {showPostAdhanDua && !isIqamah ? (
+          <div className="space-y-2.5 rounded-3xl border-2 border-[#FCE38A] bg-[#141004] p-4 text-center">
+            <p className="text-xs font-extrabold text-[#FCE38A]">
+              {POST_ADHAN_DUA.titleAr}
+            </p>
+            <p className="font-quran text-xl font-bold leading-loose text-white">
+              {POST_ADHAN_DUA.textAr}
+            </p>
+            <p className="text-[11px] leading-relaxed text-[#C9A227]">
+              {POST_ADHAN_DUA.sourceAr}
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-1.5 rounded-3xl border-2 border-[#C9A227] bg-[#070501] p-3 text-center">
+            <p className="text-[11px] font-bold text-[#C9A227]">
+              {isIqamah ? 'نص الإقامة الكامل' : 'نص الأذان الكامل'} ·{' '}
+              {TO_ARABIC_DIGITS(activeLineIdx + 1)}/{TO_ARABIC_DIGITS(lines.length)}
+            </p>
+            {lines.map((line, idx) => {
+              const isCurrent = idx === activeLineIdx;
+              const isPassed = idx < activeLineIdx;
+              return (
+                <p
+                  key={`${idx}-${line}`}
+                  ref={isCurrent ? activeLineRef : null}
+                  className={`font-quran rounded-xl border px-2.5 py-1.5 ${
+                    isCurrent
+                      ? 'border-[#FCE38A] bg-[#1C1504] text-xl font-bold text-[#FCE38A]'
+                      : isPassed
+                        ? 'border-transparent text-sm text-[#C9A227]/75'
+                        : 'border-transparent text-sm text-zinc-200'
+                  }`}
+                >
+                  {line}
+                </p>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* FIXED BOTTOM DOCKED PLAYBACK + PROMINENT FIXED CLOSE BUTTON */}

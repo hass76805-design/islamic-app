@@ -1,6 +1,6 @@
-import React, {useEffect, useRef, useState} from 'react';
-import {Pause, Play, Repeat, Volume2, X} from 'lucide-react';
-import {getAyahAudioUrl, RECITERS_10} from '../data/reciters';
+import React, {useEffect, useMemo, useRef, useState} from 'react';
+import {Pause, Play, Repeat, Search, Volume2, X} from 'lucide-react';
+import {getAyahAudioUrl, RECITERS_30} from '../data/reciters';
 import {CompactAyah, CompactSurah, ReciterId} from '../types';
 import {useHardwareBack} from '../utils/backNavigation';
 
@@ -21,6 +21,18 @@ export const AyahReciterSheet: React.FC<AyahReciterSheetProps> = ({
   const [totalRepeats, setTotalRepeats] = useState(3);
   const [isPlaying, setIsPlaying] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [reciterSearch, setReciterSearch] = useState('');
+
+  const filteredReciters = useMemo(() => {
+    const q = reciterSearch.trim();
+    if (!q) return RECITERS_30;
+    return RECITERS_30.filter(
+      (r) =>
+        r.nameAr.includes(q) ||
+        r.shortNameAr.includes(q) ||
+        r.styleAr.includes(q),
+    );
+  }, [reciterSearch]);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const repeatCounterRef = useRef(0);
@@ -92,7 +104,7 @@ export const AyahReciterSheet: React.FC<AyahReciterSheetProps> = ({
         <div className="flex items-center justify-between border-b border-[#C9A227]/30 bg-black px-5 py-4 text-white">
           <div>
             <h3 className="text-base font-bold text-[#F3D56B]">
-              الاستماع للآية بصوت 10 شيوخ
+              الاستماع للآية بصوت 30 قارئًا
             </h3>
             <p className="text-xs text-zinc-300">
               {surah.name} · آية {ayah.n} — اختر القارئ للتشغيل والتكرار
@@ -157,12 +169,23 @@ export const AyahReciterSheet: React.FC<AyahReciterSheetProps> = ({
           )}
 
           {errorMsg && (
-            <p className="text-xs font-semibold text-rose-500">{errorMsg}</p>
+            <p className="text-xs font-semibold text-amber-300">{errorMsg}</p>
           )}
 
-          {/* 10 Reciters List */}
+          <div className="relative">
+            <Search className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#C9A227]" />
+            <input
+              type="text"
+              value={reciterSearch}
+              onChange={(e) => setReciterSearch(e.target.value)}
+              placeholder="ابحث في 30 قارئًا..."
+              className="min-h-[40px] w-full rounded-xl border border-[#C9A227]/60 bg-[#0B0B0B] py-2 pr-9 pl-3 text-xs text-white outline-none focus:border-[#C9A227]"
+            />
+          </div>
+
+          {/* 30 Reciters List */}
           <div className="grid grid-cols-1 gap-2.5">
-            {RECITERS_10.map((r) => {
+            {filteredReciters.map((r) => {
               const isCurrent = activeReciter === r.id && isPlaying;
               return (
                 <button

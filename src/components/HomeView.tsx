@@ -1,21 +1,27 @@
 import React, {useMemo, useState} from 'react';
 import {
+  AudioLines,
   Award,
   BellRing,
   BookOpen,
   BookOpenText,
   CalendarDays,
+  Check,
   CheckCircle2,
   CircleDot,
   Clock,
   Compass,
+  Download,
+  Heart,
   HeartHandshake,
   HelpCircle,
+  Loader2,
   MapPin,
   Mic,
   Moon,
   MoonStar,
   Navigation,
+  ScrollText,
   Search,
   Sparkles,
   Sun,
@@ -35,6 +41,10 @@ import {
 } from '../types';
 import {useHardwareBack} from '../utils/backNavigation';
 import {formatGregorianAr, getDateKey, getHijriParts} from '../utils/hijri';
+import {
+  downloadAllOfflinePackage,
+  isOfflinePackageDownloaded,
+} from '../utils/offlineAudioCache';
 import {
   computeDailyPrayerData,
   DEFAULT_PRAYER_OFFSETS,
@@ -88,6 +98,14 @@ export const HomeView: React.FC<HomeViewProps> = ({
 }) => {
   const [cityPickerOpen, setCityPickerOpen] = useState(false);
   const [citySearch, setCitySearch] = useState('');
+  const [offlinePackDone, setOfflinePackDone] = useState(() =>
+    isOfflinePackageDownloaded(),
+  );
+  const [offlineProgress, setOfflineProgress] = useState<{
+    done: number;
+    total: number;
+    stageLabel: string;
+  } | null>(null);
   const [timeFormat, setTimeFormat] = useState<'12' | '24'>(() => {
     if (typeof window !== 'undefined') {
       const saved = window.localStorage.getItem('alzahabi_time_format');
@@ -95,6 +113,23 @@ export const HomeView: React.FC<HomeViewProps> = ({
     }
     return '12';
   });
+
+  const handleDownloadAllOffline = async () => {
+    if (offlineProgress) return;
+    setOfflineProgress({
+      done: 0,
+      total: 100,
+      stageLabel: 'جاري تجهيز التحميل الكامل للجهاز...',
+    });
+    await downloadAllOfflinePackage(
+      settings.preferredReciter,
+      (done, total, stageLabel) => {
+        setOfflineProgress({done, total, stageLabel});
+      },
+    );
+    setOfflineProgress(null);
+    setOfflinePackDone(true);
+  };
 
   useHardwareBack(cityPickerOpen, () => setCityPickerOpen(false));
 
@@ -203,6 +238,41 @@ export const HomeView: React.FC<HomeViewProps> = ({
     icon: React.ReactNode;
     onClick: () => void;
   }> = [
+    {
+      id: 'books',
+      titleAr: 'صحيح البخاري والكتب الإسلامية',
+      descAr: 'صحيح البخاري كاملًا ومنظمًا بالبحث + الأربعون النووية ورياض الصالحين',
+      icon: <BookOpenText className="h-5 w-5 text-[#C9A227]" />,
+      onClick: () => onOpenMoreSubPage('books'),
+    },
+    {
+      id: 'rafiqi',
+      titleAr: 'رفيقي (الحوار الصوتي الذكي)',
+      descAr: 'صوت بشري يسمعك ويرد عليك + 30 كلمة بالآية المخصصة بصوت الشيخ',
+      icon: <Mic className="h-5 w-5 text-[#C9A227]" />,
+      onClick: () => onOpenMoreSubPage('rafiqi'),
+    },
+    {
+      id: 'salawat',
+      titleAr: 'صلِّ على النبي ﷺ',
+      descAr: 'عداد وسبحة ذهبية تفاعلية للصلاة على النبي ﷺ مع أصوات هادئة',
+      icon: <Heart className="h-5 w-5 text-[#C9A227]" />,
+      onClick: () => onOpenMoreSubPage('salawat'),
+    },
+    {
+      id: 'seerah',
+      titleAr: 'السيرة النبوية الكاملة ﷺ',
+      descAr: 'من الولادة لغاية الوفاة كاملة بدون نقص — قراءة نص واستماع صوتي',
+      icon: <ScrollText className="h-5 w-5 text-[#C9A227]" />,
+      onClick: () => onOpenMoreSubPage('seerah'),
+    },
+    {
+      id: 'voice_test',
+      titleAr: 'اختبر صوتك في التلاوة',
+      descAr: 'سجّل صوتك ليحدد السورة تلقائيًا ويصحح الآيات ويحفظ مقطعك الصوتي',
+      icon: <AudioLines className="h-5 w-5 text-[#C9A227]" />,
+      onClick: () => onOpenMoreSubPage('voice_test'),
+    },
     {
       id: 'prayer_guide',
       titleAr: 'تعليم الوضوء والصلاة بالتفصيل',
@@ -528,13 +598,70 @@ export const HomeView: React.FC<HomeViewProps> = ({
               الأذان وضبط مواقيت الصلاة
             </h3>
             <p className="text-xs text-slate-600 dark:text-zinc-300">
-              أصوات بدون نت، مدفع رمضان، تواشيح الفجر وتكبيرات العيد
+              30 مؤذنًا، تواشيح النقشبندي، قيام الليل، الإقامة ودعاء بعد الأذان
             </p>
           </div>
           <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-[#C9A227] bg-[#C9A227]/15 text-[#C9A227]">
             <BellRing className="h-5 w-5" />
           </span>
         </button>
+      </div>
+
+      {/* Offline Full Device Download Card */}
+      <div className="rounded-3xl border-2 border-[#C9A227] bg-[#080602] p-4 text-white">
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <span className="text-[11px] font-bold text-[#C9A227]">
+              يعمل 100% بدون نت بعد تحميل مرة واحدة
+            </span>
+            <h3 className="mt-0.5 text-sm font-bold text-[#FCE38A]">
+              تحميل محتوى التطبيق بالكامل للجهاز
+            </h3>
+            <p className="mt-0.5 text-[11px] text-zinc-300">
+              {offlineProgress
+                ? `${offlineProgress.stageLabel} (${offlineProgress.done}/${offlineProgress.total})`
+                : offlinePackDone
+                  ? 'تم حفظ المصحف والمؤذن والكتب ورفيقي أوفلاين على جهازك'
+                  : 'المصحف، 30 مؤذنًا، التواشيح، الأذكار، القصص، رفيقي والكتب'}
+            </p>
+          </div>
+          <button
+            type="button"
+            disabled={!!offlineProgress}
+            onClick={handleDownloadAllOffline}
+            className="inline-flex min-h-[42px] shrink-0 items-center gap-1.5 rounded-2xl bg-[#C9A227] px-3.5 py-2 text-xs font-extrabold text-black disabled:opacity-70"
+          >
+            {offlineProgress ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : offlinePackDone ? (
+              <Check className="h-4 w-4" />
+            ) : (
+              <Download className="h-4 w-4" />
+            )}
+            <span>
+              {offlineProgress
+                ? 'جاري...'
+                : offlinePackDone
+                  ? 'جاهز أوفلاين'
+                  : 'تحميل الكل للجهاز'}
+            </span>
+          </button>
+        </div>
+
+        {offlineProgress && (
+          <div className="mt-3 h-2 w-full overflow-hidden rounded-full border border-[#C9A227]/50 bg-black">
+            <div
+              className="h-full rounded-full bg-gradient-to-l from-[#FCE38A] to-[#C9A227] transition-all"
+              style={{
+                width: `${
+                  offlineProgress.total > 0
+                    ? Math.round((offlineProgress.done / offlineProgress.total) * 100)
+                    : 0
+                }%`,
+              }}
+            />
+          </div>
+        )}
       </div>
 
       {/* All Islamic Modules (1-Col Calm Mobile Cards) */}

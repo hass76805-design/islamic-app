@@ -23,14 +23,15 @@ import {FirebaseProvider, useFirebase} from './contexts/FirebaseContext';
 import {AZKAR_CATEGORIES} from './data/azkar';
 import {findNearestCity, PRESET_CITIES} from './data/cities';
 import {
-  ADHAN_VOICES_9,
+  ADHAN_VOICES_30,
   EID_TAKBEERAT_VOICES_3,
   FRIDAY_KAHF_VOICES_3,
   getAyahAudioUrl,
   IQAMAH_VOICES_3,
+  POST_ADHAN_DUA,
   POST_PRAYER_AZKAR_AUDIO_URLS,
   PRE_ADHAN_VOICES_3,
-  TAWASIH_VOICES_3,
+  TAWASIH_NAQSHABANDI,
 } from './data/reciters';
 import {useLocalStorage} from './hooks/useLocalStorage';
 import {
@@ -54,6 +55,7 @@ import {getDateKey, getHijriParts} from './utils/hijri';
 import {cacheBatchUrls} from './utils/offlineAudioCache';
 import {
   computeDailyPrayerData,
+  computeQiyamAlLaylTime,
   DEFAULT_PRAYER_OFFSETS,
 } from './utils/prayerTimes';
 import {playRamadanCannonSound} from './utils/ramadanCannon';
@@ -74,8 +76,17 @@ const DEFAULT_SETTINGS: AppSettings = {
     maghrib: 'adhan-madinah',
     isha: 'adhan-makkah',
   },
+  enabledPrayers: {
+    fajr: true,
+    dhuhr: true,
+    asr: true,
+    maghrib: true,
+    isha: true,
+  },
   preferredIqamah: 'iqamah-makkah',
   iqamahEnabled: true,
+  postAdhanDuaEnabled: true,
+  qiyamEnabled: true,
   preferredPreAdhanSound: 'pre-chime',
   preferredTawasih: 'tawasih-naqshabandi-1',
   preferredEidTakbeer: 'eid-makkah-1',
@@ -211,7 +222,7 @@ function AppContent({
   const [liveAdhanModal, setLiveAdhanModal] = useState<{
     prayerNameAr: string;
     voice: AdhanVoice;
-    mode?: 'adhan' | 'iqamah';
+    mode?: 'adhan' | 'iqamah' | 'dua';
   } | null>(null);
   const adhanAudioRef = useRef<HTMLAudioElement | null>(null);
   const triggeredAlertsRef = useRef<Set<string>>(new Set());
@@ -238,7 +249,34 @@ function AppContent({
     return () => setRootBackHandler(null);
   }, []);
 
-  // Quietly pre-warm Al-Fatihah recitation audio + core Azkar MP3s once online after splash
+  // Silently auto-detect GPS on startup to calibrate prayer times & Qibla (falls back silently to last saved location when offline)
+  const gpsAutoRequestedRef = useRef(false);
+  useEffect(() => {
+    if (gpsAutoRequestedRef.current) return;
+    gpsAutoRequestedRef.current = true;
+    if (typeof navigator === 'undefined' || !('geolocation' in navigator)) {
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const {latitude, longitude} = pos.coords;
+        const nearest = findNearestCity(latitude, longitude);
+        setLocation({
+          latitude,
+          longitude,
+          city: nearest.city,
+          country: nearest.country,
+          isGps: true,
+        });
+      },
+      () => {
+        // Keep last saved ana_muslim_location silently without showing any blocking error
+      },
+      {enableHighAccuracy: false, timeout: 6000, maximumAge: 600000},
+    );
+  }, [setLocation]);
+
+  // Quietly pre-warm Al-Fatihah recitation audio once online after splash
   const prewarmedRef = useRef<string | null>(null);
   useEffect(() => {
     if (showSplash || typeof navigator === 'undefined' || !navigator.onLine) {
@@ -357,23 +395,25 @@ function AppContent({
     if (typeof window === 'undefined') return;
     const params = new URLSearchParams(window.location.search);
     const playAlertUrl = params.get('playAlert');
+    const alertTypeParam = params.get('alertType');
     const prayerParam = params.get('prayer');
     const voiceIdParam = params.get('voiceId');
     const openMuezzin = params.get('openMuezzin');
     const tabParam = params.get('tab');
     if (playAlertUrl) {
       const matchedVoice =
-        ADHAN_VOICES_9.find((v) => v.id === voiceIdParam) ||
+        ADHAN_VOICES_30.find((v) => v.id === voiceIdParam) ||
         IQAMAH_VOICES_3.find((v) => v.id === voiceIdParam) ||
-        ADHAN_VOICES_9.find((v) => v.url === playAlertUrl);
+        ADHAN_VOICES_30.find((v) => v.url === playAlertUrl);
       if (matchedVoice) {
-        const isIqamahMode = IQAMAH_VOICES_3.some(
-          (i) => i.id === matchedVoice.id,
-        );
+        const isIqamahMode =
+          alertTypeParam === 'iqamah' ||
+          IQAMAH_VOICES_3.some((i) => i.id === matchedVoice.id);
+        const isDuaMode = alertTypeParam === 'post-adhan-dua';
         setLiveAdhanModal({
           prayerNameAr: prayerParam || 'الصلاة',
           voice: matchedVoice,
-          mode: isIqamahMode ? 'iqamah' : 'adhan',
+          mode: isDuaMode ? 'dua' : isIqamahMode ? 'iqamah' : 'adhan',
         });
       } else {
         setAdhanBanner({
@@ -403,17 +443,18 @@ function AppContent({
       const data = event.data;
       if (data?.type === 'PLAY_ADHAN_FROM_NOTIFICATION') {
         const matchedVoice =
-          ADHAN_VOICES_9.find((v) => v.id === data.voiceId) ||
+          ADHAN_VOICES_30.find((v) => v.id === data.voiceId) ||
           IQAMAH_VOICES_3.find((v) => v.id === data.voiceId) ||
-          ADHAN_VOICES_9.find((v) => v.url === data.audioUrl);
+          ADHAN_VOICES_30.find((v) => v.url === data.audioUrl);
         if (matchedVoice) {
-          const isIqamahMode = IQAMAH_VOICES_3.some(
-            (i) => i.id === matchedVoice.id,
-          );
+          const isIqamahMode =
+            data.alertType === 'iqamah' ||
+            IQAMAH_VOICES_3.some((i) => i.id === matchedVoice.id);
+          const isDuaMode = data.alertType === 'post-adhan-dua';
           setLiveAdhanModal({
             prayerNameAr: data.prayerName || data.prayerNameAr || 'الصلاة',
             voice: matchedVoice,
-            mode: isIqamahMode ? 'iqamah' : 'adhan',
+            mode: isDuaMode ? 'dua' : isIqamahMode ? 'iqamah' : 'adhan',
           });
         } else {
           setAdhanBanner({
@@ -461,8 +502,8 @@ function AppContent({
       IQAMAH_VOICES_3.find((iq) => iq.id === settings.preferredIqamah) ||
       IQAMAH_VOICES_3[0];
     const activeTawasihVoice =
-      TAWASIH_VOICES_3.find((t) => t.id === settings.preferredTawasih) ||
-      TAWASIH_VOICES_3[0];
+      TAWASIH_NAQSHABANDI.find((t) => t.id === settings.preferredTawasih) ||
+      TAWASIH_NAQSHABANDI[0];
     const activeEidVoice =
       EID_TAKBEERAT_VOICES_3.find(
         (e) => e.id === settings.preferredEidTakbeer,
@@ -483,7 +524,8 @@ function AppContent({
     }> = [];
 
     const nowMs = Date.now();
-    for (let dayOffset = 0; dayOffset <= 1; dayOffset++) {
+    // Schedule 7 days ahead in Service Worker so background Adhan keeps working even without reopening daily
+    for (let dayOffset = 0; dayOffset < 7; dayOffset++) {
       const targetDate = new Date();
       targetDate.setDate(targetDate.getDate() + dayOffset);
       const dayKey = getDateKey(targetDate);
@@ -500,13 +542,15 @@ function AppContent({
       for (const item of schedule) {
         if (item.key === 'sunrise') continue;
         const prayerKey = item.key as TrackablePrayer;
+        const isPrayerEnabled = settings.enabledPrayers?.[prayerKey] ?? true;
         const voiceId =
           settings.perPrayerAdhan[prayerKey] || settings.preferredAdhan;
         const voice =
-          ADHAN_VOICES_9.find((a) => a.id === voiceId) || ADHAN_VOICES_9[0];
+          ADHAN_VOICES_30.find((a) => a.id === voiceId) || ADHAN_VOICES_30[0];
+        const resolvedAdhanUrl = voice.fallbackUrl || voice.url;
         const ts = item.time.getTime();
 
-        if (ts > nowMs) {
+        if (isPrayerEnabled && ts > nowMs) {
           alerts.push({
             tag: `adhan-${dayKey}-${item.key}`,
             title: 'البرنامج الإسلامي الذهبي',
@@ -514,12 +558,12 @@ function AppContent({
             prayerName: item.nameAr,
             voiceId: voice.id,
             timestamp: ts,
-            audioUrl: voice.url,
+            audioUrl: resolvedAdhanUrl,
             type: 'adhan',
           });
         }
 
-        if (settings.preAdhanMinutes > 0) {
+        if (isPrayerEnabled && settings.preAdhanMinutes > 0) {
           const preTs = ts - settings.preAdhanMinutes * 60 * 1000;
           if (preTs > nowMs) {
             alerts.push({
@@ -535,7 +579,23 @@ function AppContent({
           }
         }
 
-        if (settings.iqamahEnabled ?? true) {
+        if (isPrayerEnabled && (settings.postAdhanDuaEnabled ?? true)) {
+          const duaTs = ts + 150 * 1000;
+          if (duaTs > nowMs) {
+            alerts.push({
+              tag: `dua-${dayKey}-${item.key}`,
+              title: `دعاء ما بعد أذان ${item.nameAr}`,
+              body: POST_ADHAN_DUA.textAr,
+              prayerName: item.nameAr,
+              voiceId: voice.id,
+              timestamp: duaTs,
+              audioUrl: resolvedAdhanUrl,
+              type: 'post-adhan-dua',
+            });
+          }
+        }
+
+        if (isPrayerEnabled && (settings.iqamahEnabled ?? true)) {
           const iqamahTs = ts + 12 * 60 * 1000;
           if (iqamahTs > nowMs) {
             alerts.push({
@@ -556,7 +616,7 @@ function AppContent({
           if (tawasihTs > nowMs) {
             alerts.push({
               tag: `tawasih-${dayKey}`,
-              title: 'تواشيح وابتهالات الفجر — البرنامج الإسلامي الذهبي',
+              title: 'تواشيح وابتهالات الفجر — الشيخ سيد النقشبندي',
               body: `${activeTawasihVoice.titleAr} (${activeTawasihVoice.reciterAr})`,
               prayerName: 'تواشيح الفجر',
               voiceId: activeTawasihVoice.id,
@@ -567,7 +627,7 @@ function AppContent({
           }
         }
 
-        if (settings.postPrayerAzkarEnabled) {
+        if (isPrayerEnabled && settings.postPrayerAzkarEnabled) {
           const postAzkarTs = ts + 18 * 60 * 1000;
           if (postAzkarTs > nowMs) {
             alerts.push({
@@ -613,6 +673,31 @@ function AppContent({
               type: 'evening-azkar',
             });
           }
+        }
+      }
+
+      // Qiyam al-Layl (Last Third of the Night)
+      if (settings.qiyamEnabled ?? true) {
+        const qiyamData = computeQiyamAlLaylTime(
+          location.latitude,
+          location.longitude,
+          targetDate,
+          settings.calculationMethod,
+          settings.madhab,
+          settings.prayerOffsets,
+        );
+        const qiyamTs = qiyamData.lastThirdStart.getTime();
+        if (qiyamTs > nowMs) {
+          alerts.push({
+            tag: `qiyam-${dayKey}`,
+            title: 'قيام الليل — الثلث الأخير من الليل',
+            body: 'وقت السحر واستجابة الدعاء — قم وصلِّ ركعتين في جوف الليل',
+            prayerName: 'قيام الليل',
+            voiceId: activeTawasihVoice.id,
+            timestamp: qiyamTs,
+            audioUrl: activeTawasihVoice.url,
+            type: 'qiyam',
+          });
         }
       }
 
@@ -694,6 +779,9 @@ function AppContent({
     location.longitude,
     settings.adhanEnabled,
     settings.iqamahEnabled,
+    settings.postAdhanDuaEnabled,
+    settings.qiyamEnabled,
+    settings.enabledPrayers,
     settings.preferredIqamah,
     settings.preferredPreAdhanSound,
     settings.preAdhanMinutes,
@@ -749,8 +837,8 @@ function AppContent({
         (v) => v.id === settings.preferredPreAdhanSound,
       ) || PRE_ADHAN_VOICES_3[0];
     const activeTawasihVoice =
-      TAWASIH_VOICES_3.find((v) => v.id === settings.preferredTawasih) ||
-      TAWASIH_VOICES_3[0];
+      TAWASIH_NAQSHABANDI.find((v) => v.id === settings.preferredTawasih) ||
+      TAWASIH_NAQSHABANDI[0];
     const activeEidVoice =
       EID_TAKBEERAT_VOICES_3.find(
         (v) => v.id === settings.preferredEidTakbeer,
@@ -762,10 +850,12 @@ function AppContent({
     for (const item of schedule) {
       if (item.key === 'sunrise') continue;
       const prayerKey = item.key as TrackablePrayer;
+      const isPrayerEnabled = settings.enabledPrayers?.[prayerKey] ?? true;
       const targetSec = Math.floor(item.time.getTime() / 1000);
       const exactKey = `exact-${todayStr}-${item.key}`;
 
       if (
+        isPrayerEnabled &&
         Math.abs(nowSec - targetSec) <= 3 &&
         !triggeredAlertsRef.current.has(exactKey)
       ) {
@@ -773,7 +863,7 @@ function AppContent({
         const voiceId =
           settings.perPrayerAdhan[prayerKey] || settings.preferredAdhan;
         const voice =
-          ADHAN_VOICES_9.find((a) => a.id === voiceId) || ADHAN_VOICES_9[0];
+          ADHAN_VOICES_30.find((a) => a.id === voiceId) || ADHAN_VOICES_30[0];
 
         showSystemNotification(
           'البرنامج الإسلامي الذهبي — حان وقت الأذان',
@@ -803,7 +893,26 @@ function AppContent({
         }
       }
 
-      if (settings.iqamahEnabled ?? true) {
+      if (isPrayerEnabled && (settings.postAdhanDuaEnabled ?? true)) {
+        const duaSec = targetSec + 150;
+        const duaKey = `dua-${todayStr}-${item.key}`;
+        if (
+          Math.abs(nowSec - duaSec) <= 3 &&
+          !triggeredAlertsRef.current.has(duaKey)
+        ) {
+          triggeredAlertsRef.current.add(duaKey);
+          showSystemNotification(
+            `دعاء ما بعد أذان ${item.nameAr}`,
+            POST_ADHAN_DUA.textAr,
+            duaKey,
+          );
+          setAdhanBanner({
+            text: `دعاء بعد أذان ${item.nameAr}: اللهم رب هذه الدعوة التامة...`,
+          });
+        }
+      }
+
+      if (isPrayerEnabled && (settings.iqamahEnabled ?? true)) {
         const iqamahSec = targetSec + 12 * 60;
         const iqamahKey = `iqamah-${todayStr}-${item.key}`;
         if (
@@ -844,7 +953,7 @@ function AppContent({
         }
       }
 
-      if (settings.preAdhanMinutes > 0) {
+      if (isPrayerEnabled && settings.preAdhanMinutes > 0) {
         const preTargetSec = targetSec - settings.preAdhanMinutes * 60;
         const preKey = `pre-${todayStr}-${item.key}-${settings.preAdhanMinutes}`;
         if (
@@ -862,6 +971,36 @@ function AppContent({
           );
           playManagedAudio(activePreAdhanVoice.url);
         }
+      }
+    }
+
+    if (settings.qiyamEnabled ?? true) {
+      const qiyamData = computeQiyamAlLaylTime(
+        location.latitude,
+        location.longitude,
+        now,
+        settings.calculationMethod,
+        settings.madhab,
+        settings.prayerOffsets,
+      );
+      const qiyamSec = Math.floor(qiyamData.lastThirdStart.getTime() / 1000);
+      const qiyamKey = `qiyam-${todayStr}`;
+      if (
+        Math.abs(nowSec - qiyamSec) <= 3 &&
+        !triggeredAlertsRef.current.has(qiyamKey)
+      ) {
+        triggeredAlertsRef.current.add(qiyamKey);
+        showSystemNotification(
+          'قيام الليل — الثلث الأخير من الليل',
+          'وقت النزول الإلهي واستجابة الدعاء — أقم صلاة القيام الآن',
+          qiyamKey,
+        );
+        setAdhanBanner({
+          text: 'بدأ الثلث الأخير من الليل — وقت قيام الليل المبارك',
+          actionLabel: 'تشغيل مناجاة الفجر',
+          onAction: () => playManagedAudio(activeTawasihVoice.url),
+        });
+        playManagedAudio(activeTawasihVoice.url);
       }
     }
 
@@ -899,8 +1038,16 @@ function AppContent({
     now,
     scheduleDateKey,
     dailyPrayerData,
+    location.latitude,
+    location.longitude,
     settings.adhanEnabled,
     settings.iqamahEnabled,
+    settings.postAdhanDuaEnabled,
+    settings.qiyamEnabled,
+    settings.enabledPrayers,
+    settings.calculationMethod,
+    settings.madhab,
+    settings.prayerOffsets,
     settings.preferredIqamah,
     settings.preferredPreAdhanSound,
     settings.preferredTawasih,
@@ -1370,6 +1517,12 @@ export default function App() {
     () => ({
       ...DEFAULT_SETTINGS,
       ...rawSettings,
+      preferredTawasih:
+        rawSettings?.preferredTawasih === 'tawasih-housaini'
+          ? 'tawasih-naqshabandi-1'
+          : rawSettings?.preferredTawasih || DEFAULT_SETTINGS.preferredTawasih,
+      postAdhanDuaEnabled: rawSettings?.postAdhanDuaEnabled ?? true,
+      qiyamEnabled: rawSettings?.qiyamEnabled ?? true,
       prayerOffsets: {
         ...DEFAULT_PRAYER_OFFSETS,
         ...(rawSettings?.prayerOffsets || {}),
@@ -1377,6 +1530,10 @@ export default function App() {
       perPrayerAdhan: {
         ...DEFAULT_SETTINGS.perPrayerAdhan,
         ...(rawSettings?.perPrayerAdhan || {}),
+      },
+      enabledPrayers: {
+        ...DEFAULT_SETTINGS.enabledPrayers,
+        ...(rawSettings?.enabledPrayers || {}),
       },
     }),
     [rawSettings],

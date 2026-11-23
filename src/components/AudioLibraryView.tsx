@@ -1,4 +1,4 @@
-import React, {useEffect, useRef, useState} from 'react';
+import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {
   Check,
   Download,
@@ -6,16 +6,17 @@ import {
   Pause,
   Play,
   Radio,
+  Search,
   Video,
   Volume2,
 } from 'lucide-react';
 import {
-  ADHAN_VOICES_9,
+  ADHAN_VOICES_30,
   FAMOUS_SURAHS_30,
   getReciterById,
   getSurahAudioUrl,
   IQAMAH_AUDIO,
-  RECITERS_10,
+  RECITERS_30,
 } from '../data/reciters';
 import {AdhanVoice, ReciterId} from '../types';
 import {
@@ -52,14 +53,26 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
     mode: 'adhan' | 'iqamah';
   } | null>(null);
 
+  const [adhanSearch, setAdhanSearch] = useState('');
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const reciterInfo = getReciterById(preferredReciter);
+
+  const filteredAdhanVoices = useMemo(() => {
+    const q = adhanSearch.trim();
+    if (!q) return ADHAN_VOICES_30;
+    return ADHAN_VOICES_30.filter(
+      (a) =>
+        a.nameAr.includes(q) ||
+        a.muezzinAr.includes(q) ||
+        a.locationAr.includes(q),
+    );
+  }, [adhanSearch]);
 
   useEffect(() => {
     let active = true;
     async function checkAll() {
       const next: Record<string, boolean> = {};
-      for (const a of ADHAN_VOICES_9) {
+      for (const a of ADHAN_VOICES_30) {
         next[a.url] = await isAudioCached(a.url);
       }
       for (const s of FAMOUS_SURAHS_30) {
@@ -80,7 +93,7 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
     };
   }, []);
 
-  const togglePlay = (url: string, title: string) => {
+  const togglePlay = (url: string, title: string, fallbackUrl?: string) => {
     setAudioError(null);
     if (!audioRef.current) {
       audioRef.current = new Audio();
@@ -98,16 +111,31 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
     setPlayingTitle(title);
     setIsPlaying(true);
 
+    let usedFallback = false;
     audio.onended = () => setIsPlaying(false);
     audio.onerror = () => {
+      if (!usedFallback && fallbackUrl && !url.startsWith('/audio/')) {
+        usedFallback = true;
+        audio.src = fallbackUrl;
+        audio.load();
+        audio.play().catch(() => setIsPlaying(false));
+        return;
+      }
       setIsPlaying(false);
       setAudioError(
-        navigator.onLine
-          ? 'تعذر تشغيل المقطع الصوتي حاليًا'
-          : 'هذا المقطع غير محمّل للعمل بدون نت — اضغط زر التحميل أثناء توفر الإنترنت',
+        'هذا المقطع غير محمّل في الذاكرة المحلية — اضغط زر التحميل أو استخدم «تحميل الكل للجهاز»',
       );
     };
-    audio.play().catch(() => setIsPlaying(false));
+    audio.play().catch(() => {
+      if (!usedFallback && fallbackUrl && !url.startsWith('/audio/')) {
+        usedFallback = true;
+        audio.src = fallbackUrl;
+        audio.load();
+        audio.play().catch(() => setIsPlaying(false));
+      } else {
+        setIsPlaying(false);
+      }
+    });
   };
 
   const handleDownloadOne = async (url: string) => {
@@ -120,7 +148,7 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
   };
 
   const handleDownloadAllAdhan = async () => {
-    const urls = ADHAN_VOICES_9.map((a) => a.url);
+    const urls = ADHAN_VOICES_30.map((a) => a.url);
     setBatchProgress({done: 0, total: urls.length});
     await cacheBatchUrls(urls, (done, total) => {
       setBatchProgress({done, total});
@@ -154,7 +182,7 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
             مكتبة التلاوات والأذان
           </h2>
           <p className="mt-1 text-xs text-slate-600 dark:text-zinc-300">
-            30 سورة مشهورة بـ 10 قراء · 9 أصوات أذان · تحميل مباشر للعمل بدون نت
+            30 سورة مشهورة بـ 30 قارئًا · 30 مؤذنًا للأذان · تحميل مباشر للعمل بدون نت
           </p>
         </div>
 
@@ -179,7 +207,7 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                 : 'text-slate-700 dark:text-white'
             }`}
           >
-            مكتبة الأذان (9 أصوات)
+            مكتبة الأذان (30 مؤذنًا)
           </button>
         </div>
       </div>
@@ -231,7 +259,7 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                 onChange={(e) => onChangePreferredReciter(e.target.value as ReciterId)}
                 className="min-h-[40px] rounded-xl border border-[#C9A227]/60 bg-slate-50 px-3 py-2 text-sm font-bold text-slate-900 outline-none dark:bg-[#0B0B0B] dark:text-white"
               >
-                {RECITERS_10.map((r) => (
+                {RECITERS_30.map((r) => (
                   <option key={r.id} value={r.id}>
                     {r.nameAr} ({r.styleAr})
                   </option>
@@ -339,7 +367,7 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
             <div className="flex items-center gap-2">
               <Radio className="h-5 w-5 text-[#C9A227]" />
               <span className="text-sm font-bold text-[#F3D56B]">
-                9 أصوات أذان مختارة من الحرمين والعالم الإسلامي
+                30 مؤذنًا مختارًا من الحرمين والعالم الإسلامي
               </span>
             </div>
             <div className="flex flex-wrap items-center gap-2">
@@ -372,14 +400,25 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                 <span>
                   {batchProgress
                     ? `جاري التحميل (${batchProgress.done}/${batchProgress.total})`
-                    : 'تحميل كل أصوات الأذان (9) بدون نت'}
+                    : 'تحميل الـ 30 مؤذنًا بدون نت'}
                 </span>
               </button>
             </div>
           </div>
 
+          <div className="relative">
+            <Search className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#C9A227]" />
+            <input
+              type="text"
+              value={adhanSearch}
+              onChange={(e) => setAdhanSearch(e.target.value)}
+              placeholder="ابحث باسم المؤذن أو البلد..."
+              className="min-h-[40px] w-full rounded-xl border border-[#C9A227]/60 bg-[#080703] py-2 pr-9 pl-3 text-xs text-white outline-none focus:border-[#C9A227]"
+            />
+          </div>
+
           <div className="grid grid-cols-1 gap-3">
-            {ADHAN_VOICES_9.map((adhan) => {
+            {filteredAdhanVoices.map((adhan) => {
               const isCached = !!cachedMap[adhan.url];
               const isCurrent = playingUrl === adhan.url && isPlaying;
               const isPreferred = preferredAdhan === adhan.id;
@@ -454,7 +493,7 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
 
                       <button
                         type="button"
-                        onClick={() => togglePlay(adhan.url, adhan.nameAr)}
+                        onClick={() => togglePlay(adhan.url, adhan.nameAr, adhan.fallbackUrl)}
                         aria-label={isCurrent ? 'إيقاف الأذان' : 'تشغيل الأذان'}
                         className={`flex h-10 w-10 items-center justify-center rounded-xl ${
                           isCurrent

@@ -1,4 +1,4 @@
-import React, {useEffect, useMemo, useState} from 'react';
+import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {Compass, MapPin, Navigation, RotateCw} from 'lucide-react';
 import {UserLocation} from '../types';
 import {
@@ -86,6 +86,9 @@ export const QiblaView: React.FC<QiblaViewProps> = ({
   const [sensorError, setSensorError] = useState<string | null>(null);
   const [mapZoom, setMapZoom] = useState<'regional' | 'world'>('regional');
 
+  const smoothedHeadingRef = useRef<number | null>(null);
+  const hasAbsoluteRef = useRef<boolean>(false);
+
   const qiblaBearing = useMemo(
     () => computeQiblaBearing(location.latitude, location.longitude),
     [location.latitude, location.longitude],
@@ -101,24 +104,71 @@ export const QiblaView: React.FC<QiblaViewProps> = ({
   const isAligned = angularDiff <= 4;
 
   useEffect(() => {
-    const handleOrientation = (event: DeviceOrientationEvent) => {
+    const applySmoothedHeading = (rawDeg: number) => {
+      const normalized = ((rawDeg % 360) + 360) % 360;
+      const prev = smoothedHeadingRef.current;
+      if (prev === null) {
+        smoothedHeadingRef.current = normalized;
+        setHeading(normalized);
+        return;
+      }
+      // Shortest signed angular delta across 0/360 boundary
+      const delta = ((normalized - prev + 540) % 360) - 180;
+      const next = ((prev + delta * 0.25) % 360 + 360) % 360;
+      smoothedHeadingRef.current = next;
+      setHeading(next);
+    };
+
+    const getScreenOffset = () => {
+      const screenOrientationAngle =
+        typeof window !== 'undefined' ? window.screen?.orientation?.angle : undefined;
+      if (typeof screenOrientationAngle === 'number') {
+        return screenOrientationAngle;
+      }
+      const legacyOrientation =
+        typeof window !== 'undefined'
+          ? (window as unknown as {orientation?: number}).orientation
+          : undefined;
+      return typeof legacyOrientation === 'number' ? legacyOrientation : 0;
+    };
+
+    const handleAbsoluteOrientation = (event: DeviceOrientationEvent) => {
       const webkitHeading = (event as unknown as {webkitCompassHeading?: number})
         .webkitCompassHeading;
       if (typeof webkitHeading === 'number' && !Number.isNaN(webkitHeading)) {
-        setHeading(webkitHeading);
+        hasAbsoluteRef.current = true;
+        applySmoothedHeading(webkitHeading + getScreenOffset());
         setSensorActive(true);
       } else if (typeof event.alpha === 'number') {
-        const compassHeading = (360 - event.alpha) % 360;
-        setHeading(compassHeading);
+        hasAbsoluteRef.current = true;
+        applySmoothedHeading(360 - event.alpha + getScreenOffset());
         setSensorActive(true);
       }
     };
 
-    window.addEventListener('deviceorientationabsolute', handleOrientation as EventListener);
+    const handleOrientation = (event: DeviceOrientationEvent) => {
+      const webkitHeading = (event as unknown as {webkitCompassHeading?: number})
+        .webkitCompassHeading;
+      if (typeof webkitHeading === 'number' && !Number.isNaN(webkitHeading)) {
+        applySmoothedHeading(webkitHeading + getScreenOffset());
+        setSensorActive(true);
+      } else if (!hasAbsoluteRef.current && typeof event.alpha === 'number') {
+        applySmoothedHeading(360 - event.alpha + getScreenOffset());
+        setSensorActive(true);
+      }
+    };
+
+    window.addEventListener(
+      'deviceorientationabsolute',
+      handleAbsoluteOrientation as EventListener,
+    );
     window.addEventListener('deviceorientation', handleOrientation);
 
     return () => {
-      window.removeEventListener('deviceorientationabsolute', handleOrientation as EventListener);
+      window.removeEventListener(
+        'deviceorientationabsolute',
+        handleAbsoluteOrientation as EventListener,
+      );
       window.removeEventListener('deviceorientation', handleOrientation);
     };
   }, []);
@@ -183,7 +233,7 @@ export const QiblaView: React.FC<QiblaViewProps> = ({
               <span className="font-mono-num font-bold text-[#C9A227]">
                 {qiblaBearing.toFixed(1)}°
               </span>{' '}
-              من الشمال
+              من الشمال · البوصلة تعمل بدون نت 100%
             </p>
           </div>
           <button

@@ -18,7 +18,7 @@ import {
   X,
 } from 'lucide-react';
 import {LastReadPosition} from '../App';
-import {getAyahAudioUrl, getReciterById, RECITERS_10} from '../data/reciters';
+import {getAyahAudioUrl, getReciterById, RECITERS_30} from '../data/reciters';
 import {
   CompactAyah,
   CompactSurah,
@@ -184,7 +184,7 @@ export const QuranTestModal: React.FC<QuranTestModalProps> = ({
   const [correctionSheikh, setCorrectionSheikh] = useState<ReciterId>(() => {
     try {
       const saved = window.localStorage.getItem('alzahabi_test_sheikh') as ReciterId | null;
-      if (saved && RECITERS_10.some((r) => r.id === saved)) {
+      if (saved && RECITERS_30.some((r) => r.id === saved)) {
         return saved;
       }
     } catch {
@@ -925,7 +925,7 @@ export const QuranTestModal: React.FC<QuranTestModalProps> = ({
   );
   const otherSheikhs = useMemo(
     () =>
-      RECITERS_10.filter(
+      RECITERS_30.filter(
         (r) => !['husary', 'minshawi', 'abdulbasit', 'muaiqly'].includes(r.id),
       ),
     [],

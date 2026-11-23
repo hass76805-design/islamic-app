@@ -24,7 +24,7 @@ import {
   ZoomOut,
 } from 'lucide-react';
 import {LastReadPosition} from '../App';
-import {getAyahAudioUrl, getReciterById, RECITERS_10} from '../data/reciters';
+import {getAyahAudioUrl, getReciterById, RECITERS_30} from '../data/reciters';
 import {
   CompactAyah,
   CompactSurah,
@@ -1117,7 +1117,7 @@ export const QuranView: React.FC<QuranViewProps> = ({
                   }}
                   className="min-h-[36px] flex-1 rounded-xl border border-[#C9A227]/55 bg-black px-2.5 text-xs font-bold text-white outline-none"
                 >
-                  {RECITERS_10.map((r) => (
+                  {RECITERS_30.map((r) => (
                     <option key={r.id} value={r.id}>
                       الشيخ {r.nameAr}
                     </option>

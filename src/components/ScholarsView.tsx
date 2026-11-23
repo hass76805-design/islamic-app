@@ -10,7 +10,6 @@ import {
   Search,
   Trash2,
   Video,
-  WifiOff,
 } from 'lucide-react';
 import lectureStageFallback from '../assets/images/islamic_lectures_stage_1795364723996.jpg';
 import {SCHOLARS_30} from '../data/scholarsData';
@@ -146,7 +145,7 @@ export const ScholarsView: React.FC = () => {
     ]);
     setSavingId(null);
     setOfflineNotice(
-      'تم حفظ بيانات المحاضرة وصورتها أوفلاين (تشغيل الفيديو يتطلب إنترنت)',
+      'تم حفظ بيانات المحاضرة وصورتها في قائمتك للعمل بدون نت',
     );
     window.setTimeout(() => setOfflineNotice(null), 3200);
   };
@@ -220,15 +219,15 @@ export const ScholarsView: React.FC = () => {
                     alt={currentVideo.titleAr}
                     referrerPolicy="no-referrer"
                     onError={handleImgError}
-                    className="absolute inset-0 h-full w-full object-cover opacity-25"
+                    className="absolute inset-0 h-full w-full object-cover opacity-35"
                   />
-                  <div className="relative z-10 flex flex-col items-center gap-2 rounded-2xl border border-[#C9A227]/70 bg-black/90 px-4 py-3">
-                    <WifiOff className="h-6 w-6 text-[#C9A227]" />
+                  <div className="relative z-10 flex flex-col items-center gap-1.5 rounded-2xl border border-[#C9A227]/80 bg-black/90 px-4 py-3">
+                    <BookmarkCheck className="h-6 w-6 text-[#C9A227]" />
                     <p className="text-xs font-bold text-[#FCE38A]">
-                      أنت أوفلاين — شغّل الإنترنت لتشغيل الفيديو
+                      بطاقة المحاضرة المحفوظة · {selectedScholar.nameAr}
                     </p>
                     <p className="text-[11px] text-zinc-300">
-                      معلومات المحاضرة وصورتها محفوظة داخل التطبيق
+                      معلومات المحاضرة وصورتها وبياناتها محفوظة داخل التطبيق بدون نت
                     </p>
                   </div>
                 </div>

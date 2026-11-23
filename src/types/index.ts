@@ -3,6 +3,11 @@ export type TabId = 'home' | 'quran' | 'azkar' | 'qibla' | 'more';
 export type MoreSubPageId =
   | 'menu'
   | 'adhan'
+  | 'books'
+  | 'rafiqi'
+  | 'salawat'
+  | 'seerah'
+  | 'voice_test'
   | 'prayer_guide'
   | 'audio_library'
   | 'fiqh'
@@ -26,7 +31,27 @@ export type ReciterId =
   | 'husary'
   | 'ghamdi'
   | 'ajamy'
-  | 'shuraim';
+  | 'shuraim'
+  | 'banna'
+  | 'hudhaify'
+  | 'tablawi'
+  | 'jibreel'
+  | 'ayyub'
+  | 'basfar'
+  | 'juhany'
+  | 'shatri'
+  | 'qatami'
+  | 'rifai'
+  | 'akhdar'
+  | 'matroud'
+  | 'abbad'
+  | 'bukhatir'
+  | 'budair'
+  | 'qasim'
+  | 'thubayti'
+  | 'alijaber'
+  | 'qahtani'
+  | 'suwaid';
 
 export interface ReciterInfo {
   id: ReciterId;
@@ -43,6 +68,7 @@ export interface AdhanVoice {
   muezzinAr: string;
   locationAr: string;
   url: string;
+  fallbackUrl?: string;
 }
 
 export interface FamousSurahItem {
@@ -260,6 +286,7 @@ export type PrayerTrackStatus = 'none' | 'ontime' | 'late' | 'missed';
 export type DailyPrayerLog = Record<string, Record<TrackablePrayer, PrayerTrackStatus>>;
 
 export type PerPrayerAdhanMap = Record<TrackablePrayer, string>;
+export type PerPrayerEnabledMap = Record<TrackablePrayer, boolean>;
 
 export interface AppSettings {
   calculationMethod: CalculationMethodId;
@@ -272,11 +299,14 @@ export interface AppSettings {
   preferredAdhan: string;
   preferredIqamah: string;
   iqamahEnabled: boolean;
+  postAdhanDuaEnabled: boolean;
+  qiyamEnabled: boolean;
   preferredPreAdhanSound: string;
   preferredTawasih: string;
   preferredEidTakbeer: string;
   preferredFridayKahf: string;
   perPrayerAdhan: PerPrayerAdhanMap;
+  enabledPrayers: PerPrayerEnabledMap;
   adhanEnabled: boolean;
   preAdhanMinutes: number; // 0, 5, 10, 15
   prayerOffsets: PrayerOffsets;

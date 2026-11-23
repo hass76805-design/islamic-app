@@ -257,3 +257,42 @@ export function computeDistanceToKaabaKm(latitude: number, longitude: number): n
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return Math.round(R * c);
 }
+
+/**
+ * Computes Islamic night midpoint & start of the Last Third of the Night (Qiyam al-Layl)
+ * for the night between Maghrib and next Fajr (works 100% offline via local astronomical calculation).
+ */
+export function computeQiyamAlLaylTime(
+  latitude: number,
+  longitude: number,
+  dateRef: Date,
+  methodId: CalculationMethodId,
+  madhab: AsrMadhab,
+  offsets: PrayerOffsets = DEFAULT_PRAYER_OFFSETS,
+): {lastThirdStart: Date; midpoint: Date; maghrib: Date; nextFajr: Date} {
+  const coords = new Coordinates(latitude, longitude);
+  const params = getMethodParams(methodId, madhab);
+
+  const dayAnchor = new Date(
+    dateRef.getFullYear(),
+    dateRef.getMonth(),
+    dateRef.getDate(),
+    12,
+    0,
+    0,
+  );
+  const nextAnchor = new Date(dayAnchor);
+  nextAnchor.setDate(dayAnchor.getDate() + 1);
+
+  const todayTimes = new PrayerTimes(coords, dayAnchor, params);
+  const tomorrowTimes = new PrayerTimes(coords, nextAnchor, params);
+
+  const maghrib = addMinutes(todayTimes.maghrib, offsets.maghrib || 0);
+  const nextFajr = addMinutes(tomorrowTimes.fajr, offsets.fajr || 0);
+
+  const nightMs = Math.max(1, nextFajr.getTime() - maghrib.getTime());
+  const midpoint = new Date(maghrib.getTime() + nightMs * 0.5);
+  const lastThirdStart = new Date(maghrib.getTime() + (nightMs * 2) / 3);
+
+  return {lastThirdStart, midpoint, maghrib, nextFajr};
+}

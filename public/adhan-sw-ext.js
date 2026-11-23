@@ -69,12 +69,16 @@ function buildNotificationOptions(item) {
     alertType === 'pre-adhan'
       ? 'فتح المؤذن'
       : alertType === 'tawasih'
-        ? 'تشغيل التواشيح'
-        : alertType === 'post-prayer-azkar' ||
-            alertType === 'morning-azkar' ||
-            alertType === 'evening-azkar'
-          ? 'تشغيل الأذكار'
-          : 'تشغيل الصوت الآن';
+        ? 'تشغيل ابتهال النقشبندي'
+        : alertType === 'qiyam'
+          ? 'تنبيه قيام الليل'
+          : alertType === 'post-adhan-dua'
+            ? 'دعاء ما بعد الأذان'
+            : alertType === 'post-prayer-azkar' ||
+                alertType === 'morning-azkar' ||
+                alertType === 'evening-azkar'
+              ? 'تشغيل الأذكار'
+              : 'تشغيل الصوت الآن';
 
   return {
     body: item.body || 'حان الآن موعد الصلاة — البرنامج الإسلامي الذهبي',
@@ -118,8 +122,8 @@ async function checkAndFireDueAlerts() {
     const tag = item.tag || `alert-${item.timestamp}`;
     const elapsed = now - item.timestamp;
 
-    // Fire due alerts within 12-minute background sync catch-up window once
-    if (elapsed >= 0 && elapsed <= 12 * 60 * 1000 && !firedTags[tag]) {
+    // Fire due alerts within 20-minute background sync catch-up window once
+    if (elapsed >= 0 && elapsed <= 20 * 60 * 1000 && !firedTags[tag]) {
       firedTags[tag] = now;
       firedAny = true;
       try {
@@ -193,17 +197,25 @@ self.addEventListener('message', (event) => {
             includeTriggered: true,
           });
           for (const n of existing) {
-            if (n.tag && n.tag.startsWith('adhan-') || n.tag?.startsWith('preadhan-') || n.tag?.startsWith('iqamah-') || n.tag?.startsWith('tawasih-') || n.tag?.startsWith('azkar-') || n.tag?.startsWith('kahf-') || n.tag?.startsWith('eid-')) {
+            if (
+              n.tag &&
+              (n.tag.startsWith('adhan-') ||
+                n.tag.startsWith('preadhan-') ||
+                n.tag.startsWith('iqamah-') ||
+                n.tag.startsWith('dua-') ||
+                n.tag.startsWith('qiyam-') ||
+                n.tag.startsWith('tawasih-') ||
+                n.tag.startsWith('azkar-') ||
+                n.tag.startsWith('kahf-') ||
+                n.tag.startsWith('eid-'))
+            ) {
               n.close();
             }
           }
           const firedTags = await readFiredTags();
           const now = Date.now();
           for (const item of alerts) {
-            if (
-              item.timestamp > now + 2000 &&
-              !firedTags[item.tag]
-            ) {
+            if (item.timestamp > now + 2000 && !firedTags[item.tag]) {
               await self.registration.showNotification(
                 item.title || 'البرنامج الإسلامي الذهبي',
                 {
