@@ -3,12 +3,9 @@ import {
   Award,
   Bookmark,
   BookOpen,
-  Check,
   CheckCircle2,
-  Download,
   History,
   List,
-  Loader2,
   Mic,
   Pause,
   Play,
@@ -39,7 +36,7 @@ import {
   extractAyahWordMeanings,
 } from '../utils/ayahWordMeanings';
 import {useHardwareBack} from '../utils/backNavigation';
-import {cacheBatchUrls, loadOfflineJson} from '../utils/offlineAudioCache';
+import {loadOfflineJson} from '../utils/offlineAudioCache';
 import {AyahReciterSheet} from './AyahReciterSheet';
 import {SurahHeaderFrame} from './IslamicOrnament';
 import {QuranTeacherModal} from './QuranTeacherModal';
@@ -190,8 +187,6 @@ export const QuranView: React.FC<QuranViewProps> = ({
   const [audioError, setAudioError] = useState<string | null>(null);
   const [correctingAyahBanner, setCorrectingAyahBanner] =
     useState<PageEntry | null>(null);
-  const [downloadingPage, setDownloadingPage] = useState(false);
-  const [pageAudioCached, setPageAudioCached] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   const [retryTick, setRetryTick] = useState(0);
@@ -234,7 +229,7 @@ export const QuranView: React.FC<QuranViewProps> = ({
       } catch {
         if (active) {
           setLoadError(
-            'تعذر فتح المصحف — اضغط إعادة المحاولة أو افتح الصفحة مرة واحدة مع الإنترنت لحفظ المصحف على الجهاز',
+            'تعذر فتح صفحة المصحف حاليًا — اضغط إعادة المحاولة',
           );
           setLoading(false);
         }
@@ -320,7 +315,6 @@ export const QuranView: React.FC<QuranViewProps> = ({
   // Sync page changes -> Khatma + Last Read Position
   useEffect(() => {
     setPageInput(String(currentPage));
-    setPageAudioCached(false);
     setFloatingPopup(null);
     onUpdateKhatma((prev) =>
       prev.currentPage === currentPage ? prev : {...prev, currentPage},
@@ -456,11 +450,7 @@ export const QuranView: React.FC<QuranViewProps> = ({
         audio.playbackRate = 1;
         setIsPlaying(false);
         setPlayingAyahId(null);
-        setAudioError(
-          navigator.onLine
-            ? 'تعذر تشغيل التلاوة حاليًا'
-            : 'هذه التلاوة غير محفوظة محليًا — اضغط تحميل من الفهرس أثناء وجود نت',
-        );
+        setAudioError('تعذر تشغيل هذه التلاوة حاليًا');
       };
 
       audio.play().catch(() => {
@@ -503,17 +493,6 @@ export const QuranView: React.FC<QuranViewProps> = ({
     } else if (pageEntries.length > 0) {
       playSingleAyahOrSequence(activeSelectedEntry ?? pageEntries[0], true);
     }
-  };
-
-  const handleDownloadPageAudio = async () => {
-    if (pageEntries.length === 0) return;
-    setDownloadingPage(true);
-    const urls = pageEntries.map((e) =>
-      getAyahAudioUrl(preferredReciter, e.surah.n, e.ayah.n),
-    );
-    await cacheBatchUrls(urls);
-    setDownloadingPage(false);
-    setPageAudioCached(true);
   };
 
   const openAyahCircularDock = (entry: PageEntry) => {
@@ -1144,7 +1123,7 @@ export const QuranView: React.FC<QuranViewProps> = ({
                 <button
                   type="button"
                   onClick={togglePlayPage}
-                  className="inline-flex min-h-[36px] items-center gap-1 rounded-xl border border-[#C9A227] bg-[#141004] px-2.5 text-xs font-bold text-[#FCE38A]"
+                  className="inline-flex min-h-[36px] items-center gap-1 rounded-xl border border-[#C9A227] bg-[#141004] px-3 text-xs font-bold text-[#FCE38A]"
                 >
                   {isPlaying ? (
                     <Pause className="h-3.5 w-3.5" />
@@ -1152,21 +1131,6 @@ export const QuranView: React.FC<QuranViewProps> = ({
                     <Play className="h-3.5 w-3.5" />
                   )}
                   <span>{isPlaying ? 'إيقاف' : 'تلاوة'}</span>
-                </button>
-
-                <button
-                  type="button"
-                  disabled={downloadingPage}
-                  onClick={handleDownloadPageAudio}
-                  className="inline-flex min-h-[36px] items-center gap-1 rounded-xl border border-[#C9A227]/60 bg-black px-2.5 text-xs font-bold text-[#F3D56B]"
-                >
-                  {downloadingPage ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : pageAudioCached ? (
-                    <Check className="h-3.5 w-3.5" />
-                  ) : (
-                    <Download className="h-3.5 w-3.5" />
-                  )}
                 </button>
               </div>
 

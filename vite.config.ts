@@ -29,6 +29,7 @@ export default defineConfig(() => {
           'audio/pre-chime.mp3',
           'audio/pre-istighfar.mp3',
           'audio/pre-takbeer.mp3',
+          'audio/post-adhan-dua.mp3',
           'audio/tawasih-naqshabandi-1.mp3',
           'audio/tawasih-naqshabandi-2.mp3',
           'audio/tawasih-naqshabandi-3.mp3',
@@ -36,6 +37,13 @@ export default defineConfig(() => {
           'audio/salawat-2.mp3',
           'audio/salawat-3.mp3',
           'audio/salawat-4.mp3',
+          'audio/eid-makkah-1.mp3',
+          'audio/eid-makkah-2.mp3',
+          'audio/eid-jamaa.mp3',
+          'audio/kahf-abdulbasit.mp3',
+          'audio/kahf-alafasy.mp3',
+          'audio/kahf-muaiqly.mp3',
+          'audio/sheikh-start-reading.mp3',
           'data/quran.json',
           'data/tafsir.json',
         ],
@@ -98,7 +106,7 @@ export default defineConfig(() => {
           ],
         },
         workbox: {
-          maximumFileSizeToCacheInBytes: 15 * 1024 * 1024,
+          maximumFileSizeToCacheInBytes: 25 * 1024 * 1024,
           navigateFallback: '/index.html',
           globPatterns: ['**/*.{js,css,html,ico,png,jpg,svg,woff,woff2,json,mp3}'],
           cleanupOutdatedCaches: true,
@@ -143,10 +151,9 @@ export default defineConfig(() => {
                 !url.pathname.startsWith('/@vite') &&
                 !url.pathname.startsWith('/data/') &&
                 !url.pathname.startsWith('/audio/'),
-              handler: 'NetworkFirst',
+              handler: 'StaleWhileRevalidate',
               options: {
                 cacheName: 'alzahabi-app-shell-v1',
-                networkTimeoutSeconds: 3,
                 expiration: {
                   maxEntries: 300,
                   maxAgeSeconds: 60 * 60 * 24 * 30,

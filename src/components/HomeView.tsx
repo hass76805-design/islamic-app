@@ -12,11 +12,9 @@ import {
   Clock,
   Compass,
   Copy,
-  Download,
   Heart,
   HeartHandshake,
   HelpCircle,
-  Loader2,
   MapPin,
   Mic,
   Moon,
@@ -43,10 +41,6 @@ import {
 } from '../types';
 import {useHardwareBack} from '../utils/backNavigation';
 import {formatGregorianAr, getDateKey, getHijriParts} from '../utils/hijri';
-import {
-  downloadAllOfflinePackage,
-  isOfflinePackageDownloaded,
-} from '../utils/offlineAudioCache';
 import {
   computeDailyPrayerData,
   DEFAULT_PRAYER_OFFSETS,
@@ -102,14 +96,6 @@ export const HomeView: React.FC<HomeViewProps> = ({
   const [citySearch, setCitySearch] = useState('');
   const [shareModalOpen, setShareModalOpen] = useState(false);
   const [shareCopied, setShareCopied] = useState(false);
-  const [offlinePackDone, setOfflinePackDone] = useState(() =>
-    isOfflinePackageDownloaded(),
-  );
-  const [offlineProgress, setOfflineProgress] = useState<{
-    done: number;
-    total: number;
-    stageLabel: string;
-  } | null>(null);
   const [timeFormat, setTimeFormat] = useState<'12' | '24'>(() => {
     if (typeof window !== 'undefined') {
       const saved = window.localStorage.getItem('alzahabi_time_format');
@@ -117,23 +103,6 @@ export const HomeView: React.FC<HomeViewProps> = ({
     }
     return '12';
   });
-
-  const handleDownloadAllOffline = async () => {
-    if (offlineProgress) return;
-    setOfflineProgress({
-      done: 0,
-      total: 100,
-      stageLabel: 'جاري تجهيز التحميل الكامل للجهاز...',
-    });
-    await downloadAllOfflinePackage(
-      settings.preferredReciter,
-      (done, total, stageLabel) => {
-        setOfflineProgress({done, total, stageLabel});
-      },
-    );
-    setOfflineProgress(null);
-    setOfflinePackDone(true);
-  };
 
   useHardwareBack(cityPickerOpen, () => setCityPickerOpen(false));
   useHardwareBack(shareModalOpen, () => setShareModalOpen(false));
@@ -321,6 +290,13 @@ export const HomeView: React.FC<HomeViewProps> = ({
       onClick: () => onOpenMoreSubPage('stories', 'prophets'),
     },
     {
+      id: 'quran_stories',
+      titleAr: 'قصص القرآن الكريم (15 قصة)',
+      descAr: 'أصحاب الكهف، ذو القرنين، قارون، أصحاب الفيل، الأخدود، وموسى والخضر',
+      icon: <BookOpenText className="h-5 w-5 text-[#C9A227]" />,
+      onClick: () => onOpenMoreSubPage('stories', 'quran'),
+    },
+    {
       id: 'sahaba',
       titleAr: 'قصص الصحابة كاملة (100 قصة)',
       descAr: 'موسوعة 100 صحابي وصحابية كاملة بالتفصيل',
@@ -351,7 +327,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
     {
       id: 'scholars',
       titleAr: 'محاضرات فيديو 30 شيخًا',
-      descAr: '300 فيديو يوتيوب لـ 30 شيخًا من العالم مع التحميل أوفلاين',
+      descAr: '300 محاضرة لـ 30 شيخًا من العالم الإسلامي مع قائمة المفضلة',
       icon: <Mic className="h-5 w-5 text-[#C9A227]" />,
       onClick: () => onOpenMoreSubPage('scholars'),
     },
@@ -622,63 +598,6 @@ export const HomeView: React.FC<HomeViewProps> = ({
             <BellRing className="h-5 w-5" />
           </span>
         </button>
-      </div>
-
-      {/* Offline Full Device Download Card */}
-      <div className="rounded-3xl border-2 border-[#C9A227] bg-[#080602] p-4 text-white">
-        <div className="flex items-center justify-between gap-3">
-          <div className="min-w-0">
-            <span className="text-[11px] font-bold text-[#C9A227]">
-              يعمل 100% بدون نت بعد تحميل مرة واحدة
-            </span>
-            <h3 className="mt-0.5 text-sm font-bold text-[#FCE38A]">
-              تحميل محتوى التطبيق بالكامل للجهاز
-            </h3>
-            <p className="mt-0.5 text-[11px] text-zinc-300">
-              {offlineProgress
-                ? `${offlineProgress.stageLabel} (${offlineProgress.done}/${offlineProgress.total})`
-                : offlinePackDone
-                  ? 'تم حفظ المصحف والمؤذن والكتب ورفيقي أوفلاين على جهازك'
-                  : 'المصحف، 30 مؤذنًا، التواشيح، الأذكار، القصص، رفيقي والكتب'}
-            </p>
-          </div>
-          <button
-            type="button"
-            disabled={!!offlineProgress}
-            onClick={handleDownloadAllOffline}
-            className="inline-flex min-h-[42px] shrink-0 items-center gap-1.5 rounded-2xl bg-[#C9A227] px-3.5 py-2 text-xs font-extrabold text-black disabled:opacity-70"
-          >
-            {offlineProgress ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : offlinePackDone ? (
-              <Check className="h-4 w-4" />
-            ) : (
-              <Download className="h-4 w-4" />
-            )}
-            <span>
-              {offlineProgress
-                ? 'جاري...'
-                : offlinePackDone
-                  ? 'جاهز أوفلاين'
-                  : 'تحميل الكل للجهاز'}
-            </span>
-          </button>
-        </div>
-
-        {offlineProgress && (
-          <div className="mt-3 h-2 w-full overflow-hidden rounded-full border border-[#C9A227]/50 bg-black">
-            <div
-              className="h-full rounded-full bg-gradient-to-l from-[#FCE38A] to-[#C9A227] transition-all"
-              style={{
-                width: `${
-                  offlineProgress.total > 0
-                    ? Math.round((offlineProgress.done / offlineProgress.total) * 100)
-                    : 0
-                }%`,
-              }}
-            />
-          </div>
-        )}
       </div>
 
       {/* All Islamic Modules (1-Col Calm Mobile Cards) */}

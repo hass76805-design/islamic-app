@@ -85,11 +85,7 @@ export const AyahReciterSheet: React.FC<AyahReciterSheetProps> = ({
 
     audio.onerror = () => {
       setIsPlaying(false);
-      setErrorMsg(
-        navigator.onLine
-          ? 'تعذر تشغيل هذه الآية بهذا الصوت حاليًا'
-          : 'هذه التلاوة غير محمّلة بعد للعمل بدون نت',
-      );
+      setErrorMsg('تعذر تشغيل هذه الآية بهذا الصوت حاليًا');
     };
 
     audio.play().catch(() => {

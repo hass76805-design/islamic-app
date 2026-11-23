@@ -1,9 +1,6 @@
 import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {
-  Check,
-  Download,
   HeartHandshake,
-  Loader2,
   Mic,
   MicOff,
   Pause,
@@ -25,7 +22,6 @@ import {
   RECITERS_30,
 } from '../data/reciters';
 import {ReciterId} from '../types';
-import {cacheBatchUrls} from '../utils/offlineAudioCache';
 
 interface RafiqiViewProps {
   preferredReciter: ReciterId;
@@ -63,11 +59,6 @@ export const RafiqiView: React.FC<RafiqiViewProps> = ({preferredReciter}) => {
   const [voiceReplyEnabled, setVoiceReplyEnabled] = useState(true);
   const [isPlayingAyah, setIsPlayingAyah] = useState(false);
   const [audioNote, setAudioNote] = useState<string | null>(null);
-  const [batchProgress, setBatchProgress] = useState<{
-    done: number;
-    total: number;
-  } | null>(null);
-  const [offlineReady, setOfflineReady] = useState(false);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const recRef = useRef<SpeechRecLike | null>(null);
@@ -130,9 +121,7 @@ export const RafiqiView: React.FC<RafiqiViewProps> = ({preferredReciter}) => {
     audio.onended = () => setIsPlayingAyah(false);
     audio.onerror = () => {
       setIsPlayingAyah(false);
-      setAudioNote(
-        'اضغط «تحميل الـ 30 آية بدون نت» عند توفر الاتصال لحفظ تلاوة هذا الشيخ أوفلاين',
-      );
+      setAudioNote('تعذر تشغيل التلاوة حاليًا');
     };
     audio.play().catch(() => {
       setIsPlayingAyah(false);
@@ -232,18 +221,6 @@ export const RafiqiView: React.FC<RafiqiViewProps> = ({preferredReciter}) => {
     } catch {
       setListening(false);
     }
-  };
-
-  const handleDownload30AyahsOffline = async () => {
-    const urls = RAFIQI_WORDS_30.map((w) =>
-      getAyahAudioUrl(selectedReciter, w.surahNumber, w.ayahNumber),
-    );
-    setBatchProgress({done: 0, total: urls.length});
-    await cacheBatchUrls(urls, (done, total) => {
-      setBatchProgress({done, total});
-    });
-    setBatchProgress(null);
-    setOfflineReady(true);
   };
 
   return (
@@ -355,7 +332,6 @@ export const RafiqiView: React.FC<RafiqiViewProps> = ({preferredReciter}) => {
             onChange={(e) => {
               const nextReciter = e.target.value as ReciterId;
               setSelectedReciter(nextReciter);
-              setOfflineReady(false);
               playAyahForEntry(activeWord, nextReciter);
             }}
             className="min-h-[40px] w-full rounded-xl border border-[#C9A227]/60 bg-black px-3 text-xs font-bold text-white outline-none"
@@ -366,28 +342,6 @@ export const RafiqiView: React.FC<RafiqiViewProps> = ({preferredReciter}) => {
               </option>
             ))}
           </select>
-
-          <button
-            type="button"
-            disabled={!!batchProgress}
-            onClick={handleDownload30AyahsOffline}
-            className="inline-flex min-h-[38px] w-full items-center justify-center gap-1.5 rounded-xl border border-[#C9A227] bg-black px-3 text-xs font-bold text-[#FCE38A] disabled:opacity-60"
-          >
-            {batchProgress ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : offlineReady ? (
-              <Check className="h-4 w-4 text-emerald-400" />
-            ) : (
-              <Download className="h-4 w-4" />
-            )}
-            <span>
-              {batchProgress
-                ? `جاري تحميل الـ 30 آية (${batchProgress.done}/${batchProgress.total})`
-                : offlineReady
-                ? 'تم حفظ الـ 30 آية بدون نت لهذا الشيخ'
-                : 'تحميل آيات رفيقي الـ 30 للعمل بدون نت'}
-            </span>
-          </button>
         </div>
       </section>
 

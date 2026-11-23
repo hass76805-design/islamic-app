@@ -134,7 +134,7 @@ export interface DreamEntry {
   detailAr: string;
 }
 
-export type StoryCategoryId = 'prophets' | 'sahaba' | 'lessons' | 'repentance';
+export type StoryCategoryId = 'prophets' | 'quran' | 'sahaba' | 'lessons' | 'repentance';
 
 export interface StoryEntry {
   id: string;
@@ -298,6 +298,7 @@ export interface AppSettings {
   preferredReciter: ReciterId;
   preferredAdhan: string;
   preferredIqamah: string;
+  perPrayerIqamah?: PerPrayerAdhanMap;
   iqamahEnabled: boolean;
   postAdhanDuaEnabled: boolean;
   qiyamEnabled: boolean;
@@ -317,6 +318,7 @@ export interface AppSettings {
   postPrayerAzkarEnabled: boolean;
   backgroundAlertsEnabled: boolean;
   lockScreenKeepAlive?: boolean;
+  prayerConfirmReminderEnabled?: boolean;
   salawatReminderEnabled?: boolean;
   salawatIntervalMinutes?: 10 | 30 | 60;
 }

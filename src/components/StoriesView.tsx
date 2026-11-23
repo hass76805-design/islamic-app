@@ -29,6 +29,7 @@ export const StoriesView: React.FC<StoriesViewProps> = ({
   const countsByCat = useMemo(() => {
     return {
       prophets: ISLAMIC_STORIES.filter((s) => s.category === 'prophets').length,
+      quran: ISLAMIC_STORIES.filter((s) => s.category === 'quran').length,
       sahaba: ISLAMIC_STORIES.filter((s) => s.category === 'sahaba').length,
       lessons: ISLAMIC_STORIES.filter((s) => s.category === 'lessons').length,
       repentance: ISLAMIC_STORIES.filter((s) => s.category === 'repentance').length,
@@ -37,6 +38,7 @@ export const StoriesView: React.FC<StoriesViewProps> = ({
 
   const STORY_TABS: Array<{id: StoryCategoryId; labelAr: string; count: number}> = [
     {id: 'prophets', labelAr: 'قصص الأنبياء', count: countsByCat.prophets},
+    {id: 'quran', labelAr: 'قصص القرآن', count: countsByCat.quran},
     {id: 'sahaba', labelAr: 'قصص الصحابة', count: countsByCat.sahaba},
     {id: 'lessons', labelAr: 'قصص وعبر ومواعظ', count: countsByCat.lessons},
     {id: 'repentance', labelAr: 'قصص الغفران والتوبة', count: countsByCat.repentance},
@@ -80,7 +82,7 @@ export const StoriesView: React.FC<StoriesViewProps> = ({
                 موسوعة القصص الإسلامية الكاملة (للقراءة فقط)
               </h2>
               <p className="mt-0.5 text-xs text-slate-600 dark:text-zinc-300">
-                25 قصة للأنبياء · 100 قصة للصحابة الكرام · 30 قصة وعبرة · 20 قصة في الغفران والتوبة
+                25 قصة للأنبياء · 15 قصة من القرآن · 100 للصحابة · 30 وعبرة · 20 في الغفران والتوبة
               </p>
             </div>
           </div>

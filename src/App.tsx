@@ -2,11 +2,14 @@ import {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {
   BellRing,
   BookOpen,
+  Check,
   Compass,
   HeartHandshake,
   Home,
   LayoutGrid,
+  MapPin,
   Moon,
+  ShieldCheck,
   Sun,
   X,
 } from 'lucide-react';
@@ -61,6 +64,7 @@ import {
   computeDailyPrayerData,
   computeQiyamAlLaylTime,
   DEFAULT_PRAYER_OFFSETS,
+  precomputeMonthlyPrayerCache,
 } from './utils/prayerTimes';
 import {playRamadanCannonSound} from './utils/ramadanCannon';
 
@@ -152,8 +156,11 @@ function createSilentWavBlobUrl(): string {
   return URL.createObjectURL(new Blob([buffer], {type: 'audio/wav'}));
 }
 
+const DEFAULT_CAIRO_CITY: UserLocation =
+  PRESET_CITIES.find((c) => c.city === 'القاهرة') || PRESET_CITIES[7];
+
 const DEFAULT_SETTINGS: AppSettings = {
-  calculationMethod: 'UmmAlQura',
+  calculationMethod: 'Egyptian',
   madhab: 'Shafi',
   darkMode: true,
   quranFontSize: 22,
@@ -176,10 +183,17 @@ const DEFAULT_SETTINGS: AppSettings = {
     isha: true,
   },
   preferredIqamah: 'iqamah-makkah',
+  perPrayerIqamah: {
+    fajr: 'iqamah-makkah',
+    dhuhr: 'iqamah-makkah',
+    asr: 'iqamah-makkah',
+    maghrib: 'iqamah-makkah',
+    isha: 'iqamah-makkah',
+  },
   iqamahEnabled: true,
   postAdhanDuaEnabled: true,
   qiyamEnabled: true,
-  preferredPreAdhanSound: 'pre-chime',
+  preferredPreAdhanSound: 'pre-takbeer',
   preferredTawasih: 'tawasih-naqshabandi-1',
   preferredEidTakbeer: 'eid-makkah-1',
   preferredFridayKahf: 'kahf-alafasy',
@@ -192,8 +206,9 @@ const DEFAULT_SETTINGS: AppSettings = {
   fridayKahfReminder: true,
   postPrayerAzkarEnabled: true,
   backgroundAlertsEnabled: true,
-  lockScreenKeepAlive: false,
-  salawatReminderEnabled: false,
+  lockScreenKeepAlive: true,
+  prayerConfirmReminderEnabled: true,
+  salawatReminderEnabled: true,
   salawatIntervalMinutes: 10,
 };
 
@@ -247,10 +262,19 @@ function AppContent({
 
   const [location, setLocation] = useLocalStorage<UserLocation>(
     'ana_muslim_location',
-    PRESET_CITIES[0],
+    DEFAULT_CAIRO_CITY,
   );
   const [gpsLoading, setGpsLoading] = useState(false);
   const [gpsError, setGpsError] = useState<string | null>(null);
+  const [notifPermState, setNotifPermState] = useState<
+    NotificationPermission | 'unsupported'
+  >(() =>
+    typeof window !== 'undefined' && 'Notification' in window
+      ? Notification.permission
+      : 'unsupported',
+  );
+  const [audioUnlocked, setAudioUnlocked] = useState(false);
+  const [permBannerDismissed, setPermBannerDismissed] = useState(false);
 
   const [bookmarks, setBookmarks] = useLocalStorage<QuranBookmark[]>(
     'ana_muslim_bookmarks',
@@ -316,6 +340,7 @@ function AppContent({
   } | null>(null);
   const [liveAdhanModal, setLiveAdhanModal] = useState<{
     prayerNameAr: string;
+    prayerKey?: TrackablePrayer;
     voice: AdhanVoice;
     mode?: 'adhan' | 'iqamah' | 'dua';
   } | null>(null);
@@ -345,7 +370,32 @@ function AppContent({
     return () => setRootBackHandler(null);
   }, []);
 
-  // Silently auto-detect GPS on startup to calibrate prayer times & Qibla (falls back silently to last saved location when offline)
+  // Ensure initial non-GPS default migrates cleanly to Cairo + Egyptian method
+  const cairoInitRef = useRef(false);
+  useEffect(() => {
+    if (cairoInitRef.current || typeof window === 'undefined') return;
+    cairoInitRef.current = true;
+    try {
+      if (window.localStorage.getItem('alzahabi_cairo_default_v2') !== '1') {
+        window.localStorage.setItem('alzahabi_cairo_default_v2', '1');
+        if (!location.isGps && location.city === 'مكة المكرمة') {
+          setLocation(DEFAULT_CAIRO_CITY);
+          setSettings((s) => ({
+            ...s,
+            calculationMethod: 'Egyptian',
+            preAdhanMinutes: 10,
+            preferredPreAdhanSound: 'pre-takbeer',
+            lockScreenKeepAlive: true,
+            prayerConfirmReminderEnabled: true,
+          }));
+        }
+      }
+    } catch {
+      // ignore storage failure
+    }
+  }, [location.isGps, location.city, setLocation, setSettings]);
+
+  // Immediately request GPS permission on launch so times & Qibla calibrate automatically
   const gpsAutoRequestedRef = useRef(false);
   useEffect(() => {
     if (gpsAutoRequestedRef.current) return;
@@ -364,25 +414,84 @@ function AppContent({
           country: nearest.country,
           isGps: true,
         });
+        if (nearest.country === 'مصر') {
+          setSettings((s) =>
+            s.calculationMethod === 'Egyptian'
+              ? s
+              : {...s, calculationMethod: 'Egyptian'},
+          );
+        }
       },
       () => {
-        // Keep last saved ana_muslim_location silently without showing any blocking error
+        // Fall back seamlessly to saved location / Cairo default
       },
-      {enableHighAccuracy: false, timeout: 6000, maximumAge: 600000},
+      {enableHighAccuracy: true, timeout: 8000, maximumAge: 180000},
     );
-  }, [setLocation]);
+  }, [setLocation, setSettings]);
 
-  // Automatically pre-warm all core offline Quran/Tafsir text + local Adhan/Naqshabandi audio immediately when online
+  // Unlock background Web Audio + keep-alive loop cleanly on first user interaction
+  const unlockAudioEngine = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      if (!adhanAudioRef.current) {
+        adhanAudioRef.current = new Audio();
+        adhanAudioRef.current.preload = 'auto';
+      }
+      const adhanEl = adhanAudioRef.current;
+      adhanEl.volume = 1;
+      adhanEl.muted = false;
+      if (adhanEl.paused && !adhanEl.currentSrc) {
+        const silentWav = createSilentWavBlobUrl();
+        adhanEl.src = silentWav;
+        adhanEl.muted = true;
+        adhanEl
+          .play()
+          .then(() => {
+            adhanEl.pause();
+            adhanEl.currentTime = 0;
+            adhanEl.muted = false;
+            adhanEl.removeAttribute('src');
+            URL.revokeObjectURL(silentWav);
+          })
+          .catch(() => {
+            adhanEl.muted = false;
+            URL.revokeObjectURL(silentWav);
+          });
+      }
+      if (keepAliveAudioRef.current && keepAliveAudioRef.current.paused) {
+        keepAliveAudioRef.current.play().catch(() => {});
+      }
+      setAudioUnlocked(true);
+    } catch {
+      setAudioUnlocked(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof document === 'undefined' || audioUnlocked) return;
+    const onFirstGesture = () => {
+      unlockAudioEngine();
+    };
+    document.addEventListener('pointerdown', onFirstGesture, {
+      once: true,
+      passive: true,
+    });
+    return () => {
+      document.removeEventListener('pointerdown', onFirstGesture);
+    };
+  }, [audioUnlocked, unlockAudioEngine]);
+
+  // Automatically pre-warm all core offline Quran/Tafsir text + local & 30 Muezzins/Azkar/Rafiqi audio silently when online
   const corePrewarmedRef = useRef(false);
   useEffect(() => {
     if (corePrewarmedRef.current) return;
     if (typeof navigator !== 'undefined' && !navigator.onLine) return;
     corePrewarmedRef.current = true;
     const t = window.setTimeout(() => {
-      void prewarmCoreOfflineTextData();
+      void prewarmCoreOfflineTextData(settings.preferredReciter);
     }, 450);
     return () => window.clearTimeout(t);
-  }, []);
+  }, [settings.preferredReciter]);
 
   // Quietly pre-warm Al-Fatihah recitation audio once online after splash
   const prewarmedRef = useRef<string | null>(null);
@@ -513,10 +622,16 @@ function AppContent({
   const playManagedAudio = useCallback((url: string) => {
     if (!adhanAudioRef.current) {
       adhanAudioRef.current = new Audio();
+      adhanAudioRef.current.preload = 'auto';
     }
-    adhanAudioRef.current.src = url;
-    adhanAudioRef.current.onended = null;
-    adhanAudioRef.current.play().catch(() => {});
+    const el = adhanAudioRef.current;
+    el.pause();
+    el.volume = 1;
+    el.muted = false;
+    el.src = url;
+    el.onended = null;
+    el.load();
+    el.play().catch(() => {});
   }, []);
 
   const playPostPrayerAzkar = useCallback(() => {
@@ -609,6 +724,57 @@ function AppContent({
     if (!('serviceWorker' in navigator)) return;
     const onSwMessage = (event: MessageEvent) => {
       const data = event.data;
+      if (data?.type === 'MARK_PRAYER_CONFIRMED' && data.dateKey && data.prayerKey) {
+        const pKey = data.prayerKey as TrackablePrayer;
+        setPrayerLog((prev) => {
+          const existingDay = prev[data.dateKey] || {
+            fajr: 'none',
+            dhuhr: 'none',
+            asr: 'none',
+            maghrib: 'none',
+            isha: 'none',
+          };
+          return {
+            ...prev,
+            [data.dateKey]: {
+              ...existingDay,
+              [pKey]: 'ontime',
+            },
+          };
+        });
+        return;
+      }
+
+      if (data?.type === 'DISMISSED_PRAYERS_SNAPSHOT' && data.dismissed) {
+        const dismissedMap = data.dismissed as Record<string, number>;
+        const entries = Object.keys(dismissedMap);
+        if (entries.length > 0) {
+          setPrayerLog((prev) => {
+            let changed = false;
+            const next = {...prev};
+            for (const composite of entries) {
+              const lastDash = composite.lastIndexOf('-');
+              if (lastDash <= 0) continue;
+              const dKey = composite.slice(0, lastDash);
+              const pKey = composite.slice(lastDash + 1) as TrackablePrayer;
+              const existingDay = next[dKey] || {
+                fajr: 'none',
+                dhuhr: 'none',
+                asr: 'none',
+                maghrib: 'none',
+                isha: 'none',
+              };
+              if (existingDay[pKey] === 'none') {
+                next[dKey] = {...existingDay, [pKey]: 'ontime'};
+                changed = true;
+              }
+            }
+            return changed ? next : prev;
+          });
+        }
+        return;
+      }
+
       if (data?.type === 'PLAY_ADHAN_FROM_NOTIFICATION') {
         const matchedVoice =
           ADHAN_VOICES_30.find((v) => v.id === data.voiceId) ||
@@ -621,6 +787,9 @@ function AppContent({
           const isDuaMode = data.alertType === 'post-adhan-dua';
           setLiveAdhanModal({
             prayerNameAr: data.prayerName || data.prayerNameAr || 'الصلاة',
+            prayerKey: (data.prayerKey || undefined) as
+              | TrackablePrayer
+              | undefined,
             voice: matchedVoice,
             mode: isDuaMode ? 'dua' : isIqamahMode ? 'iqamah' : 'adhan',
           });
@@ -656,16 +825,41 @@ function AppContent({
     document.addEventListener('visibilitychange', onVisibility);
     window.addEventListener('focus', onFocusOrPageShow);
     window.addEventListener('pageshow', onFocusOrPageShow);
+    navigator.serviceWorker.ready
+      .then((reg) => {
+        reg.active?.postMessage({type: 'CHECK_DUE_ADHAN_ALERTS'});
+      })
+      .catch(() => {});
     return () => {
       navigator.serviceWorker.removeEventListener('message', onSwMessage);
       document.removeEventListener('visibilitychange', onVisibility);
       window.removeEventListener('focus', onFocusOrPageShow);
       window.removeEventListener('pageshow', onFocusOrPageShow);
     };
-  }, [playManagedAudio]);
+  }, [playManagedAudio, setPrayerLog]);
 
-  // Sync Today + Next 7 Days Adhan, Pre-Adhan, Iqamah, Tawasih, Azkar, Kahf, Eid & Salawat alerts to Service Worker
+  // Sync Today + Next 30 Days Prayer Times Cache (Cairo + Current Location) + Service Worker Alerts
   const scheduleDateKey = getDateKey(now);
+  useEffect(() => {
+    precomputeMonthlyPrayerCache(
+      location.latitude,
+      location.longitude,
+      settings.calculationMethod,
+      settings.madhab,
+      settings.prayerOffsets,
+      location.city,
+      30,
+    );
+  }, [
+    location.latitude,
+    location.longitude,
+    location.city,
+    settings.calculationMethod,
+    settings.madhab,
+    settings.prayerOffsets,
+    scheduleDateKey,
+  ]);
+
   useEffect(() => {
     if (
       (!settings.adhanEnabled && !settings.salawatReminderEnabled) ||
@@ -702,11 +896,13 @@ function AppContent({
       timestamp: number;
       audioUrl: string;
       type: string;
+      dateKey?: string;
+      prayerKey?: string;
     }> = [];
 
     const nowMs = Date.now();
-    // Schedule 7 days ahead in Service Worker so background Adhan keeps working even without reopening daily
-    for (let dayOffset = 0; settings.adhanEnabled && dayOffset < 7; dayOffset++) {
+    // Schedule 30 days (1 full month) ahead in Service Worker so background Adhan keeps working offline all month
+    for (let dayOffset = 0; settings.adhanEnabled && dayOffset < 30; dayOffset++) {
       const targetDate = new Date();
       targetDate.setDate(targetDate.getDate() + dayOffset);
       const dayKey = getDateKey(targetDate);
@@ -730,17 +926,22 @@ function AppContent({
           ADHAN_VOICES_30.find((a) => a.id === voiceId) || ADHAN_VOICES_30[0];
         const resolvedAdhanUrl = voice.fallbackUrl || voice.url;
         const ts = item.time.getTime();
+        const isAlreadyPrayed =
+          prayerLog[dayKey]?.[prayerKey] === 'ontime' ||
+          prayerLog[dayKey]?.[prayerKey] === 'late';
 
         if (isPrayerEnabled && ts > nowMs) {
           alerts.push({
             tag: `adhan-${dayKey}-${item.key}`,
-            title: 'البرنامج الإسلامي الذهبي',
-            body: `حان الآن موعد أذان ${item.nameAr} (${voice.nameAr})`,
+            title: `حان الآن أذان ${item.nameAr}`,
+            body: `البرنامج الإسلامي الذهبي — ${voice.nameAr}`,
             prayerName: item.nameAr,
             voiceId: voice.id,
             timestamp: ts,
             audioUrl: resolvedAdhanUrl,
             type: 'adhan',
+            dateKey: dayKey,
+            prayerKey,
           });
         }
 
@@ -749,19 +950,21 @@ function AppContent({
           if (preTs > nowMs) {
             alerts.push({
               tag: `preadhan-${dayKey}-${item.key}`,
-              title: 'تنبيه اقتراب الصلاة — البرنامج الإسلامي الذهبي',
-              body: `متبقي ${settings.preAdhanMinutes} دقائق على أذان ${item.nameAr}`,
+              title: `قربت صلاة ${item.nameAr}`,
+              body: `تنبيه: متبقي ${settings.preAdhanMinutes} دقائق على أذان ${item.nameAr}`,
               prayerName: item.nameAr,
               voiceId: activePreSound.id,
               timestamp: preTs,
               audioUrl: activePreSound.url,
               type: 'pre-adhan',
+              dateKey: dayKey,
+              prayerKey,
             });
           }
         }
 
         if (isPrayerEnabled && (settings.postAdhanDuaEnabled ?? true)) {
-          const duaTs = ts + 150 * 1000;
+          const duaTs = ts + 135 * 1000;
           if (duaTs > nowMs) {
             alerts.push({
               tag: `dua-${dayKey}-${item.key}`,
@@ -770,25 +973,61 @@ function AppContent({
               prayerName: item.nameAr,
               voiceId: voice.id,
               timestamp: duaTs,
-              audioUrl: resolvedAdhanUrl,
+              audioUrl: POST_ADHAN_DUA.audioUrl,
               type: 'post-adhan-dua',
+              dateKey: dayKey,
+              prayerKey,
             });
           }
         }
 
+        // Iqamah strictly 15 minutes after Adhan (per-prayer voice support)
         if (isPrayerEnabled && (settings.iqamahEnabled ?? true)) {
-          const iqamahTs = ts + 12 * 60 * 1000;
+          const iqamahTs = ts + 15 * 60 * 1000;
+          const prayerIqamahId =
+            settings.perPrayerIqamah?.[prayerKey] || settings.preferredIqamah;
+          const prayerIqamahVoice =
+            IQAMAH_VOICES_3.find((iq) => iq.id === prayerIqamahId) ||
+            activeIqamahVoice;
           if (iqamahTs > nowMs) {
             alerts.push({
               tag: `iqamah-${dayKey}-${item.key}`,
-              title: `إقامة صلاة ${item.nameAr} — البرنامج الإسلامي الذهبي`,
-              body: `حان وقت إقامة صلاة ${item.nameAr} (${activeIqamahVoice.nameAr})`,
+              title: `إقامة صلاة ${item.nameAr} — بعد 15 دقيقة`,
+              body: `حان وقت إقامة صلاة ${item.nameAr} (${prayerIqamahVoice.nameAr})`,
               prayerName: item.nameAr,
-              voiceId: activeIqamahVoice.id,
+              voiceId: prayerIqamahVoice.id,
               timestamp: iqamahTs,
-              audioUrl: activeIqamahVoice.url,
+              audioUrl: prayerIqamahVoice.url,
               type: 'iqamah',
+              dateKey: dayKey,
+              prayerKey,
             });
+          }
+        }
+
+        // Persistent repeating prayer reminder until user taps "صليت ✓" (for next 3 days)
+        if (
+          dayOffset < 3 &&
+          isPrayerEnabled &&
+          (settings.prayerConfirmReminderEnabled ?? true) &&
+          !isAlreadyPrayed
+        ) {
+          for (const offsetMin of [20, 25, 30, 35, 40, 45, 50]) {
+            const confirmTs = ts + offsetMin * 60 * 1000;
+            if (confirmTs > nowMs) {
+              alerts.push({
+                tag: `prayconfirm-${dayKey}-${item.key}-${offsetMin}`,
+                title: `هل صليت ${item.nameAr}؟`,
+                body: `وقت صلاة ${item.nameAr} قائم — اضغط «صليت ✓» لإيقاف التذكير`,
+                prayerName: item.nameAr,
+                voiceId: 'pre-chime',
+                timestamp: confirmTs,
+                audioUrl: '/audio/pre-chime.mp3',
+                type: 'prayconfirm',
+                dateKey: dayKey,
+                prayerKey,
+              });
+            }
           }
         }
 
@@ -1009,6 +1248,7 @@ function AppContent({
     settings.qiyamEnabled,
     settings.enabledPrayers,
     settings.preferredIqamah,
+    settings.perPrayerIqamah,
     settings.preferredPreAdhanSound,
     settings.preAdhanMinutes,
     settings.preferredAdhan,
@@ -1022,6 +1262,8 @@ function AppContent({
     settings.eidTakbeeratEnabled,
     settings.salawatReminderEnabled,
     settings.salawatIntervalMinutes,
+    settings.prayerConfirmReminderEnabled,
+    prayerLog,
     settings.calculationMethod,
     settings.madhab,
     settings.prayerOffsets,
@@ -1116,6 +1358,7 @@ function AppContent({
           window.setTimeout(() => {
             setLiveAdhanModal({
               prayerNameAr: `صلاة ${item.nameAr}`,
+              prayerKey,
               voice,
               mode: 'adhan',
             });
@@ -1123,6 +1366,7 @@ function AppContent({
         } else {
           setLiveAdhanModal({
             prayerNameAr: `صلاة ${item.nameAr}`,
+            prayerKey,
             voice,
             mode: 'adhan',
           });
@@ -1130,7 +1374,7 @@ function AppContent({
       }
 
       if (isPrayerEnabled && (settings.postAdhanDuaEnabled ?? true)) {
-        const duaSec = targetSec + 150;
+        const duaSec = targetSec + 135;
         const duaKey = `dua-${todayStr}-${item.key}`;
         if (
           isDueWithinWindow(duaSec, 300) &&
@@ -1154,6 +1398,7 @@ function AppContent({
               ? prev
               : {
                   prayerNameAr: `صلاة ${item.nameAr}`,
+                  prayerKey,
                   voice,
                   mode: 'dua',
                 },
@@ -1161,22 +1406,29 @@ function AppContent({
         }
       }
 
+      // Iqamah strictly 15 minutes after Adhan (per-prayer voice support)
       if (isPrayerEnabled && (settings.iqamahEnabled ?? true)) {
-        const iqamahSec = targetSec + 12 * 60;
+        const iqamahSec = targetSec + 15 * 60;
         const iqamahKey = `iqamah-${todayStr}-${item.key}`;
         if (
           isDueWithinWindow(iqamahSec, 300) &&
           !triggeredAlertsRef.current.has(iqamahKey)
         ) {
           markAlertHandled(iqamahKey);
+          const prayerIqamahId =
+            settings.perPrayerIqamah?.[prayerKey] || settings.preferredIqamah;
+          const prayerIqamahVoice =
+            IQAMAH_VOICES_3.find((v) => v.id === prayerIqamahId) ||
+            activeIqamahVoice;
           showSystemNotification(
-            'البرنامج الإسلامي الذهبي — إقامة الصلاة',
-            `حان وقت إقامة صلاة ${item.nameAr} (${activeIqamahVoice.nameAr})`,
+            `إقامة صلاة ${item.nameAr} — البرنامج الإسلامي الذهبي`,
+            `حان وقت إقامة صلاة ${item.nameAr} (${prayerIqamahVoice.nameAr})`,
             iqamahKey,
           );
           setLiveAdhanModal({
             prayerNameAr: `صلاة ${item.nameAr}`,
-            voice: activeIqamahVoice,
+            prayerKey,
+            voice: prayerIqamahVoice,
             mode: 'iqamah',
           });
         }
@@ -1211,14 +1463,37 @@ function AppContent({
         ) {
           markAlertHandled(preKey);
           setAdhanBanner({
-            text: `تنبيه: متبقي ${settings.preAdhanMinutes} دقائق على أذان ${item.nameAr}`,
+            text: `قربت صلاة ${item.nameAr} — متبقي ${settings.preAdhanMinutes} دقائق على الأذان`,
           });
           showSystemNotification(
-            'تنبيه اقتراب الصلاة — البرنامج الإسلامي الذهبي',
-            `متبقي ${settings.preAdhanMinutes} دقائق على أذان ${item.nameAr}`,
+            `قربت صلاة ${item.nameAr}`,
+            `تنبيه: متبقي ${settings.preAdhanMinutes} دقائق على أذان ${item.nameAr}`,
             preKey,
           );
           playManagedAudio(activePreAdhanVoice.url);
+        }
+      }
+
+      // Foreground repeating prayer reminder every 5 minutes (from +20m to +90m) until marked "صليت"
+      const loggedStatus = prayerLog[todayStr]?.[prayerKey] || 'none';
+      const elapsedAfterAdhanMin = Math.floor((nowSec - targetSec) / 60);
+      if (
+        isPrayerEnabled &&
+        (settings.prayerConfirmReminderEnabled ?? true) &&
+        loggedStatus === 'none' &&
+        elapsedAfterAdhanMin >= 20 &&
+        elapsedAfterAdhanMin <= 90
+      ) {
+        const bucket = Math.floor(elapsedAfterAdhanMin / 5) * 5;
+        const confirmKey = `prayconfirm-${todayStr}-${item.key}-${bucket}`;
+        if (!triggeredAlertsRef.current.has(confirmKey)) {
+          markAlertHandled(confirmKey);
+          showSystemNotification(
+            `هل صليت ${item.nameAr}؟`,
+            `اضغط «صليت ✓» لإيقاف تذكير صلاة ${item.nameAr}`,
+            confirmKey,
+          );
+          playManagedAudio('/audio/pre-chime.mp3');
         }
       }
     }
@@ -1330,6 +1605,7 @@ function AppContent({
     settings.madhab,
     settings.prayerOffsets,
     settings.preferredIqamah,
+    settings.perPrayerIqamah,
     settings.preferredPreAdhanSound,
     settings.preferredTawasih,
     settings.preferredEidTakbeer,
@@ -1344,6 +1620,8 @@ function AppContent({
     settings.fridayKahfReminder,
     settings.salawatReminderEnabled,
     settings.salawatIntervalMinutes,
+    settings.prayerConfirmReminderEnabled,
+    prayerLog,
     playManagedAudio,
     showSystemNotification,
   ]);
@@ -1353,6 +1631,137 @@ function AppContent({
     () => (azkarLog.date === todayKey ? azkarLog.counts : {}),
     [azkarLog, todayKey],
   );
+
+  // Active prayer waiting for "صليت ✓" confirmation
+  const activeUnconfirmedPrayer = useMemo(() => {
+    if (!settings.adhanEnabled || !(settings.prayerConfirmReminderEnabled ?? true)) {
+      return null;
+    }
+    const nowMs = now.getTime();
+    const passed = dailyPrayerData.schedule.filter(
+      (item) =>
+        item.key !== 'sunrise' &&
+        (settings.enabledPrayers?.[item.key as TrackablePrayer] ?? true) &&
+        item.time.getTime() <= nowMs &&
+        nowMs - item.time.getTime() <= 2 * 60 * 60 * 1000,
+    );
+    if (passed.length === 0) return null;
+    const latest = passed[passed.length - 1];
+    const pKey = latest.key as TrackablePrayer;
+    const status = prayerLog[todayKey]?.[pKey] || 'none';
+    if (status === 'ontime' || status === 'late') return null;
+    const elapsedMin = Math.floor((nowMs - latest.time.getTime()) / 60000);
+    return {
+      key: pKey,
+      nameAr: latest.nameAr,
+      elapsedMin,
+    };
+  }, [
+    settings.adhanEnabled,
+    settings.prayerConfirmReminderEnabled,
+    settings.enabledPrayers,
+    dailyPrayerData.schedule,
+    now,
+    prayerLog,
+    todayKey,
+  ]);
+
+  const confirmPrayerAndStopReminders = useCallback(
+    (dKey: string, pKey: TrackablePrayer) => {
+      setPrayerLog((prev) => {
+        const existingDay = prev[dKey] || {
+          fajr: 'none',
+          dhuhr: 'none',
+          asr: 'none',
+          maghrib: 'none',
+          isha: 'none',
+        };
+        return {
+          ...prev,
+          [dKey]: {
+            ...existingDay,
+            [pKey]: 'ontime',
+          },
+        };
+      });
+      adhanAudioRef.current?.pause();
+      if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
+        navigator.serviceWorker.ready
+          .then((reg) => {
+            reg.active?.postMessage({
+              type: 'DISMISS_PRAYER_REMINDER',
+              dateKey: dKey,
+              prayerKey: pKey,
+            });
+          })
+          .catch(() => {});
+      }
+    },
+    [setPrayerLog],
+  );
+
+  const handleActivateAllPermissions = useCallback(async () => {
+    unlockAudioEngine();
+    if (typeof window !== 'undefined' && 'Notification' in window) {
+      try {
+        const perm = await Notification.requestPermission();
+        setNotifPermState(perm);
+        if (perm === 'granted' && 'serviceWorker' in navigator) {
+          const reg = await navigator.serviceWorker.ready;
+          const regWithSync = reg as ServiceWorkerRegistration & {
+            periodicSync?: {
+              register: (tag: string, opts: {minInterval: number}) => Promise<void>;
+            };
+          };
+          reg.active?.postMessage({type: 'CHECK_DUE_ADHAN_ALERTS'});
+          if (regWithSync.periodicSync) {
+            await regWithSync.periodicSync
+              .register('adhan-background-check', {
+                minInterval: 15 * 60 * 1000,
+              })
+              .catch(() => {});
+          }
+        }
+      } catch {
+        // ignore notification errors
+      }
+    }
+    if ('geolocation' in navigator) {
+      setGpsLoading(true);
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const {latitude, longitude} = pos.coords;
+          const nearest = findNearestCity(latitude, longitude);
+          setLocation({
+            latitude,
+            longitude,
+            city: nearest.city,
+            country: nearest.country,
+            isGps: true,
+          });
+          if (nearest.country === 'مصر') {
+            setSettings((s) => ({...s, calculationMethod: 'Egyptian'}));
+          }
+          setGpsLoading(false);
+        },
+        () => {
+          setGpsLoading(false);
+        },
+        {enableHighAccuracy: true, timeout: 10000, maximumAge: 300000},
+      );
+    }
+    setSettings((s) => ({
+      ...s,
+      adhanEnabled: true,
+      backgroundAlertsEnabled: true,
+      lockScreenKeepAlive: true,
+      postAdhanDuaEnabled: true,
+      iqamahEnabled: true,
+      prayerConfirmReminderEnabled: true,
+      salawatReminderEnabled: true,
+      preAdhanMinutes: s.preAdhanMinutes || 10,
+    }));
+  }, [unlockAudioEngine, setLocation, setSettings]);
 
   const handleRequestGps = useCallback(() => {
     if (!('geolocation' in navigator)) {
@@ -1372,6 +1781,9 @@ function AppContent({
           country: nearest.country,
           isGps: true,
         });
+        if (nearest.country === 'مصر') {
+          setSettings((s) => ({...s, calculationMethod: 'Egyptian'}));
+        }
         setGpsLoading(false);
       },
       () => {
@@ -1380,7 +1792,7 @@ function AppContent({
       },
       {enableHighAccuracy: true, timeout: 10000, maximumAge: 300000},
     );
-  }, [setLocation]);
+  }, [setLocation, setSettings]);
 
   const handleToggleBookmark = useCallback(
     (bm: Omit<QuranBookmark, 'id' | 'createdAt'>) => {
@@ -1621,6 +2033,102 @@ function AppContent({
           </div>
         </header>
 
+        {/* One-Tap All Permissions & Background Engine Activation Card */}
+        {!permBannerDismissed &&
+          (notifPermState === 'default' || !location.isGps || !audioUnlocked) && (
+            <div className="w-full px-3 pt-2.5">
+              <div className="space-y-2 rounded-2xl border-2 border-[#C9A227] bg-[#0B0802] p-3 text-white">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex items-start gap-2">
+                    <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-[#FCE38A]" />
+                    <div>
+                      <p className="text-xs font-extrabold text-[#FCE38A]">
+                        تفعيل الأذان التلقائي والموقع والعمل في الخلفية
+                      </p>
+                      <p className="mt-0.5 text-[10px] leading-relaxed text-zinc-300">
+                        اسمح بالموقع والإشعارات وصوت الخلفية ليأذن التطبيق مع الدعاء والإقامة حتى والهاتف مقفول.
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setPermBannerDismissed(true)}
+                    aria-label="إخفاء"
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-[#C9A227]/40 text-zinc-400"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-1.5 text-[10px] font-bold">
+                  <span
+                    className={`inline-flex items-center gap-1 rounded-lg border px-2 py-0.5 ${
+                      location.isGps
+                        ? 'border-emerald-500/60 bg-emerald-950/40 text-emerald-300'
+                        : 'border-[#C9A227]/50 bg-black text-[#FCE38A]'
+                    }`}
+                  >
+                    <MapPin className="h-3 w-3" />
+                    <span>{location.isGps ? `GPS: ${location.city}` : `الافتراضي: ${location.city}`}</span>
+                  </span>
+                  <span
+                    className={`inline-flex items-center gap-1 rounded-lg border px-2 py-0.5 ${
+                      notifPermState === 'granted'
+                        ? 'border-emerald-500/60 bg-emerald-950/40 text-emerald-300'
+                        : 'border-[#C9A227]/50 bg-black text-[#FCE38A]'
+                    }`}
+                  >
+                    <BellRing className="h-3 w-3" />
+                    <span>
+                      {notifPermState === 'granted' ? 'الإشعارات نشطة' : 'الإشعارات بانتظار التفعيل'}
+                    </span>
+                  </span>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => void handleActivateAllPermissions()}
+                  className="flex min-h-[38px] w-full items-center justify-center gap-1.5 rounded-xl bg-gradient-to-l from-[#FCE38A] via-[#C9A227] to-[#9A7415] px-3 text-xs font-extrabold text-black"
+                >
+                  <Check className="h-4 w-4" />
+                  <span>تفعيل كل الصلاحيات (الموقع + الإشعارات + الخلفية)</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+        {/* Persistent "Have you prayed?" Reminder Bar until user taps "صليت ✓" */}
+        {activeUnconfirmedPrayer && (
+          <div className="w-full px-3 pt-2.5">
+            <div className="flex items-center justify-between gap-2 rounded-2xl border-2 border-[#FCE38A] bg-gradient-to-l from-[#1C1404] via-[#120D02] to-[#080601] px-3 py-2.5 text-white">
+              <div className="min-w-0">
+                <p className="flex items-center gap-1.5 text-xs font-extrabold text-[#FCE38A]">
+                  <BellRing className="h-4 w-4 shrink-0 text-[#FCE38A]" />
+                  <span>هل صليت {activeUnconfirmedPrayer.nameAr}؟</span>
+                </p>
+                <p className="mt-0.5 text-[10px] text-zinc-300">
+                  {activeUnconfirmedPrayer.elapsedMin > 0
+                    ? `مرّ ${activeUnconfirmedPrayer.elapsedMin} دقيقة على الأذان — اضغط صليت لإيقاف التذكير`
+                    : 'حان وقت الصلاة — اضغط صليت عند الانتهاء'}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() =>
+                  confirmPrayerAndStopReminders(
+                    todayKey,
+                    activeUnconfirmedPrayer.key,
+                  )
+                }
+                className="inline-flex min-h-[36px] shrink-0 items-center gap-1 rounded-xl bg-gradient-to-b from-[#FCE38A] to-[#C9A227] px-3.5 text-xs font-extrabold text-black"
+              >
+                <Check className="h-3.5 w-3.5" />
+                <span>صليت ✓</span>
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Non-blocking Reminder Banner */}
         {adhanBanner && (
           <div className="w-full px-3 pt-2.5">
@@ -1729,6 +2237,7 @@ function AppContent({
               onUpdateSettings={setSettings}
               prayerLog={prayerLog}
               onSetPrayerStatus={handleSetPrayerStatus}
+              onActivateAdhanEngine={handleActivateAllPermissions}
             />
           )}
         </main>
@@ -1778,6 +2287,23 @@ function AppContent({
             now={now}
             schedule={dailyPrayerData.schedule}
             mode={liveAdhanModal.mode || 'adhan'}
+            postAdhanDuaEnabled={settings.postAdhanDuaEnabled ?? true}
+            onConfirmPrayed={
+              liveAdhanModal.prayerKey
+                ? () =>
+                    confirmPrayerAndStopReminders(
+                      todayKey,
+                      liveAdhanModal.prayerKey!,
+                    )
+                : undefined
+            }
+            isPrayerConfirmed={
+              liveAdhanModal.prayerKey
+                ? prayerLog[todayKey]?.[liveAdhanModal.prayerKey] ===
+                    'ontime' ||
+                  prayerLog[todayKey]?.[liveAdhanModal.prayerKey] === 'late'
+                : false
+            }
             onClose={() => setLiveAdhanModal(null)}
             onPlayPostAzkar={
               settings.postPrayerAzkarEnabled ? playPostPrayerAzkar : undefined
@@ -1806,7 +2332,9 @@ export default function App() {
           : rawSettings?.preferredTawasih || DEFAULT_SETTINGS.preferredTawasih,
       postAdhanDuaEnabled: rawSettings?.postAdhanDuaEnabled ?? true,
       qiyamEnabled: rawSettings?.qiyamEnabled ?? true,
-      salawatReminderEnabled: rawSettings?.salawatReminderEnabled ?? false,
+      prayerConfirmReminderEnabled:
+        rawSettings?.prayerConfirmReminderEnabled ?? true,
+      salawatReminderEnabled: rawSettings?.salawatReminderEnabled ?? true,
       salawatIntervalMinutes: rawSettings?.salawatIntervalMinutes || 10,
       prayerOffsets: {
         ...DEFAULT_PRAYER_OFFSETS,
@@ -1815,6 +2343,10 @@ export default function App() {
       perPrayerAdhan: {
         ...DEFAULT_SETTINGS.perPrayerAdhan,
         ...(rawSettings?.perPrayerAdhan || {}),
+      },
+      perPrayerIqamah: {
+        ...DEFAULT_SETTINGS.perPrayerIqamah!,
+        ...(rawSettings?.perPrayerIqamah || {}),
       },
       enabledPrayers: {
         ...DEFAULT_SETTINGS.enabledPrayers,

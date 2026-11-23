@@ -1,10 +1,10 @@
 import React, {useMemo, useState} from 'react';
 import {
   ArrowRight,
+  Bookmark,
   BookmarkCheck,
   Check,
   Clock,
-  Download,
   Film,
   Play,
   Search,
@@ -269,14 +269,14 @@ export const ScholarsView: React.FC = () => {
                   {currentSaved ? (
                     <Check className="h-3.5 w-3.5" />
                   ) : (
-                    <Download className="h-3.5 w-3.5" />
+                    <Bookmark className="h-3.5 w-3.5" />
                   )}
                   <span>
                     {savingId === currentVideo.videoId
                       ? 'جارٍ الحفظ...'
                       : currentSaved
-                        ? 'محفوظ أوفلاين'
-                        : 'تحميل أوفلاين'}
+                        ? 'محفوظة في المفضلة'
+                        : 'إضافة للمفضلة'}
                   </span>
                 </button>
               </div>
@@ -328,7 +328,7 @@ export const ScholarsView: React.FC = () => {
               {selectedScholar.videos.length})
             </h4>
             <span className="text-[11px] text-slate-500 dark:text-zinc-400">
-              اضغط للتشغيل أو التحميل
+              اضغط للتشغيل أو المفضلة
             </span>
           </div>
 
@@ -410,14 +410,14 @@ export const ScholarsView: React.FC = () => {
                         {isSaved ? (
                           <BookmarkCheck className="h-3.5 w-3.5" />
                         ) : (
-                          <Download className="h-3.5 w-3.5" />
+                          <Bookmark className="h-3.5 w-3.5" />
                         )}
                         <span>
                           {savingId === video.videoId
                             ? 'حفظ...'
                             : isSaved
-                              ? 'محفوظ'
-                              : 'تحميل أوفلاين'}
+                              ? 'في المفضلة'
+                              : 'حفظ'}
                         </span>
                       </button>
                     </div>
@@ -496,12 +496,12 @@ export const ScholarsView: React.FC = () => {
         <div className="space-y-2.5">
           {savedLectures.length === 0 ? (
             <div className="rounded-3xl border-2 border-[#C9A227]/50 bg-white p-6 text-center dark:bg-[#050505]">
-              <Download className="mx-auto h-8 w-8 text-[#C9A227]" />
+              <Bookmark className="mx-auto h-8 w-8 text-[#C9A227]" />
               <p className="mt-2 text-sm font-bold text-slate-900 dark:text-white">
                 لا توجد محاضرات محفوظة بعد
               </p>
               <p className="mt-1 text-xs text-slate-600 dark:text-zinc-400">
-                افتح أي شيخ واضغط «تحميل أوفلاين» لحفظ المحاضرة وصورتها في
+                افتح أي شيخ واضغط «إضافة للمفضلة» لحفظ المحاضرة وصورتها في
                 قائمتك.
               </p>
             </div>

@@ -1,8 +1,7 @@
 import React, {useEffect, useMemo, useRef, useState} from 'react';
-import {Check, Download, Loader2, Pause, Play, RotateCcw, Sparkles} from 'lucide-react';
+import {Check, Pause, Play, RotateCcw, Sparkles} from 'lucide-react';
 import {AZKAR_CATEGORIES} from '../data/azkar';
 import {AzkarCategoryId, DhikrItem} from '../types';
-import {cacheBatchUrls, isAudioCached} from '../utils/offlineAudioCache';
 
 interface AzkarViewProps {
   counts: Record<string, number>;
@@ -17,8 +16,6 @@ export const AzkarView: React.FC<AzkarViewProps> = ({
 }) => {
   const [activeCategory, setActiveCategory] = useState<AzkarCategoryId>('morning');
   const [playingId, setPlayingId] = useState<string | null>(null);
-  const [cachedCategory, setCachedCategory] = useState(false);
-  const [downloadingCat, setDownloadingCat] = useState<{done: number; total: number} | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   const category = useMemo(
@@ -26,34 +23,6 @@ export const AzkarView: React.FC<AzkarViewProps> = ({
       AZKAR_CATEGORIES.find((c) => c.id === activeCategory) || AZKAR_CATEGORIES[0],
     [activeCategory],
   );
-
-  const categoryAudioUrls = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          category.items
-            .map((i) => i.audioUrl)
-            .filter((u): u is string => Boolean(u)),
-        ),
-      ),
-    [category],
-  );
-
-  useEffect(() => {
-    let active = true;
-    async function checkCatCache() {
-      if (categoryAudioUrls.length === 0) {
-        if (active) setCachedCategory(true);
-        return;
-      }
-      const checks = await Promise.all(categoryAudioUrls.map((u) => isAudioCached(u)));
-      if (active) setCachedCategory(checks.every(Boolean));
-    }
-    checkCatCache();
-    return () => {
-      active = false;
-    };
-  }, [categoryAudioUrls]);
 
   const [audioErr, setAudioErr] = useState<string | null>(null);
 
@@ -91,26 +60,12 @@ export const AzkarView: React.FC<AzkarViewProps> = ({
     audio.onended = () => setPlayingId(null);
     audio.onerror = () => {
       setPlayingId(null);
-      setAudioErr(
-        navigator.onLine
-          ? 'تعذر تشغيل المقطع الصوتي حاليًا، يرجى المحاولة لاحقًا'
-          : 'المقطع الصوتي غير محمّل بعد — اضغط «تحميل الصوتيات بدون نت» أولاً',
-      );
+      setAudioErr('تعذر تشغيل المقطع الصوتي حاليًا');
     };
     audio.play().catch(() => {
       setPlayingId(null);
-      setAudioErr('تعذر بدء الصوت — تأكد من الاتصال أو حمّل الصوتيات للعمل أوفلاين');
+      setAudioErr('تعذر تشغيل المقطع الصوتي حاليًا');
     });
-  };
-
-  const handleDownloadCategoryAudio = async () => {
-    if (categoryAudioUrls.length === 0) return;
-    setDownloadingCat({done: 0, total: categoryAudioUrls.length});
-    await cacheBatchUrls(categoryAudioUrls, (done, total) => {
-      setDownloadingCat({done, total});
-    });
-    setDownloadingCat(null);
-    setCachedCategory(true);
   };
 
   const completedCount = useMemo(
@@ -185,30 +140,6 @@ export const AzkarView: React.FC<AzkarViewProps> = ({
               {completedCount}/{totalItems}
             </span>
           </div>
-
-          {categoryAudioUrls.length > 0 && (
-            <button
-              type="button"
-              disabled={!!downloadingCat}
-              onClick={handleDownloadCategoryAudio}
-              className="inline-flex min-h-[40px] items-center gap-1.5 rounded-xl bg-[#C9A227] px-3.5 py-2 text-xs font-bold text-black transition-opacity hover:opacity-90 disabled:opacity-60"
-            >
-              {downloadingCat ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : cachedCategory ? (
-                <Check className="h-4 w-4" />
-              ) : (
-                <Download className="h-4 w-4" />
-              )}
-              <span>
-                {downloadingCat
-                  ? `${downloadingCat.done}/${downloadingCat.total}`
-                  : cachedCategory
-                  ? 'الصوتيات محفوظة بدون نت'
-                  : 'تحميل الصوتيات بدون نت'}
-              </span>
-            </button>
-          )}
 
           <button
             type="button"

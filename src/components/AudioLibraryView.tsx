@@ -1,8 +1,5 @@
 import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {
-  Check,
-  Download,
-  Loader2,
   Pause,
   Play,
   Radio,
@@ -19,11 +16,6 @@ import {
   RECITERS_30,
 } from '../data/reciters';
 import {AdhanVoice, ReciterId} from '../types';
-import {
-  cacheAudioUrl,
-  cacheBatchUrls,
-  isAudioCached,
-} from '../utils/offlineAudioCache';
 import {AdhanLiveModal} from './AdhanLiveModal';
 
 interface AudioLibraryViewProps {
@@ -45,9 +37,6 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
   const [isPlaying, setIsPlaying] = useState(false);
   const [audioError, setAudioError] = useState<string | null>(null);
 
-  const [cachedMap, setCachedMap] = useState<Record<string, boolean>>({});
-  const [downloadingUrl, setDownloadingUrl] = useState<string | null>(null);
-  const [batchProgress, setBatchProgress] = useState<{done: number; total: number} | null>(null);
   const [videoPreviewVoice, setVideoPreviewVoice] = useState<{
     voice: AdhanVoice;
     mode: 'adhan' | 'iqamah';
@@ -67,25 +56,6 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
         a.locationAr.includes(q),
     );
   }, [adhanSearch]);
-
-  useEffect(() => {
-    let active = true;
-    async function checkAll() {
-      const next: Record<string, boolean> = {};
-      for (const a of ADHAN_VOICES_30) {
-        next[a.url] = await isAudioCached(a.url);
-      }
-      for (const s of FAMOUS_SURAHS_30) {
-        const u = getSurahAudioUrl(preferredReciter, s.number);
-        next[u] = await isAudioCached(u);
-      }
-      if (active) setCachedMap(next);
-    }
-    checkAll();
-    return () => {
-      active = false;
-    };
-  }, [preferredReciter]);
 
   useEffect(() => {
     return () => {
@@ -122,9 +92,7 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
         return;
       }
       setIsPlaying(false);
-      setAudioError(
-        'هذا المقطع غير محمّل في الذاكرة المحلية — اضغط زر التحميل أو استخدم «تحميل الكل للجهاز»',
-      );
+      setAudioError('تعذر تشغيل هذا المقطع حاليًا');
     };
     audio.play().catch(() => {
       if (!usedFallback && fallbackUrl && !url.startsWith('/audio/')) {
@@ -138,41 +106,6 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
     });
   };
 
-  const handleDownloadOne = async (url: string) => {
-    setDownloadingUrl(url);
-    const ok = await cacheAudioUrl(url);
-    if (ok) {
-      setCachedMap((prev) => ({...prev, [url]: true}));
-    }
-    setDownloadingUrl(null);
-  };
-
-  const handleDownloadAllAdhan = async () => {
-    const urls = ADHAN_VOICES_30.map((a) => a.url);
-    setBatchProgress({done: 0, total: urls.length});
-    await cacheBatchUrls(urls, (done, total) => {
-      setBatchProgress({done, total});
-    });
-    const refreshed: Record<string, boolean> = {...cachedMap};
-    for (const u of urls) refreshed[u] = true;
-    setCachedMap(refreshed);
-    setBatchProgress(null);
-  };
-
-  const handleDownloadTop6Surahs = async () => {
-    const top6 = FAMOUS_SURAHS_30.slice(0, 6).map((s) =>
-      getSurahAudioUrl(preferredReciter, s.number),
-    );
-    setBatchProgress({done: 0, total: top6.length});
-    await cacheBatchUrls(top6, (done, total) => {
-      setBatchProgress({done, total});
-    });
-    const refreshed: Record<string, boolean> = {...cachedMap};
-    for (const u of top6) refreshed[u] = true;
-    setCachedMap(refreshed);
-    setBatchProgress(null);
-  };
-
   return (
     <div className="space-y-5">
       {/* Header & Tabs */}
@@ -182,7 +115,7 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
             مكتبة التلاوات والأذان
           </h2>
           <p className="mt-1 text-xs text-slate-600 dark:text-zinc-300">
-            30 سورة مشهورة بـ 30 قارئًا · 30 مؤذنًا للأذان · تحميل مباشر للعمل بدون نت
+            30 سورة مشهورة بـ 30 قارئًا · 30 مؤذنًا للأذان محفوظة للعمل بدون نت
           </p>
         </div>
 
@@ -238,7 +171,7 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
       )}
 
       {audioError && (
-        <div className="rounded-2xl border border-rose-500 bg-rose-950/20 px-4 py-3 text-xs font-semibold text-rose-500">
+        <div className="rounded-2xl border border-[#C9A227]/60 bg-[#141004] px-4 py-3 text-xs font-semibold text-[#FCE38A]">
           {audioError}
         </div>
       )}
@@ -246,7 +179,7 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
       {subTab === 'surahs' ? (
         <div className="space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border-2 border-[#C9A227] bg-white p-4 dark:bg-[#050505]">
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex w-full flex-wrap items-center gap-2">
               <label
                 htmlFor="lib-reciter"
                 className="text-xs font-bold text-[#9A7415] dark:text-[#C9A227]"
@@ -257,7 +190,7 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                 id="lib-reciter"
                 value={preferredReciter}
                 onChange={(e) => onChangePreferredReciter(e.target.value as ReciterId)}
-                className="min-h-[40px] rounded-xl border border-[#C9A227]/60 bg-slate-50 px-3 py-2 text-sm font-bold text-slate-900 outline-none dark:bg-[#0B0B0B] dark:text-white"
+                className="min-h-[40px] flex-1 rounded-xl border border-[#C9A227]/60 bg-slate-50 px-3 py-2 text-sm font-bold text-slate-900 outline-none dark:bg-[#0B0B0B] dark:text-white"
               >
                 {RECITERS_30.map((r) => (
                   <option key={r.id} value={r.id}>
@@ -266,32 +199,12 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                 ))}
               </select>
             </div>
-
-            <button
-              type="button"
-              disabled={!!batchProgress}
-              onClick={handleDownloadTop6Surahs}
-              className="inline-flex min-h-[40px] items-center gap-2 rounded-xl bg-[#C9A227] px-4 py-2 text-xs font-bold text-black hover:opacity-90 disabled:opacity-60"
-            >
-              {batchProgress ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Download className="h-4 w-4" />
-              )}
-              <span>
-                {batchProgress
-                  ? `جاري التحميل (${batchProgress.done}/${batchProgress.total})`
-                  : 'تحميل أشهر 6 سور بدون نت'}
-              </span>
-            </button>
           </div>
 
           <div className="grid grid-cols-1 gap-3">
             {FAMOUS_SURAHS_30.map((surah) => {
               const url = getSurahAudioUrl(preferredReciter, surah.number);
-              const isCached = !!cachedMap[url];
               const isCurrent = playingUrl === url && isPlaying;
-              const isDownloading = downloadingUrl === url;
 
               return (
                 <div
@@ -316,46 +229,24 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                     </p>
                   </div>
 
-                  <div className="flex shrink-0 items-center gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => handleDownloadOne(url)}
-                      disabled={isDownloading}
-                      aria-label={isCached ? 'محفوظة بدون نت' : 'تحميل بدون نت'}
-                      className={`flex h-10 w-10 items-center justify-center rounded-xl border ${
-                        isCached
-                          ? 'border-[#C9A227] bg-[#C9A227]/20 text-[#C9A227]'
-                          : 'border-[#C9A227]/40 text-slate-600 dark:text-zinc-300'
-                      }`}
-                    >
-                      {isDownloading ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : isCached ? (
-                        <Check className="h-4 w-4" />
-                      ) : (
-                        <Download className="h-4 w-4" />
-                      )}
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() =>
-                        togglePlay(url, `${surah.nameAr} — ${reciterInfo.shortNameAr}`)
-                      }
-                      aria-label={isCurrent ? 'إيقاف' : 'تشغيل'}
-                      className={`flex h-10 w-10 items-center justify-center rounded-xl ${
-                        isCurrent
-                          ? 'bg-[#C9A227] text-black'
-                          : 'border border-[#C9A227] text-[#C9A227] hover:bg-[#C9A227] hover:text-black'
-                      }`}
-                    >
-                      {isCurrent ? (
-                        <Pause className="h-4 w-4" />
-                      ) : (
-                        <Play className="h-4 w-4" />
-                      )}
-                    </button>
-                  </div>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      togglePlay(url, `${surah.nameAr} — ${reciterInfo.shortNameAr}`)
+                    }
+                    aria-label={isCurrent ? 'إيقاف' : 'تشغيل'}
+                    className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${
+                      isCurrent
+                        ? 'bg-[#C9A227] text-black'
+                        : 'border border-[#C9A227] text-[#C9A227] hover:bg-[#C9A227] hover:text-black'
+                    }`}
+                  >
+                    {isCurrent ? (
+                      <Pause className="h-4 w-4" />
+                    ) : (
+                      <Play className="h-4 w-4" />
+                    )}
+                  </button>
                 </div>
               );
             })}
@@ -370,40 +261,20 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                 30 مؤذنًا مختارًا من الحرمين والعالم الإسلامي
               </span>
             </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  if (audioRef.current) {
-                    audioRef.current.pause();
-                    setIsPlaying(false);
-                  }
-                  setVideoPreviewVoice({voice: IQAMAH_AUDIO, mode: 'iqamah'});
-                }}
-                className="inline-flex min-h-[40px] items-center gap-1.5 rounded-xl border-2 border-[#FCE38A] bg-[#141004] px-3.5 py-2 text-xs font-extrabold text-[#FCE38A] hover:bg-[#C9A227] hover:text-black"
-              >
-                <Video className="h-4 w-4 text-[#C9A227]" />
-                <span>معاينة الإقامة</span>
-              </button>
-
-              <button
-                type="button"
-                disabled={!!batchProgress}
-                onClick={handleDownloadAllAdhan}
-                className="inline-flex min-h-[40px] items-center gap-2 rounded-xl bg-[#C9A227] px-4 py-2 text-xs font-bold text-black hover:opacity-90 disabled:opacity-60"
-              >
-                {batchProgress ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Download className="h-4 w-4" />
-                )}
-                <span>
-                  {batchProgress
-                    ? `جاري التحميل (${batchProgress.done}/${batchProgress.total})`
-                    : 'تحميل الـ 30 مؤذنًا بدون نت'}
-                </span>
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={() => {
+                if (audioRef.current) {
+                  audioRef.current.pause();
+                  setIsPlaying(false);
+                }
+                setVideoPreviewVoice({voice: IQAMAH_AUDIO, mode: 'iqamah'});
+              }}
+              className="inline-flex min-h-[40px] items-center gap-1.5 rounded-xl border-2 border-[#FCE38A] bg-[#141004] px-3.5 py-2 text-xs font-extrabold text-[#FCE38A] hover:bg-[#C9A227] hover:text-black"
+            >
+              <Video className="h-4 w-4 text-[#C9A227]" />
+              <span>معاينة الإقامة</span>
+            </button>
           </div>
 
           <div className="relative">
@@ -419,10 +290,8 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
 
           <div className="grid grid-cols-1 gap-3">
             {filteredAdhanVoices.map((adhan) => {
-              const isCached = !!cachedMap[adhan.url];
               const isCurrent = playingUrl === adhan.url && isPlaying;
               const isPreferred = preferredAdhan === adhan.id;
-              const isDownloading = downloadingUrl === adhan.url;
 
               return (
                 <div
@@ -469,26 +338,6 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
                       >
                         <Video className="h-3.5 w-3.5" />
                         <span>معاينة فيديو</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => handleDownloadOne(adhan.url)}
-                        disabled={isDownloading}
-                        aria-label="تحميل بدون نت"
-                        className={`flex h-10 w-10 items-center justify-center rounded-xl border ${
-                          isCached
-                            ? 'border-[#C9A227] bg-[#C9A227]/20 text-[#C9A227]'
-                            : 'border-[#C9A227]/45 bg-black text-zinc-300'
-                        }`}
-                      >
-                        {isDownloading ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : isCached ? (
-                          <Check className="h-4 w-4" />
-                        ) : (
-                          <Download className="h-4 w-4" />
-                        )}
                       </button>
 
                       <button

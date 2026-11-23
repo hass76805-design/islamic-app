@@ -296,3 +296,152 @@ export function computeQiyamAlLaylTime(
 
   return {lastThirdStart, midpoint, maghrib, nextFajr};
 }
+
+export const PRAYER_MONTH_CACHE_KEY = 'alzahabi_prayer_month_cache_v1';
+
+export interface SavedMonthlyPrayerDay {
+  dateKey: string;
+  timesMs: Record<PrayerKey, number>;
+  formatted24: Record<PrayerKey, string>;
+  qiyamLastThirdMs: number;
+}
+
+export interface SavedMonthlyPrayerCache {
+  updatedAt: number;
+  city: string;
+  latitude: number;
+  longitude: number;
+  methodId: CalculationMethodId;
+  madhab: AsrMadhab;
+  days: SavedMonthlyPrayerDay[];
+  cairoDays: SavedMonthlyPrayerDay[];
+}
+
+function formatLocalDayKey(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function buildMonthArray(
+  latitude: number,
+  longitude: number,
+  methodId: CalculationMethodId,
+  madhab: AsrMadhab,
+  offsets: PrayerOffsets,
+  totalDays: number,
+): SavedMonthlyPrayerDay[] {
+  const coords = new Coordinates(latitude, longitude);
+  const params = getMethodParams(methodId, madhab);
+  const keys: PrayerKey[] = ['fajr', 'sunrise', 'dhuhr', 'asr', 'maghrib', 'isha'];
+  const baseDate = new Date();
+  const list: SavedMonthlyPrayerDay[] = [];
+
+  for (let i = 0; i < totalDays; i++) {
+    const target = new Date(
+      baseDate.getFullYear(),
+      baseDate.getMonth(),
+      baseDate.getDate() + i,
+      12,
+      0,
+      0,
+    );
+    const pt = new PrayerTimes(coords, target, params);
+    const timesMs = {} as Record<PrayerKey, number>;
+    const formatted24 = {} as Record<PrayerKey, string>;
+
+    for (const k of keys) {
+      const adjusted = addMinutes(pt[k], offsets[k] || 0);
+      timesMs[k] = adjusted.getTime();
+      formatted24[k] = formatTime24(adjusted);
+    }
+
+    const qiyam = computeQiyamAlLaylTime(
+      latitude,
+      longitude,
+      target,
+      methodId,
+      madhab,
+      offsets,
+    );
+
+    list.push({
+      dateKey: formatLocalDayKey(target),
+      timesMs,
+      formatted24,
+      qiyamLastThirdMs: qiyam.lastThirdStart.getTime(),
+    });
+  }
+
+  return list;
+}
+
+/**
+ * Precomputes and saves 30 days ahead of Prayer Times for both the user's city
+ * and Cairo (القاهرة) in localStorage + CacheStorage so a full month is always stored offline.
+ */
+export function precomputeMonthlyPrayerCache(
+  latitude: number,
+  longitude: number,
+  methodId: CalculationMethodId,
+  madhab: AsrMadhab,
+  offsets: PrayerOffsets = DEFAULT_PRAYER_OFFSETS,
+  cityLabel = 'القاهرة',
+  totalDays = 30,
+): SavedMonthlyPrayerCache {
+  const days = buildMonthArray(latitude, longitude, methodId, madhab, offsets, totalDays);
+  const cairoDays = buildMonthArray(
+    30.0444,
+    31.2357,
+    'Egyptian',
+    madhab,
+    offsets,
+    totalDays,
+  );
+
+  const payload: SavedMonthlyPrayerCache = {
+    updatedAt: Date.now(),
+    city: cityLabel,
+    latitude,
+    longitude,
+    methodId,
+    madhab,
+    days,
+    cairoDays,
+  };
+
+  if (typeof window !== 'undefined') {
+    try {
+      window.localStorage.setItem(PRAYER_MONTH_CACHE_KEY, JSON.stringify(payload));
+    } catch {
+      // ignore storage quota errors
+    }
+    if (typeof caches !== 'undefined') {
+      caches
+        .open('alzahabi-core-data-v1')
+        .then((cache) =>
+          cache.put(
+            '/__prayer_month_30d.json',
+            new Response(JSON.stringify(payload), {
+              headers: {'Content-Type': 'application/json'},
+            }),
+          ),
+        )
+        .catch(() => {});
+    }
+  }
+
+  return payload;
+}
+
+export function readSavedMonthlyPrayerCache(): SavedMonthlyPrayerCache | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(PRAYER_MONTH_CACHE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw) as SavedMonthlyPrayerCache;
+  } catch {
+    return null;
+  }
+}

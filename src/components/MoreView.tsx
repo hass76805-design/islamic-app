@@ -1,4 +1,4 @@
-import React, {useEffect, useState} from 'react';
+import React, {useState} from 'react';
 import {
   ArrowRight,
   AudioLines,
@@ -11,7 +11,6 @@ import {
   CheckCircle2,
   CircleDot,
   Cloud,
-  Download,
   Heart,
   HelpCircle,
   Loader2,
@@ -29,8 +28,6 @@ import {
 import {useFirebase} from '../contexts/FirebaseContext';
 import {
   ADHAN_VOICES_30,
-  FAMOUS_SURAHS_30,
-  getSurahAudioUrl,
   RECITERS_30,
 } from '../data/reciters';
 import {
@@ -43,12 +40,6 @@ import {
   TrackablePrayer,
   UserLocation,
 } from '../types';
-import {
-  cacheBatchUrls,
-  countCachedAudioItems,
-  downloadAllOfflinePackage,
-  isOfflinePackageDownloaded,
-} from '../utils/offlineAudioCache';
 import {CALCULATION_METHODS} from '../utils/prayerTimes';
 import {AdhanMuezzinView} from './AdhanMuezzinView';
 import {AudioLibraryView} from './AudioLibraryView';
@@ -86,6 +77,7 @@ interface MoreViewProps {
     prayer: TrackablePrayer,
     status: PrayerTrackStatus,
   ) => void;
+  onActivateAdhanEngine?: () => Promise<void> | void;
 }
 
 const SUB_ITEMS: Array<{
@@ -151,7 +143,7 @@ const SUB_ITEMS: Array<{
   {
     id: 'stories',
     titleAr: 'القصص الإسلامية الكاملة',
-    descAr: '25 قصة أنبياء و100 صحابة و30 وعبرة و20 غفران وتوبة',
+    descAr: '25 قصة أنبياء و15 قصة قرآن و100 صحابة و30 وعبرة و20 غفران وتوبة',
     icon: <BookOpenText className="h-5 w-5" />,
   },
   {
@@ -163,13 +155,13 @@ const SUB_ITEMS: Array<{
   {
     id: 'scholars',
     titleAr: 'محاضرات فيديو 30 شيخًا',
-    descAr: '30 شيخًا من العالم × 10 فيديوهات يوتيوب لكل شيخ مع زر حفظ أوفلاين',
+    descAr: '30 شيخًا من العالم × 10 فيديوهات لكل شيخ مع قائمة المفضلة',
     icon: <Mic className="h-5 w-5" />,
   },
   {
     id: 'audio_library',
     titleAr: 'مكتبة 30 سورة مشهورة',
-    descAr: 'تشغيل وتحميل 30 سورة مشهورة بـ 30 قارئًا دون إنترنت',
+    descAr: 'تلاوة 30 سورة مشهورة بـ 30 قارئًا ومكتبة الـ 30 مؤذنًا',
     icon: <Radio className="h-5 w-5" />,
   },
   {
@@ -199,7 +191,7 @@ const SUB_ITEMS: Array<{
   {
     id: 'settings',
     titleAr: 'الحساب السحابي والإعدادات',
-    descAr: 'المزامنة السحابية، القراء الثلاثون، تحميل الكل للجهاز، وطريقة الحساب',
+    descAr: 'المزامنة السحابية، القراء الثلاثون، العمل بدون نت، وطريقة الحساب',
     icon: <Settings className="h-5 w-5" />,
   },
 ];
@@ -217,58 +209,10 @@ export const MoreView: React.FC<MoreViewProps> = ({
   onUpdateSettings,
   prayerLog,
   onSetPrayerStatus,
+  onActivateAdhanEngine,
 }) => {
   const {user, signingIn, authError, signInWithGoogle, signOutUser} =
     useFirebase();
-  const [cachedCount, setCachedCount] = useState(0);
-  const [batchStatus, setBatchStatus] = useState<{
-    label: string;
-    done: number;
-    total: number;
-  } | null>(null);
-  const [allPackReady, setAllPackReady] = useState(() =>
-    isOfflinePackageDownloaded(),
-  );
-
-  useEffect(() => {
-    if (subPage === 'settings') {
-      countCachedAudioItems().then(setCachedCount);
-      setAllPackReady(isOfflinePackageDownloaded());
-    }
-  }, [subPage]);
-
-  const handleDownloadFamous30 = async () => {
-    const urls = FAMOUS_SURAHS_30.map((s) =>
-      getSurahAudioUrl(settings.preferredReciter, s.number),
-    );
-    setBatchStatus({
-      label: 'جاري تحميل السور المشهورة...',
-      done: 0,
-      total: urls.length,
-    });
-    await cacheBatchUrls(urls, (done, total) => {
-      setBatchStatus({label: 'جاري تحميل السور المشهورة...', done, total});
-    });
-    setBatchStatus(null);
-    countCachedAudioItems().then(setCachedCount);
-  };
-
-  const handleDownloadAllDevice = async () => {
-    setBatchStatus({
-      label: 'جاري تحميل الحزمة الشاملة للجهاز...',
-      done: 0,
-      total: 100,
-    });
-    await downloadAllOfflinePackage(
-      settings.preferredReciter,
-      (done, total, stageLabel) => {
-        setBatchStatus({label: stageLabel, done, total});
-      },
-    );
-    setBatchStatus(null);
-    setAllPackReady(true);
-    countCachedAudioItems().then(setCachedCount);
-  };
 
   if (subPage !== 'menu') {
     const activeItem = SUB_ITEMS.find((i) => i.id === subPage);
@@ -321,6 +265,7 @@ export const MoreView: React.FC<MoreViewProps> = ({
             gpsLoading={gpsLoading}
             settings={settings}
             onUpdateSettings={onUpdateSettings}
+            onActivateAdhanEngine={onActivateAdhanEngine}
           />
         )}
         {subPage === 'books' && <BooksView />}
@@ -433,9 +378,6 @@ export const MoreView: React.FC<MoreViewProps> = ({
                     القارئ المفضل للتلاوة والمصحف والتصحيح ورفيقي
                   </p>
                 </div>
-                <span className="font-mono-num text-[11px] font-bold text-[#C9A227]">
-                  المحفوظ أوفلاين: {cachedCount}
-                </span>
               </div>
 
               <div className="mt-3 grid max-h-72 grid-cols-1 gap-2 overflow-y-auto pl-1">
@@ -467,40 +409,6 @@ export const MoreView: React.FC<MoreViewProps> = ({
                     </button>
                   );
                 })}
-              </div>
-
-              <div className="mt-3 space-y-2 border-t border-[#C9A227]/25 pt-3">
-                <button
-                  type="button"
-                  disabled={!!batchStatus}
-                  onClick={handleDownloadAllDevice}
-                  className="inline-flex min-h-[44px] w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-l from-[#FCE38A] via-[#C9A227] to-[#9A7415] px-4 py-2 text-xs font-extrabold text-black disabled:opacity-60"
-                >
-                  {batchStatus ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : allPackReady ? (
-                    <Check className="h-4 w-4" />
-                  ) : (
-                    <Download className="h-4 w-4" />
-                  )}
-                  <span>
-                    {batchStatus
-                      ? `${batchStatus.label} (${batchStatus.done}/${batchStatus.total})`
-                      : allPackReady
-                        ? 'تم تحميل الكل للجهاز (إعادة التحديث)'
-                        : 'تحميل الكل للجهاز (عمل كامل بدون نت)'}
-                  </span>
-                </button>
-
-                <button
-                  type="button"
-                  disabled={!!batchStatus}
-                  onClick={handleDownloadFamous30}
-                  className="inline-flex min-h-[40px] w-full items-center justify-center gap-2 rounded-xl border border-[#C9A227] bg-black px-4 py-2 text-xs font-bold text-[#FCE38A] disabled:opacity-60"
-                >
-                  <Download className="h-4 w-4" />
-                  <span>تحميل 30 سورة مشهورة بصوت الشيخ المفضل</span>
-                </button>
               </div>
             </div>
 

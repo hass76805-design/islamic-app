@@ -1,6 +1,5 @@
-// Background Adhan, Iqamah, Tawasih, Azkar & Islamic Alerts extension imported into the Workbox Service Worker.
-// Enables background scheduling via TimestampTrigger, Periodic Background Sync, and Background Sync
-// even when the app window is closed.
+// Background Adhan, Pre-Adhan, Dua, Iqamah, Pray-Confirm, Tawasih, Azkar & Salawat Service Worker Extension
+// Enables reliable background alerts via Notification Triggers (TimestampTrigger), Periodic Background Sync, and Background Sync.
 
 const ADHAN_CACHE_META = 'al-zahabi-scheduled-alerts-v2';
 
@@ -62,25 +61,122 @@ async function saveFiredTags(tagsMap) {
   }
 }
 
+async function readDismissedPrayers() {
+  try {
+    const cache = await caches.open(ADHAN_CACHE_META);
+    const res = await cache.match('/__dismissed_prayers.json');
+    if (!res) return {};
+    const parsed = await res.json();
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+async function saveDismissedPrayers(map) {
+  try {
+    const now = Date.now();
+    const cleaned = {};
+    for (const [k, ts] of Object.entries(map || {})) {
+      if (typeof ts === 'number' && now - ts < 48 * 60 * 60 * 1000) {
+        cleaned[k] = ts;
+      }
+    }
+    const cache = await caches.open(ADHAN_CACHE_META);
+    await cache.put(
+      '/__dismissed_prayers.json',
+      new Response(JSON.stringify(cleaned), {
+        headers: {'Content-Type': 'application/json'},
+      }),
+    );
+  } catch {
+    // ignore storage errors
+  }
+}
+
+async function dismissPrayerReminder(dateKey, prayerKey) {
+  if (!dateKey || !prayerKey) return;
+  const dismissKey = `${dateKey}-${prayerKey}`;
+  const dismissed = await readDismissedPrayers();
+  dismissed[dismissKey] = Date.now();
+  await saveDismissedPrayers(dismissed);
+
+  const alerts = await readScheduledAlerts();
+  if (Array.isArray(alerts) && alerts.length > 0) {
+    const filtered = alerts.filter(
+      (item) =>
+        !(
+          item &&
+          item.type === 'prayconfirm' &&
+          item.dateKey === dateKey &&
+          item.prayerKey === prayerKey
+        ),
+    );
+    await saveScheduledAlerts(filtered);
+  }
+
+  try {
+    const existing = await self.registration.getNotifications({
+      includeTriggered: true,
+    });
+    for (const n of existing) {
+      if (!n.tag) continue;
+      if (
+        n.tag.startsWith(`prayconfirm-${dateKey}-${prayerKey}`) ||
+        n.tag === `adhan-${dateKey}-${prayerKey}` ||
+        n.tag === `dua-${dateKey}-${prayerKey}` ||
+        n.tag === `iqamah-${dateKey}-${prayerKey}`
+      ) {
+        n.close();
+      }
+    }
+  } catch {
+    // ignore getNotifications failures
+  }
+}
+
 function buildNotificationOptions(item) {
   const prayerName = item.prayerNameAr || item.prayerName || 'الصلاة';
   const alertType = item.type || 'adhan';
   const actionTitle =
     alertType === 'pre-adhan'
-      ? 'فتح المؤذن'
+      ? 'قربت الصلاة — فتح المؤذن'
       : alertType === 'tawasih'
         ? 'تشغيل ابتهال النقشبندي'
         : alertType === 'qiyam'
           ? 'تنبيه قيام الليل'
           : alertType === 'post-adhan-dua'
-            ? 'دعاء ما بعد الأذان'
+            ? 'سماع دعاء ما بعد الأذان'
             : alertType === 'salawat'
               ? 'استمع: صلِّ على النبي ﷺ'
-              : alertType === 'post-prayer-azkar' ||
-                  alertType === 'morning-azkar' ||
-                  alertType === 'evening-azkar'
-                ? 'تشغيل الأذكار'
-                : 'تشغيل الصوت الآن';
+              : alertType === 'prayconfirm'
+                ? 'فتح الأذكار والصلاة'
+                : alertType === 'post-prayer-azkar' ||
+                    alertType === 'morning-azkar' ||
+                    alertType === 'evening-azkar'
+                  ? 'تشغيل الأذكار'
+                  : 'تشغيل الصوت الآن';
+
+  const actions = [
+    {
+      action: 'play-adhan',
+      title: actionTitle,
+    },
+  ];
+
+  if (
+    item.dateKey &&
+    item.prayerKey &&
+    (alertType === 'prayconfirm' ||
+      alertType === 'adhan' ||
+      alertType === 'post-adhan-dua' ||
+      alertType === 'iqamah')
+  ) {
+    actions.push({
+      action: 'mark-prayed',
+      title: 'صليت ✓',
+    });
+  }
 
   return {
     body: item.body || 'حان الآن موعد الصلاة — البرنامج الإسلامي الذهبي',
@@ -93,19 +189,16 @@ function buildNotificationOptions(item) {
     renotify: true,
     requireInteraction: true,
     silent: false,
-    vibrate: [400, 150, 400, 150, 600, 150, 400],
-    actions: [
-      {
-        action: 'play-adhan',
-        title: actionTitle,
-      },
-    ],
+    vibrate: [500, 150, 500, 150, 700, 150, 500],
+    actions,
     data: {
       audioUrl: item.audioUrl || '',
       type: alertType,
       prayerNameAr: prayerName,
       voiceId: item.voiceId || '',
       title: item.title || 'البرنامج الإسلامي الذهبي',
+      dateKey: item.dateKey || '',
+      prayerKey: item.prayerKey || '',
     },
   };
 }
@@ -115,12 +208,22 @@ async function checkAndFireDueAlerts() {
   if (!Array.isArray(alerts) || alerts.length === 0) return;
 
   const firedTags = await readFiredTags();
+  const dismissedPrayers = await readDismissedPrayers();
   const now = Date.now();
   const remaining = [];
   let firedAny = false;
 
   for (const item of alerts) {
     if (!item || typeof item.timestamp !== 'number') continue;
+    if (
+      item.type === 'prayconfirm' &&
+      item.dateKey &&
+      item.prayerKey &&
+      dismissedPrayers[`${item.dateKey}-${item.prayerKey}`]
+    ) {
+      continue;
+    }
+
     const tag = item.tag || `alert-${item.timestamp}`;
     const elapsed = now - item.timestamp;
 
@@ -145,6 +248,8 @@ async function checkAndFireDueAlerts() {
             prayerNameAr: item.prayerNameAr || item.prayerName || 'الصلاة',
             voiceId: item.voiceId || '',
             title: item.title || 'البرنامج الإسلامي الذهبي',
+            dateKey: item.dateKey || '',
+            prayerKey: item.prayerKey || '',
           });
         }
       } catch {
@@ -169,7 +274,7 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
   const now = Date.now();
-  if (now - lastWakeupCheckTs > 20 * 1000) {
+  if (now - lastWakeupCheckTs > 15 * 1000) {
     lastWakeupCheckTs = now;
     event.waitUntil(checkAndFireDueAlerts());
   }
@@ -180,7 +285,23 @@ self.addEventListener('message', (event) => {
   if (!payload) return;
 
   if (payload.type === 'CHECK_DUE_ADHAN_ALERTS') {
-    event.waitUntil(checkAndFireDueAlerts());
+    event.waitUntil(
+      (async () => {
+        await checkAndFireDueAlerts();
+        const dismissed = await readDismissedPrayers();
+        if (event.source && typeof event.source.postMessage === 'function') {
+          event.source.postMessage({
+            type: 'DISMISSED_PRAYERS_SNAPSHOT',
+            dismissed,
+          });
+        }
+      })(),
+    );
+    return;
+  }
+
+  if (payload.type === 'DISMISS_PRAYER_REMINDER') {
+    event.waitUntil(dismissPrayerReminder(payload.dateKey, payload.prayerKey));
     return;
   }
 
@@ -197,9 +318,20 @@ self.addEventListener('message', (event) => {
 
   if (payload.type !== 'SCHEDULE_ADHAN_ALERTS') return;
 
-  const alerts = Array.isArray(payload.alerts) ? payload.alerts : [];
+  const rawAlerts = Array.isArray(payload.alerts) ? payload.alerts : [];
   event.waitUntil(
     (async () => {
+      const dismissedPrayers = await readDismissedPrayers();
+      const alerts = rawAlerts.filter(
+        (item) =>
+          !(
+            item &&
+            item.type === 'prayconfirm' &&
+            item.dateKey &&
+            item.prayerKey &&
+            dismissedPrayers[`${item.dateKey}-${item.prayerKey}`]
+          ),
+      );
       await saveScheduledAlerts(alerts);
       await checkAndFireDueAlerts();
 
@@ -216,6 +348,7 @@ self.addEventListener('message', (event) => {
                 n.tag.startsWith('preadhan-') ||
                 n.tag.startsWith('iqamah-') ||
                 n.tag.startsWith('dua-') ||
+                n.tag.startsWith('prayconfirm-') ||
                 n.tag.startsWith('qiyam-') ||
                 n.tag.startsWith('tawasih-') ||
                 n.tag.startsWith('azkar-') ||
@@ -282,6 +415,27 @@ self.addEventListener('push', (event) => {
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
   const data = event.notification.data || {};
+
+  if (event.action === 'mark-prayed' && data.dateKey && data.prayerKey) {
+    event.waitUntil(
+      (async () => {
+        await dismissPrayerReminder(data.dateKey, data.prayerKey);
+        const clientsArr = await self.clients.matchAll({
+          type: 'window',
+          includeUncontrolled: true,
+        });
+        for (const client of clientsArr) {
+          client.postMessage({
+            type: 'MARK_PRAYER_CONFIRMED',
+            dateKey: data.dateKey,
+            prayerKey: data.prayerKey,
+          });
+        }
+      })(),
+    );
+    return;
+  }
+
   const targetUrl = data.audioUrl
     ? `/?playAlert=${encodeURIComponent(data.audioUrl)}&alertType=${encodeURIComponent(
         data.type || 'adhan',
@@ -303,6 +457,8 @@ self.addEventListener('notificationclick', (event) => {
               prayerNameAr: data.prayerNameAr,
               voiceId: data.voiceId,
               title: data.title,
+              dateKey: data.dateKey || '',
+              prayerKey: data.prayerKey || '',
             });
             return client.focus();
           }

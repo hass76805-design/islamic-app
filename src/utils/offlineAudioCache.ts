@@ -6,11 +6,13 @@ import {
   getAyahAudioUrl,
   getSurahAudioUrl,
   IQAMAH_VOICES_3,
+  POST_ADHAN_DUA,
   POST_PRAYER_AZKAR_AUDIO_URLS,
   PRE_ADHAN_VOICES_3,
   SALAWAT_AUDIO_TRACKS,
   TAWASIH_NAQSHABANDI,
 } from '../data/reciters';
+import {AZKAR_CATEGORIES} from '../data/azkar';
 import {RAFIQI_WORDS_30} from '../data/rafiqiData';
 
 export const AUDIO_CACHE_NAME = 'alzahabi-offline-audio-v1';
@@ -102,7 +104,7 @@ export async function loadOfflineJson<T>(url: string): Promise<T> {
       return idbData;
     }
 
-    // 2. Check CacheStorage (Service Worker / downloadAllOfflinePackage bucket)
+    // 2. Check CacheStorage (Service Worker / core cache bucket)
     if (typeof caches !== 'undefined') {
       try {
         const directMatch = await caches.match(url);
@@ -120,7 +122,7 @@ export async function loadOfflineJson<T>(url: string): Promise<T> {
     // 3. Network fetch & persist to both IndexedDB and CacheStorage
     const res = await fetch(url);
     if (!res.ok) {
-      throw new Error(`تعذر تحميل البيانات (${url})`);
+      throw new Error(`تعذر قراءة البيانات (${url})`);
     }
     const clone = res.clone();
     const data = (await res.json()) as T;
@@ -144,10 +146,12 @@ export async function loadOfflineJson<T>(url: string): Promise<T> {
 }
 
 /**
- * Automatically pre-warms all core written Quran/Tafsir data + local Adhan/Naqshabandi files
- * silently when online so opening Mushaf/Details/Stories/Seerah/Bukhari offline always works.
+ * Automatically pre-warms all core written Quran/Tafsir data + all local MP3s
+ * + 30 Muezzins + Azkar + Rafiqi ayahs silently on startup when online.
  */
-export async function prewarmCoreOfflineTextData(): Promise<void> {
+export async function prewarmCoreOfflineTextData(
+  preferredReciter: ReciterId = 'alafasy',
+): Promise<void> {
   if (
     prewarmStarted ||
     typeof window === 'undefined' ||
@@ -165,13 +169,13 @@ export async function prewarmCoreOfflineTextData(): Promise<void> {
     }
   }
 
-  // Always cache Quran & Tafsir JSONs in IndexedDB + CacheStorage
+  // 1. Immediately cache full Quran & Tafsir JSONs in IndexedDB + CacheStorage
   await Promise.allSettled([
     loadOfflineJson('/data/quran.json'),
     loadOfflineJson('/data/tafsir.json'),
   ]);
 
-  // Also quietly cache bundled local MP3s (Adhan, Iqamah, Naqshabandi Tawasih)
+  // 2. Immediately cache all 24 bundled local MP3s (Adhan, Iqamah, Dua, Eid, Kahf, Tawasih, Salawat, Sheikh prompt)
   const localAudioAssets = [
     '/audio/adhan-makkah.mp3',
     '/audio/adhan-madinah.mp3',
@@ -182,6 +186,7 @@ export async function prewarmCoreOfflineTextData(): Promise<void> {
     '/audio/pre-chime.mp3',
     '/audio/pre-istighfar.mp3',
     '/audio/pre-takbeer.mp3',
+    '/audio/post-adhan-dua.mp3',
     '/audio/tawasih-naqshabandi-1.mp3',
     '/audio/tawasih-naqshabandi-2.mp3',
     '/audio/tawasih-naqshabandi-3.mp3',
@@ -189,8 +194,39 @@ export async function prewarmCoreOfflineTextData(): Promise<void> {
     '/audio/salawat-2.mp3',
     '/audio/salawat-3.mp3',
     '/audio/salawat-4.mp3',
+    '/audio/eid-makkah-1.mp3',
+    '/audio/eid-makkah-2.mp3',
+    '/audio/eid-jamaa.mp3',
+    '/audio/kahf-abdulbasit.mp3',
+    '/audio/kahf-alafasy.mp3',
+    '/audio/kahf-muaiqly.mp3',
+    '/audio/sheikh-start-reading.mp3',
   ];
-  await cacheBatchUrls(localAudioAssets, undefined, 3);
+  await cacheBatchUrls(localAudioAssets, undefined, 4);
+
+  // 3. Quietly background-cache external Muezzins (all 30), Azkar audio, Rafiqi 30 ayahs & core Surahs
+  const azkarUrls = AZKAR_CATEGORIES.flatMap((cat) =>
+    cat.items.map((item) => item.audioUrl).filter((u): u is string => Boolean(u)),
+  );
+  const externalMuezzinsAndAzkar = [
+    ...ADHAN_VOICES_30.map((a) => a.url),
+    ...POST_PRAYER_AZKAR_AUDIO_URLS,
+    ...azkarUrls,
+    ...RAFIQI_WORDS_30.map((w) =>
+      getAyahAudioUrl(preferredReciter, w.surahNumber, w.ayahNumber),
+    ),
+    ...[1, 2, 3, 4, 5, 6, 7].map((a) => getAyahAudioUrl(preferredReciter, 1, a)),
+    ...[1, 18, 36, 55, 56, 67, 112, 113, 114].map((s) =>
+      getSurahAudioUrl(preferredReciter, s),
+    ),
+  ];
+  await cacheBatchUrls(externalMuezzinsAndAzkar, undefined, 3);
+
+  try {
+    window.localStorage.setItem(OFFLINE_READY_KEY, '1');
+  } catch {
+    // ignore storage errors
+  }
 }
 
 export async function isAudioCached(url: string): Promise<boolean> {
@@ -342,6 +378,7 @@ export async function downloadAllOfflinePackage(
     ...ADHAN_VOICES_30.map((a) => a.url),
     ...IQAMAH_VOICES_3.map((i) => i.url),
     ...PRE_ADHAN_VOICES_3.map((p) => p.url),
+    POST_ADHAN_DUA.audioUrl,
     ...TAWASIH_NAQSHABANDI.map((t) => t.url),
     ...SALAWAT_AUDIO_TRACKS.map((s) => s.url),
     ...EID_TAKBEERAT_VOICES_3.map((e) => e.url),

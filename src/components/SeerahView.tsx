@@ -4,7 +4,6 @@ import {
   Check,
   CheckCircle2,
   Copy,
-  Download,
   Headphones,
   ListMusic,
   Loader2,
@@ -24,7 +23,6 @@ import {
   SeerahChapter,
 } from '../data/seerahData';
 import {useLocalStorage} from '../hooks/useLocalStorage';
-import {cacheAudioUrl, isAudioCached} from '../utils/offlineAudioCache';
 
 type SeerahPhaseFilter =
   | 'الكل'
@@ -82,8 +80,6 @@ export const SeerahView: React.FC = () => {
   const [currentTimeSec, setCurrentTimeSec] = useState(0);
   const [durationSec, setDurationSec] = useState(0);
   const [showFullSeries, setShowFullSeries] = useState(false);
-  const [cachedTracks, setCachedTracks] = useState<Record<string, boolean>>({});
-  const [downloadingId, setDownloadingId] = useState<string | null>(null);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const autoNextRef = useRef(autoNext);
@@ -96,29 +92,6 @@ export const SeerahView: React.FC = () => {
   const markChapterRead = (id: string) => {
     setReadIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
   };
-
-  // Check offline cache status for active chapter & tracks
-  useEffect(() => {
-    let active = true;
-    async function checkAllCached() {
-      const entries = await Promise.all(
-        SEERAH_CHAPTERS.map(async (ch) => [
-          ch.id,
-          await isAudioCached(ch.audioUrl),
-        ]),
-      );
-      if (active) {
-        setCachedTracks((prev) => ({
-          ...prev,
-          ...Object.fromEntries(entries),
-        }));
-      }
-    }
-    void checkAllCached();
-    return () => {
-      active = false;
-    };
-  }, []);
 
   const stopNarration = () => {
     if (audioRef.current) {
@@ -216,9 +189,7 @@ export const SeerahView: React.FC = () => {
       setIsBuffering(false);
       setIsPaused(false);
       setPlayingTrackId(null);
-      setAudioError(
-        'تعذر تشغيل صوت الشيخ — تحقق من الاتصال أو اضغط «حفظ بدون نت» أثناء الاتصال',
-      );
+      setAudioError('تعذر تشغيل صوت الشيخ حاليًا');
     };
 
     audio.src = url;
@@ -266,18 +237,6 @@ export const SeerahView: React.FC = () => {
     }
   };
 
-  const handleDownloadOffline = async (id: string, url: string) => {
-    if (downloadingId) return;
-    setDownloadingId(id);
-    const ok = await cacheAudioUrl(url);
-    if (ok) {
-      setCachedTracks((prev) => ({...prev, [id]: true}));
-    } else {
-      setAudioError('تعذر حفظ الملف الصوتي — تأكد من توفر الإنترنت أثناء الحفظ');
-    }
-    setDownloadingId(null);
-  };
-
   const filteredChapters = useMemo(() => {
     const qNorm = normalizeAr(query);
     return SEERAH_CHAPTERS.filter((ch) => {
@@ -310,12 +269,6 @@ export const SeerahView: React.FC = () => {
   const currentIdx = SEERAH_CHAPTERS.findIndex(
     (c) => c.id === currentChapterObj.id,
   );
-  const activeUrlForDownload = currentEpisodeObj
-    ? currentEpisodeObj.url
-    : currentChapterObj.audioUrl;
-  const activeTrackIdForDownload = currentEpisodeObj
-    ? currentEpisodeObj.id
-    : currentChapterObj.id;
   const isCurrentActivePlaying =
     (currentEpisodeObj
       ? playingTrackId === currentEpisodeObj.id && playingTrackKind === 'episode'
@@ -531,48 +484,19 @@ export const SeerahView: React.FC = () => {
             </div>
           </div>
 
-          {/* Offline Save & 30-Lecture Full Series Toggle */}
-          <div className="grid grid-cols-2 gap-2 pt-0.5">
-            <button
-              type="button"
-              disabled={downloadingId === activeTrackIdForDownload}
-              onClick={() =>
-                handleDownloadOffline(
-                  activeTrackIdForDownload,
-                  activeUrlForDownload,
-                )
-              }
-              className={`inline-flex min-h-[34px] items-center justify-center gap-1.5 rounded-xl border px-2 text-[11px] font-bold ${
-                cachedTracks[activeTrackIdForDownload]
-                  ? 'border-emerald-500/50 bg-emerald-950/30 text-emerald-300'
-                  : 'border-[#C9A227]/50 bg-black text-[#FCE38A]'
-              }`}
-            >
-              {downloadingId === activeTrackIdForDownload ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : cachedTracks[activeTrackIdForDownload] ? (
-                <Check className="h-3.5 w-3.5" />
-              ) : (
-                <Download className="h-3.5 w-3.5" />
-              )}
-              <span>
-                {cachedTracks[activeTrackIdForDownload]
-                  ? 'محفوظ بدون نت'
-                  : 'حفظ الدرس أوفلاين'}
-              </span>
-            </button>
-
+          {/* 30-Lecture Full Series Toggle */}
+          <div className="pt-0.5">
             <button
               type="button"
               onClick={() => setShowFullSeries((v) => !v)}
-              className={`inline-flex min-h-[34px] items-center justify-center gap-1.5 rounded-xl border px-2 text-[11px] font-bold ${
+              className={`inline-flex min-h-[36px] w-full items-center justify-center gap-1.5 rounded-xl border px-3 text-xs font-bold ${
                 showFullSeries
                   ? 'border-[#C9A227] bg-[#C9A227] text-black'
                   : 'border-[#C9A227]/50 bg-black text-[#FCE38A]'
               }`}
             >
               <ListMusic className="h-3.5 w-3.5" />
-              <span>السلسلة الصوتية (٣٠ درسًا)</span>
+              <span>السلسلة الصوتية الكاملة (٣٠ درسًا)</span>
             </button>
           </div>
 
@@ -616,20 +540,6 @@ export const SeerahView: React.FC = () => {
                     <span className="truncate text-xs font-bold text-white">
                       {ep.titleAr}
                     </span>
-                  </button>
-                  <button
-                    type="button"
-                    aria-label={`حفظ ${ep.titleAr}`}
-                    onClick={() => handleDownloadOffline(ep.id, ep.url)}
-                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-[#C9A227]/40 text-[#FCE38A]"
-                  >
-                    {downloadingId === ep.id ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    ) : cachedTracks[ep.id] ? (
-                      <Check className="h-3.5 w-3.5 text-emerald-400" />
-                    ) : (
-                      <Download className="h-3.5 w-3.5" />
-                    )}
                   </button>
                 </div>
               );
