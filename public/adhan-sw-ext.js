@@ -74,11 +74,13 @@ function buildNotificationOptions(item) {
           ? 'تنبيه قيام الليل'
           : alertType === 'post-adhan-dua'
             ? 'دعاء ما بعد الأذان'
-            : alertType === 'post-prayer-azkar' ||
-                alertType === 'morning-azkar' ||
-                alertType === 'evening-azkar'
-              ? 'تشغيل الأذكار'
-              : 'تشغيل الصوت الآن';
+            : alertType === 'salawat'
+              ? 'استمع: صلِّ على النبي ﷺ'
+              : alertType === 'post-prayer-azkar' ||
+                  alertType === 'morning-azkar' ||
+                  alertType === 'evening-azkar'
+                ? 'تشغيل الأذكار'
+                : 'تشغيل الصوت الآن';
 
   return {
     body: item.body || 'حان الآن موعد الصلاة — البرنامج الإسلامي الذهبي',
@@ -218,7 +220,8 @@ self.addEventListener('message', (event) => {
                 n.tag.startsWith('tawasih-') ||
                 n.tag.startsWith('azkar-') ||
                 n.tag.startsWith('kahf-') ||
-                n.tag.startsWith('eid-'))
+                n.tag.startsWith('eid-') ||
+                n.tag.startsWith('salawat-'))
             ) {
               n.close();
             }

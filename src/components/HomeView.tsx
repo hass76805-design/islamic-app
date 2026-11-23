@@ -11,6 +11,7 @@ import {
   CircleDot,
   Clock,
   Compass,
+  Copy,
   Download,
   Heart,
   HeartHandshake,
@@ -23,6 +24,7 @@ import {
   Navigation,
   ScrollText,
   Search,
+  Share2,
   Sparkles,
   Sun,
   Sunrise,
@@ -98,6 +100,8 @@ export const HomeView: React.FC<HomeViewProps> = ({
 }) => {
   const [cityPickerOpen, setCityPickerOpen] = useState(false);
   const [citySearch, setCitySearch] = useState('');
+  const [shareModalOpen, setShareModalOpen] = useState(false);
+  const [shareCopied, setShareCopied] = useState(false);
   const [offlinePackDone, setOfflinePackDone] = useState(() =>
     isOfflinePackageDownloaded(),
   );
@@ -132,6 +136,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
   };
 
   useHardwareBack(cityPickerOpen, () => setCityPickerOpen(false));
+  useHardwareBack(shareModalOpen, () => setShareModalOpen(false));
 
   const toggleTimeFormat = () => {
     setTimeFormat((prev) => {
@@ -378,21 +383,33 @@ export const HomeView: React.FC<HomeViewProps> = ({
       {/* Compact 400px Prayer & Clock Gold-Bordered Strip */}
       <section className="rounded-3xl border-2 border-[#C9A227] bg-white p-4 dark:bg-[#000000]">
         <div className="space-y-3">
-          <div className="flex items-center gap-3">
-            <img
-              src="/pwa-192x192.png"
-              alt="شعار البرنامج الإسلامي الذهبي"
-              className="h-12 w-12 shrink-0 rounded-2xl border-2 border-[#C9A227] object-cover"
-            />
-            <div className="min-w-0">
-              <h1 className="font-quran text-xl font-bold text-[#9A7415] dark:text-[#F3D56B]">
-                البرنامج الإسلامي الذهبي
-              </h1>
-              <p className="text-[11px] font-bold text-[#9A7415] dark:text-[#C9A227]">
-                {hijri.weekdayAr} · {hijri.day} {hijri.monthNameAr} {hijri.year} هـ ·{' '}
-                {gregorianStr}
-              </p>
+          <div className="flex items-center justify-between gap-2.5">
+            <div className="flex min-w-0 items-center gap-3">
+              <img
+                src="/pwa-192x192.png"
+                alt="شعار البرنامج الإسلامي الذهبي"
+                className="h-12 w-12 shrink-0 rounded-2xl border-2 border-[#C9A227] object-cover"
+              />
+              <div className="min-w-0">
+                <h1 className="font-quran truncate text-lg font-bold text-[#9A7415] dark:text-[#F3D56B]">
+                  البرنامج الإسلامي الذهبي
+                </h1>
+                <p className="truncate text-[11px] font-bold text-[#9A7415] dark:text-[#C9A227]">
+                  {hijri.weekdayAr} · {hijri.day} {hijri.monthNameAr}{' '}
+                  {hijri.year} هـ · {gregorianStr}
+                </p>
+              </div>
             </div>
+
+            <button
+              type="button"
+              onClick={() => setShareModalOpen(true)}
+              aria-label="مشاركة التطبيق"
+              className="inline-flex min-h-[38px] shrink-0 items-center gap-1.5 rounded-2xl border border-[#C9A227] bg-gradient-to-l from-[#FCE38A] via-[#C9A227] to-[#9A7415] px-3 py-1.5 text-xs font-extrabold text-black shadow-[0_0_16px_rgba(201,162,39,0.28)] active:scale-95"
+            >
+              <Share2 className="h-3.5 w-3.5" />
+              <span>مشاركة التطبيق</span>
+            </button>
           </div>
 
           {/* Clock + Format Toggle + Next Prayer Ring */}
@@ -752,6 +769,124 @@ export const HomeView: React.FC<HomeViewProps> = ({
                 </button>
               ))}
             </div>
+          </div>
+        </div>
+      )}
+
+      {shareModalOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="مشاركة التطبيق"
+          className="fixed inset-y-0 left-1/2 z-50 flex w-full max-w-[400px] -translate-x-1/2 items-end justify-center bg-black/80 p-3 sm:items-center"
+        >
+          <div className="w-full space-y-3 rounded-3xl border-2 border-[#C9A227] bg-[#050505] p-4 text-white">
+            <div className="flex items-center justify-between border-b border-[#C9A227]/30 pb-2.5">
+              <div className="flex items-center gap-2">
+                <Share2 className="h-5 w-5 text-[#FCE38A]" />
+                <h3 className="text-base font-bold text-[#FCE38A]">
+                  مشاركة البرنامج الإسلامي الذهبي
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShareModalOpen(false)}
+                aria-label="إغلاق"
+                className="flex h-8 w-8 items-center justify-center rounded-xl border border-[#C9A227]/50 text-[#FCE38A]"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <p className="text-xs leading-relaxed text-zinc-300">
+              شارك التطبيق مع أهلك وأصدقائك عبر واتساب أو فيسبوك واكسب أجر الدالّ على الخير:
+            </p>
+
+            {(() => {
+              const appUrl =
+                typeof window !== 'undefined' &&
+                window.location.hostname !== 'localhost' &&
+                window.location.hostname !== '127.0.0.1'
+                  ? window.location.origin
+                  : 'https://ais-pre-6b23y7rzn4nr6hdpkn6nkk-744432451530.europe-west1.run.app';
+              const shareText = `البرنامج الإسلامي الذهبي — القرآن كامل بدون نت، المؤذن الإلكتروني، الأذكار، السيرة النبوية، صحيح البخاري، وصلِّ على النبي ﷺ\n${appUrl}`;
+              const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(shareText)}`;
+              const facebookUrl = `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(appUrl)}&quote=${encodeURIComponent(shareText)}`;
+
+              return (
+                <div className="space-y-2.5">
+                  <div className="grid grid-cols-2 gap-2.5">
+                    <a
+                      href={whatsappUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex min-h-[46px] items-center justify-center gap-2 rounded-2xl border border-emerald-500/60 bg-emerald-600/20 px-3 text-xs font-extrabold text-emerald-300"
+                    >
+                      <Share2 className="h-4 w-4" />
+                      <span>مشاركة واتساب</span>
+                    </a>
+
+                    <a
+                      href={facebookUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex min-h-[46px] items-center justify-center gap-2 rounded-2xl border border-blue-500/60 bg-blue-600/20 px-3 text-xs font-extrabold text-blue-300"
+                    >
+                      <Share2 className="h-4 w-4" />
+                      <span>مشاركة فيسبوك</span>
+                    </a>
+                  </div>
+
+                  {typeof navigator !== 'undefined' &&
+                    typeof navigator.share === 'function' && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          navigator
+                            .share({
+                              title: 'البرنامج الإسلامي الذهبي',
+                              text: 'البرنامج الإسلامي الذهبي — القرآن بدون نت، المؤذن الإلكتروني، الأذكار وصلِّ على النبي ﷺ',
+                              url: appUrl,
+                            })
+                            .catch(() => {});
+                        }}
+                        className="flex min-h-[44px] w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-l from-[#FCE38A] via-[#C9A227] to-[#9A7415] text-xs font-extrabold text-black"
+                      >
+                        <Share2 className="h-4 w-4" />
+                        <span>مشاركة عبر تطبيقات الهاتف</span>
+                      </button>
+                    )}
+
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(appUrl);
+                        setShareCopied(true);
+                        window.setTimeout(() => setShareCopied(false), 2000);
+                      } catch {
+                        // ignore clipboard failure
+                      }
+                    }}
+                    className="flex min-h-[42px] w-full items-center justify-center gap-2 rounded-2xl border border-[#C9A227]/60 bg-black text-xs font-bold text-[#FCE38A]"
+                  >
+                    {shareCopied ? (
+                      <>
+                        <Check className="h-4 w-4 text-emerald-400" />
+                        <span className="text-emerald-300">
+                          تم نسخ رابط التطبيق بنجاح
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="h-4 w-4" />
+                        <span>نسخ رابط التطبيق</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              );
+            })()}
           </div>
         </div>
       )}

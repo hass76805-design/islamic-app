@@ -31,6 +31,7 @@ import {
   POST_ADHAN_DUA,
   POST_PRAYER_AZKAR_AUDIO_URLS,
   PRE_ADHAN_VOICES_3,
+  SALAWAT_AUDIO_TRACKS,
   TAWASIH_NAQSHABANDI,
 } from './data/reciters';
 import {useLocalStorage} from './hooks/useLocalStorage';
@@ -64,6 +65,32 @@ import {
 import {playRamadanCannonSound} from './utils/ramadanCannon';
 
 const FIRED_ALERTS_STORAGE_KEY = 'alzahabi_fired_alerts_v1';
+const SALAWAT_ANCHOR_STORAGE_KEY = 'alzahabi_salawat_anchor_v1';
+
+function getOrInitSalawatAnchor(intervalMin: number): number {
+  if (typeof window === 'undefined') return Date.now();
+  try {
+    const raw = window.localStorage.getItem(SALAWAT_ANCHOR_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as {ts?: number; interval?: number};
+      if (
+        typeof parsed.ts === 'number' &&
+        parsed.ts > 0 &&
+        parsed.interval === intervalMin
+      ) {
+        return parsed.ts;
+      }
+    }
+    const ts = Date.now();
+    window.localStorage.setItem(
+      SALAWAT_ANCHOR_STORAGE_KEY,
+      JSON.stringify({ts, interval: intervalMin}),
+    );
+    return ts;
+  } catch {
+    return Date.now();
+  }
+}
 
 function readPersistedFiredAlerts(): Set<string> {
   if (typeof window === 'undefined') return new Set();
@@ -166,6 +193,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   postPrayerAzkarEnabled: true,
   backgroundAlertsEnabled: true,
   lockScreenKeepAlive: false,
+  salawatReminderEnabled: false,
+  salawatIntervalMinutes: 10,
 };
 
 const NAV_ITEMS: Array<{id: TabId; labelAr: string; icon: typeof Home}> = [
@@ -374,10 +403,10 @@ function AppContent({
     return () => window.clearTimeout(timer);
   }, [showSplash, settings.preferredReciter]);
 
-  // Optional Lock-Screen Electronic Muezzin Keep-Alive (silent WAV + MediaSession + WakeLock)
+  // Optional Lock-Screen Electronic Muezzin & Salawat Keep-Alive (silent WAV + MediaSession + WakeLock)
   useEffect(() => {
     if (
-      !settings.adhanEnabled ||
+      !(settings.adhanEnabled || settings.salawatReminderEnabled) ||
       !settings.lockScreenKeepAlive ||
       typeof window === 'undefined'
     ) {
@@ -398,7 +427,9 @@ function AppContent({
     if ('mediaSession' in navigator) {
       try {
         navigator.mediaSession.metadata = new MediaMetadata({
-          title: 'المؤذن الإلكتروني الذهبي نشط',
+          title: settings.salawatReminderEnabled
+            ? 'المؤذن الذهبي ومذكّر الصلاة على النبي ﷺ نشط'
+            : 'المؤذن الإلكتروني الذهبي نشط',
           artist: `${location.city} · يعمل في الخلفية`,
           album: 'البرنامج الإسلامي الذهبي',
         });
@@ -425,7 +456,12 @@ function AppContent({
       URL.revokeObjectURL(wavUrl);
       wakeSentinel?.release?.().catch(() => {});
     };
-  }, [settings.adhanEnabled, settings.lockScreenKeepAlive, location.city]);
+  }, [
+    settings.adhanEnabled,
+    settings.salawatReminderEnabled,
+    settings.lockScreenKeepAlive,
+    location.city,
+  ]);
 
   const showSystemNotification = useCallback(
     (title: string, body: string, tag: string) => {
@@ -628,11 +664,11 @@ function AppContent({
     };
   }, [playManagedAudio]);
 
-  // Sync Today + Tomorrow Adhan, Pre-Adhan, Iqamah, Tawasih, Azkar, Kahf & Eid alerts to Service Worker + Background Sync
+  // Sync Today + Next 7 Days Adhan, Pre-Adhan, Iqamah, Tawasih, Azkar, Kahf, Eid & Salawat alerts to Service Worker
   const scheduleDateKey = getDateKey(now);
   useEffect(() => {
     if (
-      !settings.adhanEnabled ||
+      (!settings.adhanEnabled && !settings.salawatReminderEnabled) ||
       typeof navigator === 'undefined' ||
       !('serviceWorker' in navigator)
     ) {
@@ -670,7 +706,7 @@ function AppContent({
 
     const nowMs = Date.now();
     // Schedule 7 days ahead in Service Worker so background Adhan keeps working even without reopening daily
-    for (let dayOffset = 0; dayOffset < 7; dayOffset++) {
+    for (let dayOffset = 0; settings.adhanEnabled && dayOffset < 7; dayOffset++) {
       const targetDate = new Date();
       targetDate.setDate(targetDate.getDate() + dayOffset);
       const dayKey = getDateKey(targetDate);
@@ -886,6 +922,33 @@ function AppContent({
       }
     }
 
+    // Recurring background Salawat reminders (every 10, 30, or 60 minutes)
+    if (settings.salawatReminderEnabled) {
+      const intervalMin = settings.salawatIntervalMinutes || 10;
+      const intervalMs = intervalMin * 60 * 1000;
+      const anchorMs = getOrInitSalawatAnchor(intervalMin);
+      const firstFutureSlot = Math.max(
+        1,
+        Math.ceil((nowMs + 3000 - anchorMs) / intervalMs),
+      );
+      for (let idx = 0; idx < 48; idx++) {
+        const slotIndex = firstFutureSlot + idx;
+        const slotTs = anchorMs + slotIndex * intervalMs;
+        const track =
+          SALAWAT_AUDIO_TRACKS[slotIndex % SALAWAT_AUDIO_TRACKS.length];
+        alerts.push({
+          tag: `salawat-${intervalMin}-${slotIndex}`,
+          title: 'صلِّ على النبي ﷺ — تذكير',
+          body: `${track.textAr} (${track.reciterAr})`,
+          prayerName: 'الصلاة على النبي ﷺ',
+          voiceId: track.id,
+          timestamp: slotTs,
+          audioUrl: track.url,
+          type: 'salawat',
+        });
+      }
+    }
+
     const syncScheduleToSW = async () => {
       try {
         const reg = await navigator.serviceWorker.ready;
@@ -957,6 +1020,8 @@ function AppContent({
     settings.postPrayerAzkarEnabled,
     settings.fridayKahfReminder,
     settings.eidTakbeeratEnabled,
+    settings.salawatReminderEnabled,
+    settings.salawatIntervalMinutes,
     settings.calculationMethod,
     settings.madhab,
     settings.prayerOffsets,
@@ -983,9 +1048,9 @@ function AppContent({
     ],
   );
 
-  // Real-time Scheduled Adhan & Electronic Muezzin Trigger Watcher
+  // Real-time Scheduled Adhan & Salawat Trigger Watcher
   useEffect(() => {
-    if (!settings.adhanEnabled) return;
+    if (!settings.adhanEnabled && !settings.salawatReminderEnabled) return;
     const {schedule} = dailyPrayerData;
 
     const todayStr = scheduleDateKey;
@@ -1018,7 +1083,7 @@ function AppContent({
       persistFiredAlert(key);
     };
 
-    for (const item of schedule) {
+    for (const item of settings.adhanEnabled ? schedule : []) {
       if (item.key === 'sunrise') continue;
       const prayerKey = item.key as TrackablePrayer;
       const isPrayerEnabled = settings.enabledPrayers?.[prayerKey] ?? true;
@@ -1158,7 +1223,7 @@ function AppContent({
       }
     }
 
-    if (settings.qiyamEnabled ?? true) {
+    if (settings.adhanEnabled && (settings.qiyamEnabled ?? true)) {
       const qiyamData = computeQiyamAlLaylTime(
         location.latitude,
         location.longitude,
@@ -1191,7 +1256,7 @@ function AppContent({
     const isEidDay =
       (hijri.month === 10 && hijri.day === 1) ||
       (hijri.month === 12 && hijri.day >= 10 && hijri.day <= 13);
-    if (settings.eidTakbeeratEnabled && isEidDay) {
+    if (settings.adhanEnabled && settings.eidTakbeeratEnabled && isEidDay) {
       const eidKey = `eid-${todayStr}`;
       if (!triggeredAlertsRef.current.has(eidKey)) {
         triggeredAlertsRef.current.add(eidKey);
@@ -1204,6 +1269,7 @@ function AppContent({
     }
 
     if (
+      settings.adhanEnabled &&
       settings.fridayKahfReminder &&
       now.getDay() === 5 &&
       now.getHours() >= 9
@@ -1216,6 +1282,37 @@ function AppContent({
           actionLabel: 'استماع لسورة الكهف',
           onAction: () => playManagedAudio(activeKahfVoice.url),
         });
+      }
+    }
+
+    if (settings.salawatReminderEnabled) {
+      const intervalMin = settings.salawatIntervalMinutes || 10;
+      const intervalMs = intervalMin * 60 * 1000;
+      const anchorMs = getOrInitSalawatAnchor(intervalMin);
+      const elapsedSinceAnchor = now.getTime() - anchorMs;
+      if (elapsedSinceAnchor >= intervalMs) {
+        const currentSlot = Math.floor(elapsedSinceAnchor / intervalMs);
+        const slotSec = Math.floor((anchorMs + currentSlot * intervalMs) / 1000);
+        const salawatKey = `salawat-${intervalMin}-${currentSlot}`;
+        if (
+          isDueWithinWindow(slotSec, 120) &&
+          !triggeredAlertsRef.current.has(salawatKey)
+        ) {
+          markAlertHandled(salawatKey);
+          const track =
+            SALAWAT_AUDIO_TRACKS[currentSlot % SALAWAT_AUDIO_TRACKS.length];
+          showSystemNotification(
+            'صلِّ على النبي ﷺ — تذكير',
+            `${track.textAr} (${track.reciterAr})`,
+            salawatKey,
+          );
+          setAdhanBanner({
+            text: `تذكير: صلِّ على النبي ﷺ · ${track.textAr}`,
+            actionLabel: 'استماع للشيخ',
+            onAction: () => playManagedAudio(track.url),
+          });
+          playManagedAudio(track.url);
+        }
       }
     }
   }, [
@@ -1245,6 +1342,8 @@ function AppContent({
     settings.eidTakbeeratEnabled,
     settings.postPrayerAzkarEnabled,
     settings.fridayKahfReminder,
+    settings.salawatReminderEnabled,
+    settings.salawatIntervalMinutes,
     playManagedAudio,
     showSystemNotification,
   ]);
@@ -1707,6 +1806,8 @@ export default function App() {
           : rawSettings?.preferredTawasih || DEFAULT_SETTINGS.preferredTawasih,
       postAdhanDuaEnabled: rawSettings?.postAdhanDuaEnabled ?? true,
       qiyamEnabled: rawSettings?.qiyamEnabled ?? true,
+      salawatReminderEnabled: rawSettings?.salawatReminderEnabled ?? false,
+      salawatIntervalMinutes: rawSettings?.salawatIntervalMinutes || 10,
       prayerOffsets: {
         ...DEFAULT_PRAYER_OFFSETS,
         ...(rawSettings?.prayerOffsets || {}),

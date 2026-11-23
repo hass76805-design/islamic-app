@@ -317,4 +317,6 @@ export interface AppSettings {
   postPrayerAzkarEnabled: boolean;
   backgroundAlertsEnabled: boolean;
   lockScreenKeepAlive?: boolean;
+  salawatReminderEnabled?: boolean;
+  salawatIntervalMinutes?: 10 | 30 | 60;
 }

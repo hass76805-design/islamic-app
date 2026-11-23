@@ -664,6 +664,56 @@ export const POST_PRAYER_AZKAR_AUDIO_URLS = [
 
 export const IQAMAH_AUDIO: AdhanVoice = IQAMAH_VOICES_3[0];
 
+export interface SalawatAudioTrack {
+  id: string;
+  formulaId: 'short' | 'ibrahimiyyah' | 'kafiyah' | 'friday';
+  titleAr: string;
+  textAr: string;
+  reciterAr: string;
+  virtueAr: string;
+  url: string;
+}
+
+export const SALAWAT_AUDIO_TRACKS: SalawatAudioTrack[] = [
+  {
+    id: 'salawat-afasy',
+    formulaId: 'short',
+    titleAr: 'الصلاة المختصرة المباركة',
+    textAr: 'اللَّهُمَّ صَلِّ وَسَلِّمْ عَلَى نَبِيِّنَا مُحَمَّدٍ',
+    reciterAr: 'بصوت الشيخ مشاري راشد العفاسي',
+    virtueAr: 'من صلى عليَّ صلاة واحدة صلى الله عليه بها عشرًا (صحيح مسلم)',
+    url: '/audio/salawat-1.mp3',
+  },
+  {
+    id: 'salawat-ghamdi',
+    formulaId: 'ibrahimiyyah',
+    titleAr: 'الصلاة الإبراهيمية الكاملة',
+    textAr:
+      'اللَّهُمَّ صَلِّ عَلَى مُحَمَّدٍ وَعَلَى آلِ مُحَمَّدٍ، كَمَا صَلَّيْتَ عَلَى إِبْرَاهِيمَ وَعَلَى آلِ إِبْرَاهِيمَ، إِنَّكَ حَمِيدٌ مَجِيدٌ، اللَّهُمَّ بَارِكْ عَلَى مُحَمَّدٍ وَعَلَى آلِ مُحَمَّدٍ، كَمَا بَارَكْتَ عَلَى إِبْرَاهِيمَ وَعَلَى آلِ إِبْرَاهِيمَ، إِنَّكَ حَمِيدٌ مَجِيدٌ',
+    reciterAr: 'بصوت الشيخ سعد الغامدي',
+    virtueAr: 'أفضل صيغة علّمها النبي ﷺ لأصحابه رضي الله عنهم (متفق عليه)',
+    url: '/audio/salawat-2.mp3',
+  },
+  {
+    id: 'salawat-muaiqly',
+    formulaId: 'kafiyah',
+    titleAr: 'الصلاة على النبي ﷺ بخشوع الحرم',
+    textAr: 'اللَّهُمَّ صَلِّ وَسَلِّمْ وَبَارِكْ عَلَى نَبِيِّنَا مُحَمَّدٍ وَعَلَى آلِهِ وَصَحْبِهِ أَجْمَعِينَ',
+    reciterAr: 'بصوت الشيخ ماهر المعيقلي',
+    virtueAr: 'قيل لأبي بن كعب: إذن تُكفى همَّك ويُغفر لك ذنبُك (الترمذي)',
+    url: '/audio/salawat-3.mp3',
+  },
+  {
+    id: 'salawat-dukhin',
+    formulaId: 'friday',
+    titleAr: 'صلِّ على النبي ﷺ بنبرة هادئة خاشعة',
+    textAr: 'صَلَّى اللَّهُ عَلَى مُحَمَّدٍ صَلَّى اللَّهُ عَلَيْهِ وَسَلَّمَ',
+    reciterAr: 'بصوت الشيخ هيثم الدخين',
+    virtueAr: 'فأكثروا عليَّ من الصلاة فيه، فإن صلاتكم معروضة عليَّ (أبو داود)',
+    url: '/audio/salawat-4.mp3',
+  },
+];
+
 export const ADHAN_TONE_DESCRIPTIONS: Record<string, {maqamAr: string; paceFactor: number}> = {
   'adhan-makkah': {maqamAr: 'النغمة: المقام المكي الجَهوري (الحجاز)', paceFactor: 1.0},
   'adhan-madinah': {maqamAr: 'النغمة: المقام المدني الرصين (البيات)', paceFactor: 0.98},

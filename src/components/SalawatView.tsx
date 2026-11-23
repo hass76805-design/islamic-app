@@ -1,56 +1,73 @@
-import React, {useMemo, useRef, useState} from 'react';
+import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {
+  AlarmClock,
+  BellRing,
   Check,
   Copy,
+  Pause,
+  Play,
   RotateCcw,
+  ShieldCheck,
   Sparkles,
   Volume2,
   VolumeX,
 } from 'lucide-react';
+import {SALAWAT_AUDIO_TRACKS} from '../data/reciters';
 import {useLocalStorage} from '../hooks/useLocalStorage';
+import {AppSettings} from '../types';
 
-interface SalawatFormula {
-  id: string;
-  titleAr: string;
-  textAr: string;
-  virtueAr: string;
+interface SalawatViewProps {
+  settings: AppSettings;
+  onUpdateSettings: React.Dispatch<React.SetStateAction<AppSettings>>;
 }
 
-const SALAWAT_FORMULAS: SalawatFormula[] = [
-  {
-    id: 'short',
-    titleAr: 'الصلاة المختصرة المباركة',
-    textAr: 'اللَّهُمَّ صَلِّ وَسَلِّمْ وَبَارِكْ عَلَى نَبِيِّنَا مُحَمَّدٍ',
-    virtueAr: 'من صلى عليَّ صلاة واحدة صلى الله عليه بها عشرًا (صحيح مسلم)',
-  },
-  {
-    id: 'ibrahimiyyah',
-    titleAr: 'الصلاة الإبراهيمية الكاملة',
-    textAr:
-      'اللَّهُمَّ صَلِّ عَلَى مُحَمَّدٍ وَعَلَى آلِ مُحَمَّدٍ، كَمَا صَلَّيْتَ عَلَى إِبْرَاهِيمَ وَعَلَى آلِ إِبْرَاهِيمَ، إِنَّكَ حَمِيدٌ مَجِيدٌ، اللَّهُمَّ بَارِكْ عَلَى مُحَمَّدٍ وَعَلَى آلِ مُحَمَّدٍ، كَمَا بَارَكْتَ عَلَى إِبْرَاهِيمَ وَعَلَى آلِ إِبْرَاهِيمَ، إِنَّكَ حَمِيدٌ مَجِيدٌ',
-    virtueAr: 'أفضل صيغة علّمها النبي ﷺ لأصحابه رضي الله عنهم (متفق عليه)',
-  },
-  {
-    id: 'kafiyah',
-    titleAr: 'صيغة تفريج الهموم وغفران الذنوب',
-    textAr: 'اللَّهُمَّ صَلِّ عَلَى مُحَمَّدٍ وَآلِ مُحَمَّدٍ صَلَاةً تَرْضَاهَا لَهُ وَتَرْضَى بِهَا عَنَّا',
-    virtueAr: 'قيل لأبي بن كعب: إذن تُكفى همَّك ويُغفر لك ذنبُك (الترمذي)',
-  },
-  {
-    id: 'friday',
-    titleAr: 'صلاة يوم الجمعة وليلة الجمعة',
-    textAr: 'صَلَّى اللَّهُ عَلَيْهِ وَعَلَى آلِهِ وَصَحْبِهِ وَسَلَّمَ تَسْلِيمًا كَثِيرًا',
-    virtueAr: 'فأكثروا عليَّ من الصلاة فيه، فإن صلاتكم معروضة عليَّ (أبو داود)',
-  },
-];
-
 const TARGET_OPTIONS = [10, 33, 100, 1000, 0] as const;
+const REMINDER_INTERVALS: Array<{minutes: 10 | 30 | 60; labelAr: string}> = [
+  {minutes: 10, labelAr: 'كل 10 دقائق'},
+  {minutes: 30, labelAr: 'كل 30 دقيقة'},
+  {minutes: 60, labelAr: 'كل ساعة'},
+];
+const SALAWAT_ANCHOR_STORAGE_KEY = 'alzahabi_salawat_anchor_v1';
 
 interface SalawatStats {
   count: number;
   cycles: number;
   totalAllTime: number;
   target: number;
+}
+
+function writeSalawatAnchor(intervalMin: number, ts = Date.now()) {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(
+      SALAWAT_ANCHOR_STORAGE_KEY,
+      JSON.stringify({ts, interval: intervalMin}),
+    );
+  } catch {
+    // ignore storage errors
+  }
+}
+
+function readSalawatAnchor(intervalMin: number): number | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(SALAWAT_ANCHOR_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as {ts?: number; interval?: number};
+    if (typeof parsed.ts === 'number' && parsed.interval === intervalMin) {
+      return parsed.ts;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function formatCountdownMs(ms: number): string {
+  const totalSec = Math.max(0, Math.floor(ms / 1000));
+  const mins = Math.floor(totalSec / 60);
+  const secs = totalSec % 60;
+  return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
 }
 
 function playGoldenBeadAudio(isLapComplete: boolean) {
@@ -98,7 +115,10 @@ function playGoldenBeadAudio(isLapComplete: boolean) {
   }
 }
 
-export const SalawatView: React.FC = () => {
+export const SalawatView: React.FC<SalawatViewProps> = ({
+  settings,
+  onUpdateSettings,
+}) => {
   const [stats, setStats] = useLocalStorage<SalawatStats>(
     'alzahabi_salawat_stats_v1',
     {
@@ -108,33 +128,82 @@ export const SalawatView: React.FC = () => {
       target: 33,
     },
   );
-  const [selectedFormulaId, setSelectedFormulaId] = useState<string>('short');
+  const [selectedTrackId, setSelectedTrackId] = useState<string>(
+    SALAWAT_AUDIO_TRACKS[0].id,
+  );
   const [soundEnabled, setSoundEnabled] = useState(true);
-  const [voiceSpeakEnabled, setVoiceSpeakEnabled] = useState(false);
+  const [sheikhTapVoiceEnabled, setSheikhTapVoiceEnabled] = useState(false);
+  const [playingTrackId, setPlayingTrackId] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
-  const lastTapRef = useRef(0);
+  const [notifStatus, setNotifStatus] = useState<string>(() =>
+    typeof Notification !== 'undefined' ? Notification.permission : 'unsupported',
+  );
+  const [nextReminderText, setNextReminderText] = useState<string>('');
+  const [testAlertNotice, setTestAlertNotice] = useState<string | null>(null);
 
-  const activeFormula = useMemo(
+  const lastTapRef = useRef(0);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  const activeTrack = useMemo(
     () =>
-      SALAWAT_FORMULAS.find((f) => f.id === selectedFormulaId) ||
-      SALAWAT_FORMULAS[0],
-    [selectedFormulaId],
+      SALAWAT_AUDIO_TRACKS.find((t) => t.id === selectedTrackId) ||
+      SALAWAT_AUDIO_TRACKS[0],
+    [selectedTrackId],
   );
 
-  const speakSalawat = (text: string) => {
-    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
-    try {
-      window.speechSynthesis.cancel();
-      const u = new SpeechSynthesisUtterance(text);
-      u.lang = 'ar-SA';
-      u.rate = 0.95;
-      const voices = window.speechSynthesis.getVoices();
-      const arVoice = voices.find((v) => v.lang.startsWith('ar'));
-      if (arVoice) u.voice = arVoice;
-      window.speechSynthesis.speak(u);
-    } catch {
-      // ignore
+  const reminderEnabled = Boolean(settings.salawatReminderEnabled);
+  const intervalMinutes = settings.salawatIntervalMinutes || 10;
+
+  useEffect(() => {
+    return () => {
+      audioRef.current?.pause();
+    };
+  }, []);
+
+  // Live countdown to next automatic background Salawat alarm
+  useEffect(() => {
+    if (!reminderEnabled) {
+      setNextReminderText('');
+      return;
     }
+    const updateCountdown = () => {
+      const intervalMs = intervalMinutes * 60 * 1000;
+      let anchor = readSalawatAnchor(intervalMinutes);
+      if (!anchor) {
+        anchor = Date.now();
+        writeSalawatAnchor(intervalMinutes, anchor);
+      }
+      const elapsed = Math.max(0, Date.now() - anchor);
+      const remainder = intervalMs - (elapsed % intervalMs);
+      setNextReminderText(formatCountdownMs(remainder));
+    };
+    updateCountdown();
+    const id = window.setInterval(updateCountdown, 1000);
+    return () => window.clearInterval(id);
+  }, [reminderEnabled, intervalMinutes]);
+
+  const playSheikhTrack = (trackId: string, restartIfSame = false) => {
+    const track =
+      SALAWAT_AUDIO_TRACKS.find((t) => t.id === trackId) ||
+      SALAWAT_AUDIO_TRACKS[0];
+    if (!audioRef.current) {
+      audioRef.current = new Audio();
+    }
+    const audio = audioRef.current;
+
+    if (!restartIfSame && playingTrackId === track.id) {
+      audio.pause();
+      setPlayingTrackId(null);
+      return;
+    }
+
+    audio.pause();
+    audio.currentTime = 0;
+    audio.src = track.url;
+    setPlayingTrackId(track.id);
+    audio.onended = () => setPlayingTrackId(null);
+    audio.onerror = () => setPlayingTrackId(null);
+    audio.play().catch(() => setPlayingTrackId(null));
   };
 
   const handleRosaryTap = () => {
@@ -160,7 +229,7 @@ export const SalawatView: React.FC = () => {
         nextCycles += 1;
         completedCycleNow = true;
       }
-      if (soundEnabled) {
+      if (soundEnabled && !sheikhTapVoiceEnabled) {
         playGoldenBeadAudio(completedCycleNow);
       }
       return {
@@ -171,9 +240,92 @@ export const SalawatView: React.FC = () => {
       };
     });
 
-    if (voiceSpeakEnabled) {
-      speakSalawat('اللهم صل وسلم على نبينا محمد');
+    if (sheikhTapVoiceEnabled) {
+      playSheikhTrack(activeTrack.id, true);
     }
+  };
+
+  const ensureNotificationPermission = async (): Promise<boolean> => {
+    if (typeof Notification === 'undefined') {
+      setNotifStatus('unsupported');
+      return false;
+    }
+    if (Notification.permission === 'granted') {
+      setNotifStatus('granted');
+      return true;
+    }
+    try {
+      const result = await Notification.requestPermission();
+      setNotifStatus(result);
+      return result === 'granted';
+    } catch {
+      return false;
+    }
+  };
+
+  const handleToggleBackgroundReminder = async () => {
+    const nextEnabled = !reminderEnabled;
+    if (nextEnabled) {
+      await ensureNotificationPermission();
+      writeSalawatAnchor(intervalMinutes, Date.now());
+    }
+    onUpdateSettings((prev) => ({
+      ...prev,
+      salawatReminderEnabled: nextEnabled,
+      salawatIntervalMinutes: prev.salawatIntervalMinutes || 10,
+      backgroundAlertsEnabled: true,
+      lockScreenKeepAlive: nextEnabled ? true : prev.lockScreenKeepAlive,
+    }));
+  };
+
+  const handleSelectInterval = async (minutes: 10 | 30 | 60) => {
+    writeSalawatAnchor(minutes, Date.now());
+    if (!reminderEnabled) {
+      await ensureNotificationPermission();
+    }
+    onUpdateSettings((prev) => ({
+      ...prev,
+      salawatReminderEnabled: true,
+      salawatIntervalMinutes: minutes,
+      backgroundAlertsEnabled: true,
+      lockScreenKeepAlive: true,
+    }));
+  };
+
+  const handleTestBackgroundAlert = async () => {
+    const granted = await ensureNotificationPermission();
+    const randomTrack =
+      SALAWAT_AUDIO_TRACKS[
+        Math.floor(Math.random() * SALAWAT_AUDIO_TRACKS.length)
+      ];
+    playSheikhTrack(randomTrack.id, true);
+
+    if (granted && 'serviceWorker' in navigator) {
+      try {
+        const reg = await navigator.serviceWorker.ready;
+        reg.active?.postMessage({
+          type: 'TEST_ADHAN_NOTIFICATION',
+          payload: {
+            title: 'صلِّ على النبي ﷺ — تذكير',
+            body: `${randomTrack.textAr} (${randomTrack.reciterAr})`,
+            prayerNameAr: 'الصلاة على النبي ﷺ',
+            voiceId: randomTrack.id,
+            audioUrl: randomTrack.url,
+            type: 'salawat',
+          },
+        });
+        setTestAlertNotice(
+          `تم إرسال تنبيه تجريبي وتشغيل صوت: ${randomTrack.reciterAr}`,
+        );
+      } catch {
+        setTestAlertNotice(`جاري تشغيل: ${randomTrack.reciterAr}`);
+      }
+    } else {
+      setTestAlertNotice(
+        'جاري تشغيل صوت الشيخ — اسمح بالإشعارات لتصل الرسائل والشاشة مغلقة',
+      );
+    }
+    window.setTimeout(() => setTestAlertNotice(null), 4000);
   };
 
   const beadCount = 33;
@@ -195,9 +347,122 @@ export const SalawatView: React.FC = () => {
         </p>
       </div>
 
+      {/* Real Background Salawat Alarm Card (Works When Closed / Screen Locked) */}
+      <section className="space-y-3 rounded-3xl border-2 border-[#C9A227] bg-[#060502] p-4 text-white">
+        <div className="flex items-start justify-between gap-2.5">
+          <div className="flex items-start gap-2.5">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-[#C9A227] bg-[#C9A227]/15 text-[#FCE38A]">
+              <AlarmClock className="h-5 w-5" />
+            </span>
+            <div>
+              <h3 className="text-sm font-extrabold text-[#FCE38A]">
+                منبّه الصلاة على النبي ﷺ في الخلفية
+              </h3>
+              <p className="mt-0.5 text-[11px] leading-relaxed text-zinc-300">
+                يعمل كالمنبّه بصوت مشايخ حقيقيين متجدد وتنبيه على الهاتف حتى مع غلق التطبيق أو الشاشة
+              </p>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => void handleToggleBackgroundReminder()}
+            className={`shrink-0 rounded-xl border px-3 py-1.5 text-xs font-extrabold ${
+              reminderEnabled
+                ? 'border-[#FCE38A] bg-[#C9A227] text-black'
+                : 'border-[#C9A227]/50 bg-black text-[#FCE38A]'
+            }`}
+          >
+            {reminderEnabled ? 'مفعّل' : 'تشغيل'}
+          </button>
+        </div>
+
+        {/* Duration Picker: 10 min / 30 min / 1 hour */}
+        <div className="grid grid-cols-3 gap-2">
+          {REMINDER_INTERVALS.map((opt) => {
+            const active = reminderEnabled && intervalMinutes === opt.minutes;
+            return (
+              <button
+                key={opt.minutes}
+                type="button"
+                onClick={() => void handleSelectInterval(opt.minutes)}
+                className={`min-h-[40px] rounded-xl border px-2 py-2 text-xs font-bold transition-colors ${
+                  active
+                    ? 'border-[#FCE38A] bg-gradient-to-b from-[#FCE38A] to-[#C9A227] text-black'
+                    : 'border-[#C9A227]/45 bg-black text-zinc-200 hover:border-[#C9A227]'
+                }`}
+              >
+                {opt.labelAr}
+              </button>
+            );
+          })}
+        </div>
+
+        {reminderEnabled && (
+          <div className="flex items-center justify-between rounded-2xl border border-emerald-500/45 bg-emerald-950/25 px-3 py-2 text-xs">
+            <span className="flex items-center gap-1.5 font-bold text-emerald-300">
+              <BellRing className="h-4 w-4 shrink-0" />
+              <span>المنبّه نشط كل {intervalMinutes} دقيقة</span>
+            </span>
+            {nextReminderText && (
+              <span
+                dir="ltr"
+                className="font-mono-num rounded-lg bg-black/70 px-2 py-0.5 text-xs font-extrabold text-[#FCE38A]"
+              >
+                {nextReminderText}
+              </span>
+            )}
+          </div>
+        )}
+
+        {/* Lock-screen Keep-Alive + Notification Permission + Test */}
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[#C9A227]/25 pt-2.5">
+          <button
+            type="button"
+            onClick={() =>
+              onUpdateSettings((prev) => ({
+                ...prev,
+                lockScreenKeepAlive: !prev.lockScreenKeepAlive,
+              }))
+            }
+            className={`inline-flex min-h-[36px] items-center gap-1.5 rounded-xl border px-2.5 text-[11px] font-bold ${
+              settings.lockScreenKeepAlive
+                ? 'border-[#C9A227] bg-[#C9A227]/20 text-[#FCE38A]'
+                : 'border-zinc-700 bg-black text-zinc-400'
+            }`}
+          >
+            <ShieldCheck className="h-3.5 w-3.5" />
+            <span>
+              تثبيت الخلفية وقفل الشاشة:{' '}
+              {settings.lockScreenKeepAlive ? 'نشط' : 'عادي'}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => void handleTestBackgroundAlert()}
+            className="inline-flex min-h-[36px] items-center gap-1.5 rounded-xl border border-[#C9A227] bg-black px-3 text-[11px] font-bold text-[#FCE38A]"
+          >
+            <Volume2 className="h-3.5 w-3.5" />
+            <span>تجربة الصوت والتنبيه</span>
+          </button>
+        </div>
+
+        {notifStatus === 'denied' && (
+          <p className="rounded-xl border border-rose-500/40 bg-rose-950/30 p-2 text-[11px] text-rose-300">
+            تم حظر الإشعارات في المتصفح — فعّل الإشعارات من إعدادات الموقع ليصلك التذكير عند إغلاق التطبيق.
+          </p>
+        )}
+
+        {testAlertNotice && (
+          <p className="rounded-xl border border-[#C9A227]/50 bg-[#141004] p-2 text-center text-[11px] font-bold text-[#FCE38A]">
+            {testAlertNotice}
+          </p>
+        )}
+      </section>
+
       {/* Golden Rosary Interactive Ring */}
       <section className="rounded-3xl border-2 border-[#C9A227] bg-[#040301] p-4 text-white">
-        {/* Top Controls Row */}
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex flex-wrap gap-1.5">
             {TARGET_OPTIONS.map((t) => (
@@ -237,9 +502,7 @@ export const SalawatView: React.FC = () => {
             </button>
             <button
               type="button"
-              onClick={() =>
-                setStats((s) => ({...s, count: 0}))
-              }
+              onClick={() => setStats((s) => ({...s, count: 0}))}
               aria-label="تصفير العداد"
               className="flex h-9 w-9 items-center justify-center rounded-xl border border-[#C9A227]/50 bg-black text-[#F3D56B]"
             >
@@ -251,7 +514,10 @@ export const SalawatView: React.FC = () => {
         {/* Golden Beads Circle + Tap Center */}
         <div className="my-5 flex flex-col items-center justify-center">
           <div className="relative flex h-64 w-64 items-center justify-center">
-            <svg className="pointer-events-none absolute inset-0 h-full w-full" viewBox="0 0 260 260">
+            <svg
+              className="pointer-events-none absolute inset-0 h-full w-full"
+              viewBox="0 0 260 260"
+            >
               <circle
                 cx="130"
                 cy="130"
@@ -261,7 +527,8 @@ export const SalawatView: React.FC = () => {
                 strokeWidth="2"
               />
               {Array.from({length: beadCount}).map((_, i) => {
-                const angleRad = ((i / beadCount) * 360 - 90) * (Math.PI / 180);
+                const angleRad =
+                  ((i / beadCount) * 360 - 90) * (Math.PI / 180);
                 const cx = 130 + 114 * Math.cos(angleRad);
                 const cy = 130 + 114 * Math.sin(angleRad);
                 const lit = i < activeBeadIndex;
@@ -299,11 +566,14 @@ export const SalawatView: React.FC = () => {
           </div>
 
           <p className="font-quran mt-3 text-center text-base font-bold text-[#FCE38A]">
-            {activeFormula.textAr}
+            {activeTrack.textAr}
+          </p>
+          <p className="mt-1 text-[11px] font-bold text-[#C9A227]">
+            {activeTrack.reciterAr}
           </p>
         </div>
 
-        {/* Stats Row + Voice Toggle */}
+        {/* Stats Row + Real Sheikh Voice Toggle */}
         <div className="grid grid-cols-3 gap-2 border-t border-[#C9A227]/30 pt-3 text-center">
           <div className="rounded-2xl border border-[#C9A227]/40 bg-[#0A0904] p-2">
             <span className="text-[10px] text-zinc-400">الدورات المكتملة</span>
@@ -319,32 +589,40 @@ export const SalawatView: React.FC = () => {
           </div>
           <button
             type="button"
-            onClick={() => setVoiceSpeakEnabled((v) => !v)}
+            onClick={() => {
+              const next = !sheikhTapVoiceEnabled;
+              setSheikhTapVoiceEnabled(next);
+              if (!next) {
+                audioRef.current?.pause();
+                setPlayingTrackId(null);
+              }
+            }}
             className={`rounded-2xl border p-2 text-center ${
-              voiceSpeakEnabled
+              sheikhTapVoiceEnabled
                 ? 'border-[#C9A227] bg-[#C9A227] text-black'
                 : 'border-[#C9A227]/40 bg-[#0A0904] text-[#FCE38A]'
             }`}
           >
-            <span className="block text-[10px] font-bold">نطق بالصوت</span>
+            <span className="block text-[10px] font-bold">صوت الشيخ</span>
             <span className="text-xs font-extrabold">
-              {voiceSpeakEnabled ? 'مفعّل' : 'مغلق'}
+              {sheikhTapVoiceEnabled ? 'مفعّل' : 'مغلق'}
             </span>
           </button>
         </div>
       </section>
 
-      {/* Authentic Salawat Formulas */}
+      {/* Authentic Salawat Formulas With Real Human Sheikh Audio */}
       <section className="space-y-2.5 rounded-3xl border-2 border-[#C9A227] bg-white p-4 dark:bg-[#050505]">
         <h3 className="text-sm font-bold text-slate-900 dark:text-[#FCE38A]">
-          صيغ الصلاة على النبي ﷺ وفضلها
+          صيغ الصلاة على النبي ﷺ بأصوات المشايخ (تعمل بدون نت)
         </h3>
-        {SALAWAT_FORMULAS.map((formula) => {
-          const isSelected = selectedFormulaId === formula.id;
-          const isCopied = copiedId === formula.id;
+        {SALAWAT_AUDIO_TRACKS.map((track) => {
+          const isSelected = selectedTrackId === track.id;
+          const isCopied = copiedId === track.id;
+          const isPlaying = playingTrackId === track.id;
           return (
             <div
-              key={formula.id}
+              key={track.id}
               className={`space-y-2 rounded-2xl border p-3.5 ${
                 isSelected
                   ? 'border-2 border-[#C9A227] bg-[#C9A227]/12 dark:bg-[#141004]'
@@ -352,24 +630,38 @@ export const SalawatView: React.FC = () => {
               }`}
             >
               <div className="flex items-center justify-between gap-2">
-                <h4 className="text-xs font-bold text-[#9A7415] dark:text-[#FCE38A]">
-                  {formula.titleAr}
-                </h4>
+                <div>
+                  <h4 className="text-xs font-bold text-[#9A7415] dark:text-[#FCE38A]">
+                    {track.titleAr}
+                  </h4>
+                  <p className="text-[11px] font-bold text-[#C9A227]">
+                    {track.reciterAr}
+                  </p>
+                </div>
                 <div className="flex items-center gap-1.5">
                   <button
                     type="button"
-                    onClick={() => speakSalawat(formula.textAr)}
-                    aria-label="استماع للصيغة"
-                    className="flex h-8 w-8 items-center justify-center rounded-xl border border-[#C9A227]/50 text-[#C9A227]"
+                    onClick={() => playSheikhTrack(track.id)}
+                    aria-label="استماع بصوت الشيخ"
+                    className={`inline-flex h-8 items-center gap-1 rounded-xl border px-2.5 text-[11px] font-bold ${
+                      isPlaying
+                        ? 'border-[#C9A227] bg-[#C9A227] text-black'
+                        : 'border-[#C9A227]/50 text-[#C9A227]'
+                    }`}
                   >
-                    <Volume2 className="h-3.5 w-3.5" />
+                    {isPlaying ? (
+                      <Pause className="h-3.5 w-3.5" />
+                    ) : (
+                      <Play className="h-3.5 w-3.5" />
+                    )}
+                    <span>{isPlaying ? 'إيقاف' : 'سماع'}</span>
                   </button>
                   <button
                     type="button"
                     onClick={async () => {
                       try {
-                        await navigator.clipboard.writeText(formula.textAr);
-                        setCopiedId(formula.id);
+                        await navigator.clipboard.writeText(track.textAr);
+                        setCopiedId(track.id);
                         window.setTimeout(() => setCopiedId(null), 1600);
                       } catch {
                         // ignore
@@ -388,15 +680,15 @@ export const SalawatView: React.FC = () => {
               </div>
 
               <p className="font-quran text-base leading-loose text-slate-900 dark:text-white">
-                {formula.textAr}
+                {track.textAr}
               </p>
               <p className="text-[11px] text-slate-600 dark:text-zinc-400">
-                {formula.virtueAr}
+                {track.virtueAr}
               </p>
 
               <button
                 type="button"
-                onClick={() => setSelectedFormulaId(formula.id)}
+                onClick={() => setSelectedTrackId(track.id)}
                 className={`min-h-[34px] w-full rounded-xl border text-xs font-bold ${
                   isSelected
                     ? 'border-[#C9A227] bg-[#C9A227] text-black'

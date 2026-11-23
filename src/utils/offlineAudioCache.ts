@@ -8,6 +8,7 @@ import {
   IQAMAH_VOICES_3,
   POST_PRAYER_AZKAR_AUDIO_URLS,
   PRE_ADHAN_VOICES_3,
+  SALAWAT_AUDIO_TRACKS,
   TAWASIH_NAQSHABANDI,
 } from '../data/reciters';
 import {RAFIQI_WORDS_30} from '../data/rafiqiData';
@@ -184,6 +185,10 @@ export async function prewarmCoreOfflineTextData(): Promise<void> {
     '/audio/tawasih-naqshabandi-1.mp3',
     '/audio/tawasih-naqshabandi-2.mp3',
     '/audio/tawasih-naqshabandi-3.mp3',
+    '/audio/salawat-1.mp3',
+    '/audio/salawat-2.mp3',
+    '/audio/salawat-3.mp3',
+    '/audio/salawat-4.mp3',
   ];
   await cacheBatchUrls(localAudioAssets, undefined, 3);
 }
@@ -338,6 +343,7 @@ export async function downloadAllOfflinePackage(
     ...IQAMAH_VOICES_3.map((i) => i.url),
     ...PRE_ADHAN_VOICES_3.map((p) => p.url),
     ...TAWASIH_NAQSHABANDI.map((t) => t.url),
+    ...SALAWAT_AUDIO_TRACKS.map((s) => s.url),
     ...EID_TAKBEERAT_VOICES_3.map((e) => e.url),
     ...FRIDAY_KAHF_VOICES_3.map((k) => k.url),
     ...POST_PRAYER_AZKAR_AUDIO_URLS,

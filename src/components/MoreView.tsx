@@ -327,7 +327,12 @@ export const MoreView: React.FC<MoreViewProps> = ({
         {subPage === 'rafiqi' && (
           <RafiqiView preferredReciter={settings.preferredReciter} />
         )}
-        {subPage === 'salawat' && <SalawatView />}
+        {subPage === 'salawat' && (
+          <SalawatView
+            settings={settings}
+            onUpdateSettings={onUpdateSettings}
+          />
+        )}
         {subPage === 'seerah' && <SeerahView />}
         {subPage === 'voice_test' && (
           <VoiceTestView preferredReciter={settings.preferredReciter} />

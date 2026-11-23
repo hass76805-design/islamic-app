@@ -22,6 +22,7 @@ import {
 import {CompactAyah, CompactSurah, ReciterId} from '../types';
 import {loadOfflineJson} from '../utils/offlineAudioCache';
 import {
+  AyahWordToken,
   compareArabicWords,
   normalizeQuranWord,
   tokenizeArabicAyah,
@@ -66,6 +67,7 @@ interface DetectionOutcome {
   totalWrongWords: number;
   correctAyahsCount: number;
   wrongAyahsCount: number;
+  accuracyPercent: number;
 }
 
 function toArabicDigits(num: number | string): string {
@@ -76,6 +78,43 @@ function formatTimerMMSS(sec: number): string {
   const m = Math.floor(sec / 60);
   const s = sec % 60;
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
+function getNormalizedTokenForms(tok: AyahWordToken): string[] {
+  const forms = new Set<string>();
+  if (tok.norm) forms.add(tok.norm);
+  for (const v of tok.altVariants) {
+    const nv = normalizeQuranWord(v);
+    if (nv) forms.add(nv);
+  }
+  return Array.from(forms);
+}
+
+const BASMALAH_NORM_PREFIX = ['بسم', 'الله', 'الرحمن', 'الرحيم'];
+
+function getAyahEffectiveTokens(
+  surahNum: number,
+  ayahNum: number,
+  ayahText: string,
+  spokenNormSet: Set<string>,
+): AyahWordToken[] {
+  const tokens = tokenizeArabicAyah(ayahText);
+  if (
+    surahNum !== 1 &&
+    surahNum !== 9 &&
+    ayahNum === 1 &&
+    tokens.length > 4
+  ) {
+    const startsWithBasmalah = BASMALAH_NORM_PREFIX.every((w, i) =>
+      getNormalizedTokenForms(tokens[i]).includes(w),
+    );
+    const userRecitedBasmalah =
+      spokenNormSet.has('بسم') && spokenNormSet.has('الرحمن');
+    if (startsWithBasmalah && !userRecitedBasmalah) {
+      return tokens.slice(4);
+    }
+  }
+  return tokens;
 }
 
 function detectSurahAndEvaluate(
@@ -98,66 +137,119 @@ function detectSurahAndEvaluate(
 
   let bestSurah: CompactSurah = surahs[0];
   let bestScore = -1;
-  let bestMatchedAyahIndices: number[] = [];
+  let bestClusterIndices: number[] = [];
 
   for (const surah of surahs) {
-    let surahScore = 0;
-    const matchedIndices: number[] = [];
+    const matchedRows: Array<{idx: number; score: number}> = [];
 
     for (let idx = 0; idx < surah.ayahs.length; idx++) {
       const ayah = surah.ayahs[idx];
-      const tokens = tokenizeArabicAyah(ayah.t);
+      const tokens = getAyahEffectiveTokens(
+        surah.n,
+        ayah.n,
+        ayah.t,
+        spokenNormSet,
+      );
       if (tokens.length === 0) continue;
 
+      const tokenFormsList = tokens.map(getNormalizedTokenForms);
+
       let wordHits = 0;
-      for (const tok of tokens) {
-        if (spokenNormSet.has(tok.norm)) {
+      for (const forms of tokenFormsList) {
+        if (forms.some((f) => spokenNormSet.has(f))) {
           wordHits += 1;
         }
       }
 
       let bigramHits = 0;
-      for (let i = 0; i < tokens.length - 1; i++) {
-        if (spokenBigrams.has(`${tokens[i].norm}|${tokens[i + 1].norm}`)) {
-          bigramHits += 1;
+      for (let i = 0; i < tokenFormsList.length - 1; i++) {
+        let matchedPair = false;
+        for (const f1 of tokenFormsList[i]) {
+          for (const f2 of tokenFormsList[i + 1]) {
+            if (spokenBigrams.has(`${f1}|${f2}`)) {
+              matchedPair = true;
+              break;
+            }
+          }
+          if (matchedPair) break;
         }
+        if (matchedPair) bigramHits += 1;
       }
 
       const ratio = wordHits / tokens.length;
-      const ayahScore = wordHits * 1.5 + bigramHits * 4 + (ratio >= 0.45 ? 3 : 0);
-      if (wordHits >= 2 || bigramHits >= 1 || (tokens.length <= 3 && wordHits >= 1)) {
-        if (ayahScore > 2) {
-          matchedIndices.push(idx);
-          surahScore += ayahScore;
-        }
+      const ayahScore =
+        wordHits * 1.5 + bigramHits * 5 + (ratio >= 0.45 ? 4 : 0);
+
+      if (
+        (wordHits >= 2 || bigramHits >= 1 || (tokens.length <= 3 && wordHits >= 1)) &&
+        ayahScore > 2
+      ) {
+        matchedRows.push({idx, score: ayahScore});
       }
     }
 
-    if (surahScore > bestScore && matchedIndices.length > 0) {
-      bestScore = surahScore;
+    if (matchedRows.length === 0) continue;
+
+    // Group nearby matched ayahs into contiguous runs (gap <= 2) so distant false matches never span dozens of ayahs
+    const clusters: Array<{indices: number[]; score: number}> = [];
+    let currentCluster = {
+      indices: [matchedRows[0].idx],
+      score: matchedRows[0].score,
+    };
+    for (let i = 1; i < matchedRows.length; i++) {
+      const prevIdx =
+        currentCluster.indices[currentCluster.indices.length - 1];
+      if (matchedRows[i].idx - prevIdx <= 2) {
+        currentCluster.indices.push(matchedRows[i].idx);
+        currentCluster.score += matchedRows[i].score;
+      } else {
+        clusters.push(currentCluster);
+        currentCluster = {
+          indices: [matchedRows[i].idx],
+          score: matchedRows[i].score,
+        };
+      }
+    }
+    clusters.push(currentCluster);
+
+    const topCluster = clusters.reduce((best, cur) =>
+      cur.score > best.score ? cur : best,
+    );
+
+    if (topCluster.score > bestScore) {
+      bestScore = topCluster.score;
       bestSurah = surah;
-      bestMatchedAyahIndices = matchedIndices;
+      bestClusterIndices = topCluster.indices;
     }
   }
 
-  if (bestMatchedAyahIndices.length === 0) {
-    // Fallback to Al-Fatihah if unrecognizable
-    bestSurah = surahs[0];
-    bestMatchedAyahIndices = bestSurah.ayahs.map((_, i) => i);
+  if (bestClusterIndices.length === 0) {
+    return null;
   }
 
-  const minIdx = Math.max(0, Math.min(...bestMatchedAyahIndices));
+  const minIdx = Math.max(0, bestClusterIndices[0]);
   const maxIdx = Math.min(
     bestSurah.ayahs.length - 1,
-    Math.max(
-      ...bestMatchedAyahIndices,
-      minIdx + Math.min(3, bestSurah.ayahs.length - 1 - minIdx),
-    ),
+    bestClusterIndices[bestClusterIndices.length - 1],
   );
 
-  // Evaluate word-by-word greedily across contiguous ayah range
-  const targetAyahs = bestSurah.ayahs.slice(minIdx, maxIdx + 1);
+  // Align spokenCursor to where the first matched ayah starts inside rawTokens
+  const firstTokens = getAyahEffectiveTokens(
+    bestSurah.n,
+    bestSurah.ayahs[minIdx].n,
+    bestSurah.ayahs[minIdx].t,
+    spokenNormSet,
+  );
+  const firstTokenForms = firstTokens.slice(0, 3).flatMap(getNormalizedTokenForms);
   let spokenCursor = 0;
+  for (let i = 0; i < rawTokens.length; i++) {
+    if (firstTokenForms.includes(rawTokens[i].norm)) {
+      spokenCursor = i;
+      break;
+    }
+  }
+
+  const targetAyahs = bestSurah.ayahs.slice(minIdx, maxIdx + 1);
   const evaluatedAyahs: EvaluatedAyahResult[] = [];
   let totalCorrectWords = 0;
   let totalWrongWords = 0;
@@ -165,7 +257,12 @@ function detectSurahAndEvaluate(
   let wrongAyahsCount = 0;
 
   for (const ayah of targetAyahs) {
-    const tokens = tokenizeArabicAyah(ayah.t);
+    const tokens = getAyahEffectiveTokens(
+      bestSurah.n,
+      ayah.n,
+      ayah.t,
+      spokenNormSet,
+    );
     const wordResults: EvaluatedAyahResult['wordResults'] = [];
     let ayahCorrect = 0;
     let ayahWrong = 0;
@@ -174,8 +271,7 @@ function detectSurahAndEvaluate(
       let matched = false;
       let mistakeHint: string | null = null;
 
-      // Look ahead slightly in spoken tokens to align naturally
-      const searchEnd = Math.min(rawTokens.length, spokenCursor + 4);
+      const searchEnd = Math.min(rawTokens.length, spokenCursor + 5);
       for (let probe = spokenCursor; probe < searchEnd; probe++) {
         const res = compareArabicWords(
           rawTokens[probe].raw,
@@ -199,10 +295,11 @@ function detectSurahAndEvaluate(
             tok.hamzaNorm,
             tok.altVariants,
           );
-          mistakeHint = check.wrongLetterHint;
+          mistakeHint =
+            check.wrongLetterHint || `نطقت «${candidateSpoken.raw}»`;
           spokenCursor += 1;
         } else {
-          mistakeHint = 'كلمة ناقصة أو لم تُسمع بوضوح';
+          mistakeHint = 'كلمة لم تُنطق أو سقطت أثناء القراءة';
         }
       }
 
@@ -221,7 +318,7 @@ function detectSurahAndEvaluate(
       });
     }
 
-    const isAyahCorrect = ayahCorrect >= ayahWrong && ayahCorrect > 0;
+    const isAyahCorrect = ayahWrong === 0 && ayahCorrect > 0;
     if (isAyahCorrect) {
       correctAyahsCount += 1;
     } else {
@@ -237,6 +334,10 @@ function detectSurahAndEvaluate(
     });
   }
 
+  const totalWords = totalCorrectWords + totalWrongWords;
+  const accuracyPercent =
+    totalWords > 0 ? Math.round((totalCorrectWords / totalWords) * 100) : 0;
+
   return {
     surah: bestSurah,
     evaluatedAyahs,
@@ -244,6 +345,44 @@ function detectSurahAndEvaluate(
     totalWrongWords,
     correctAyahsCount,
     wrongAyahsCount,
+    accuracyPercent,
+  };
+}
+
+function getEncouragingFeedback(accuracyPercent: number): {
+  headline: string;
+  message: string;
+  tone: 'emerald' | 'gold' | 'amber';
+} {
+  if (accuracyPercent >= 85) {
+    return {
+      headline: 'أحسنت ما شاء الله!',
+      message:
+        'تلاوة متقنة وصوت مبارك — حافظ على هذا المستوى الرائع وزادك الله نورًا بالقرآن.',
+      tone: 'emerald',
+    };
+  }
+  if (accuracyPercent >= 55) {
+    return {
+      headline: 'ممتاز، قرّبت جدًا من الإتقان!',
+      message:
+        'أداء جميل وباقي كلمات بسيطة — اضغط على أي كلمة حمراء لتسمع نطقها الصحيح بصوت الشيخ.',
+      tone: 'gold',
+    };
+  }
+  if (accuracyPercent >= 25) {
+    return {
+      headline: 'بداية طيبة وقرّبت!',
+      message:
+        'لا تتوقف، اضغط على الكلمات الحمراء اسمعها صح وكرّر القراءة، أنت قدّها بإذن الله.',
+      tone: 'amber',
+    };
+  }
+  return {
+    headline: 'حاول تاني أنت قدّها!',
+    message:
+      'استمع للشيخ آية بآية واضغط على الكلمات الحمراء لتسمع النطق الصحيح ثم أعد التسجيل.',
+    tone: 'amber',
   };
 }
 
@@ -266,12 +405,19 @@ export const VoiceTestView: React.FC<VoiceTestViewProps> = ({
   const [playingSheikhAyahId, setPlayingSheikhAyahId] = useState<number | null>(
     null,
   );
+  const [wordCorrectionInfo, setWordCorrectionInfo] = useState<{
+    ayahId: number;
+    expectedWord: string;
+    hint: string | null;
+  } | null>(null);
   const [outcome, setOutcome] = useState<DetectionOutcome | null>(null);
 
   const recRef = useRef<SpeechRecLike | null>(null);
+  const isRecordingRef = useRef(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
+  const finalizedTranscriptRef = useRef('');
   const transcriptRef = useRef('');
   const userAudioRef = useRef<HTMLAudioElement | null>(null);
   const sheikhAudioRef = useRef<HTMLAudioElement | null>(null);
@@ -301,6 +447,7 @@ export const VoiceTestView: React.FC<VoiceTestViewProps> = ({
 
   useEffect(() => {
     return () => {
+      isRecordingRef.current = false;
       try {
         recRef.current?.stop();
       } catch {
@@ -323,18 +470,91 @@ export const VoiceTestView: React.FC<VoiceTestViewProps> = ({
     [selectedReciter],
   );
 
+  const startSpeechRecognitionSession = () => {
+    const SpeechRec =
+      (window as unknown as {SpeechRecognition?: new () => SpeechRecLike})
+        .SpeechRecognition ||
+      (
+        window as unknown as {
+          webkitSpeechRecognition?: new () => SpeechRecLike;
+        }
+      ).webkitSpeechRecognition;
+    if (!SpeechRec || !isRecordingRef.current) return;
+
+    const rec = new SpeechRec();
+    rec.lang = 'ar-SA';
+    rec.continuous = true;
+    rec.interimResults = true;
+
+    let sessionFinal = '';
+    rec.onresult = (e) => {
+      let currentFinal = '';
+      let interim = '';
+      for (let i = 0; i < e.results.length; i++) {
+        const resItem = e.results[i];
+        const seg = resItem[0]?.transcript || '';
+        if (!seg) continue;
+        if (resItem.isFinal) {
+          currentFinal += (currentFinal ? ' ' : '') + seg;
+        } else {
+          interim += (interim ? ' ' : '') + seg;
+        }
+      }
+      sessionFinal = currentFinal;
+      const combined = [finalizedTranscriptRef.current, sessionFinal, interim]
+        .filter(Boolean)
+        .join(' ')
+        .trim();
+      transcriptRef.current = combined;
+      setLiveTranscript(combined);
+    };
+
+    rec.onerror = () => {
+      // Keep audio recording going smoothly
+    };
+
+    rec.onend = () => {
+      if (sessionFinal) {
+        finalizedTranscriptRef.current = [
+          finalizedTranscriptRef.current,
+          sessionFinal,
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .trim();
+      }
+      if (isRecordingRef.current) {
+        window.setTimeout(() => {
+          if (isRecordingRef.current) {
+            startSpeechRecognitionSession();
+          }
+        }, 120);
+      }
+    };
+
+    try {
+      recRef.current = rec;
+      rec.start();
+    } catch {
+      // ignore restart race
+    }
+  };
+
   const startRecording = async () => {
     setMicNote(null);
     setLiveTranscript('');
+    finalizedTranscriptRef.current = '';
     transcriptRef.current = '';
     setElapsedSec(0);
     setOutcome(null);
+    setWordCorrectionInfo(null);
+    isRecordingRef.current = true;
+
     if (recordedAudioUrl) {
       URL.revokeObjectURL(recordedAudioUrl);
       setRecordedAudioUrl(null);
     }
 
-    // 1) Start microphone audio capture (MediaRecorder) so we play user's actual voice at the end
     try {
       if (navigator.mediaDevices?.getUserMedia) {
         const stream = await navigator.mediaDevices.getUserMedia({audio: true});
@@ -368,45 +588,12 @@ export const VoiceTestView: React.FC<VoiceTestViewProps> = ({
       );
     }
 
-    // 2) Start Arabic SpeechRecognition to auto-identify the Surah & evaluate words
-    const SpeechRec =
-      (window as unknown as {SpeechRecognition?: new () => SpeechRecLike})
-        .SpeechRecognition ||
-      (
-        window as unknown as {
-          webkitSpeechRecognition?: new () => SpeechRecLike;
-        }
-      ).webkitSpeechRecognition;
-
-    if (SpeechRec) {
-      const rec = new SpeechRec();
-      rec.lang = 'ar-SA';
-      rec.continuous = true;
-      rec.interimResults = true;
-      rec.onresult = (e) => {
-        let full = '';
-        for (let i = 0; i < e.results.length; i++) {
-          const seg = e.results[i][0]?.transcript || '';
-          if (seg) full += (full ? ' ' : '') + seg;
-        }
-        transcriptRef.current = full.trim();
-        setLiveTranscript(transcriptRef.current);
-      };
-      rec.onerror = () => {
-        // Keep audio recording going
-      };
-      try {
-        recRef.current = rec;
-        rec.start();
-      } catch {
-        // ignore
-      }
-    }
-
+    startSpeechRecognitionSession();
     setPhase('recording');
   };
 
   const handleFinishRecording = () => {
+    isRecordingRef.current = false;
     try {
       recRef.current?.stop();
     } catch {
@@ -422,7 +609,11 @@ export const VoiceTestView: React.FC<VoiceTestViewProps> = ({
       streamRef.current = null;
     }
 
-    const textToEval = (transcriptRef.current || liveTranscript || manualText).trim();
+    const textToEval = (
+      transcriptRef.current ||
+      liveTranscript ||
+      manualText
+    ).trim();
     if (surahs && surahs.length > 0) {
       const detected = detectSurahAndEvaluate(surahs, textToEval);
       setOutcome(detected);
@@ -431,23 +622,31 @@ export const VoiceTestView: React.FC<VoiceTestViewProps> = ({
   };
 
   const handleReset = () => {
+    isRecordingRef.current = false;
     userAudioRef.current?.pause();
     sheikhAudioRef.current?.pause();
     setIsPlayingUserClip(false);
     setPlayingSheikhAyahId(null);
+    setWordCorrectionInfo(null);
     setPhase('ready');
     setOutcome(null);
     setLiveTranscript('');
+    finalizedTranscriptRef.current = '';
     transcriptRef.current = '';
     setElapsedSec(0);
   };
 
-  const togglePlaySheikhAyah = (surahNum: number, ayahNum: number, ayahId: number) => {
+  const togglePlaySheikhAyah = (
+    surahNum: number,
+    ayahNum: number,
+    ayahId: number,
+    forcePlay = false,
+  ) => {
     if (!sheikhAudioRef.current) {
       sheikhAudioRef.current = new Audio();
     }
     const audio = sheikhAudioRef.current;
-    if (playingSheikhAyahId === ayahId) {
+    if (!forcePlay && playingSheikhAyahId === ayahId) {
       audio.pause();
       setPlayingSheikhAyahId(null);
       return;
@@ -455,11 +654,28 @@ export const VoiceTestView: React.FC<VoiceTestViewProps> = ({
     userAudioRef.current?.pause();
     setIsPlayingUserClip(false);
 
+    audio.pause();
+    audio.currentTime = 0;
     audio.src = getAyahAudioUrl(selectedReciter, surahNum, ayahNum);
     setPlayingSheikhAyahId(ayahId);
     audio.onended = () => setPlayingSheikhAyahId(null);
     audio.onerror = () => setPlayingSheikhAyahId(null);
     audio.play().catch(() => setPlayingSheikhAyahId(null));
+  };
+
+  const handleTapWrongWord = (
+    surahNum: number,
+    ayahNum: number,
+    ayahId: number,
+    expectedWord: string,
+    hint: string | null,
+  ) => {
+    setWordCorrectionInfo({
+      ayahId,
+      expectedWord,
+      hint,
+    });
+    togglePlaySheikhAyah(surahNum, ayahNum, ayahId, true);
   };
 
   const toggleUserRecording = () => {
@@ -481,10 +697,9 @@ export const VoiceTestView: React.FC<VoiceTestViewProps> = ({
     audio.play().catch(() => setIsPlayingUserClip(false));
   };
 
-  const isEncouragingSuccess =
-    outcome &&
-    outcome.totalCorrectWords >= outcome.totalWrongWords &&
-    outcome.totalCorrectWords > 0;
+  const feedback = outcome
+    ? getEncouragingFeedback(outcome.accuracyPercent)
+    : null;
 
   return (
     <div className="space-y-4 pb-4">
@@ -495,15 +710,14 @@ export const VoiceTestView: React.FC<VoiceTestViewProps> = ({
           </span>
           <div>
             <h2 className="text-base font-bold text-[#FCE38A]">
-              اختبر صوتك وتلاوتك الحرة
+              سجّل صوتك واختبر تلاوتك الحرة
             </h2>
             <p className="text-[11px] text-zinc-300">
-              اقرأ أي سورة تلقائيًا — التطبيق يتعرف على السورة ويصحح الآيات ويحفظ تسجيلك
+              اقرأ أي آية من أي سورة في المصحف — يتعرف التطبيق على الآيات ويصححها ويحفظ تسجيلك بصوتك
             </p>
           </div>
         </div>
 
-        {/* 30 Reciters Picker */}
         <div className="mt-3 rounded-2xl border border-[#C9A227]/45 bg-[#0A0904] p-3">
           <div className="mb-1.5 flex items-center gap-1.5 text-xs font-bold text-[#FCE38A]">
             <UserCheck className="h-4 w-4 text-[#C9A227]" />
@@ -543,23 +757,21 @@ export const VoiceTestView: React.FC<VoiceTestViewProps> = ({
               ابدأ التسجيل
             </span>
             <span className="text-[11px] font-bold text-black/80">
-              اقرأ أي سورة تحبها
+              اقرأ أي آية من أي سورة
             </span>
           </button>
 
           <p className="mt-4 text-xs leading-relaxed text-zinc-300">
-            اضغط «ابدأ التسجيل» ثم اقرأ من أي سورة؛ وعند الضغط على «إنهاء»
-            سيُحدد التطبيق السورة تلقائيًا ويعرض الآيات الصح والغلط مع المقطع
-            الصوتي بصوتك.
+            اضغط «ابدأ التسجيل» واقرأ ما تشاء من القرآن الكريم، وعند الضغط على «إنهاء»
+            سيُظهر لك تسجيلك الصوتي، السورة والآيات التي قرأتها، والصح والغلط مع سماع التصحيح.
           </p>
 
-          {/* Optional typed fallback */}
           <div className="mt-4 w-full space-y-2 border-t border-[#C9A227]/30 pt-3 text-right">
             <label
               htmlFor="manual-voice-test"
               className="block text-[11px] font-bold text-[#C9A227]"
             >
-              أو اكتب الآية لاختبار المطابقة الفوري بدون ميكروفون:
+              أو اكتب ما قرأته لاختبار التعرف الفوري:
             </label>
             <div className="flex gap-2">
               <input
@@ -620,133 +832,10 @@ export const VoiceTestView: React.FC<VoiceTestViewProps> = ({
       ) : (
         /* RESULTS SCREEN */
         <div className="space-y-4">
-          {outcome ? (
-            <>
-              {/* Detected Surah & Encouraging Feedback Banner */}
-              <section className="space-y-3 rounded-3xl border-2 border-[#C9A227] bg-[#050505] p-4 text-center text-white">
-                <div className="flex items-center justify-center gap-2">
-                  <Award className="h-6 w-6 text-[#FCE38A]" />
-                  <h3 className="font-quran text-xl font-bold text-[#FCE38A]">
-                    تم التعرف تلقائيًا: {outcome.surah.name}
-                  </h3>
-                </div>
-
-                <div
-                  className={`rounded-2xl border p-3.5 text-sm font-bold leading-relaxed ${
-                    isEncouragingSuccess
-                      ? 'border-emerald-500/60 bg-emerald-950/35 text-emerald-300'
-                      : 'border-[#C9A227] bg-[#141004] text-[#FCE38A]'
-                  }`}
-                >
-                  {isEncouragingSuccess
-                    ? 'ممتاز، كمل! قراءتك جميلة ومبشرة بالخير، استمر في المداومة والتلاوة لتزداد إتقانًا وخشوعًا.'
-                    : 'حاول تشتغل على نفسك أكتر، أنت قدها! استمع للشيخ وردد وراءه وسوف تتحسن قراءتك سريعًا بإذن الله.'}
-                </div>
-
-                <div className="grid grid-cols-2 gap-2 text-xs">
-                  <div className="rounded-2xl border border-emerald-500/40 bg-emerald-950/20 p-2.5">
-                    <span className="text-zinc-300">الكلمات الصحيحة</span>
-                    <p className="font-mono-num text-lg font-extrabold text-emerald-400">
-                      {toArabicDigits(outcome.totalCorrectWords)}
-                    </p>
-                  </div>
-                  <div className="rounded-2xl border border-rose-500/40 bg-rose-950/20 p-2.5">
-                    <span className="text-zinc-300">كلمات تحتاج مراجعة</span>
-                    <p className="font-mono-num text-lg font-extrabold text-rose-400">
-                      {toArabicDigits(outcome.totalWrongWords)}
-                    </p>
-                  </div>
-                </div>
-              </section>
-
-              {/* Word-by-word & Ayah-by-ayah Analysis */}
-              <section className="space-y-3 rounded-3xl border-2 border-[#C9A227] bg-[#050505] p-4 text-white">
-                <h4 className="flex items-center gap-1.5 text-xs font-bold text-[#FCE38A]">
-                  <Sparkles className="h-4 w-4 text-[#C9A227]" />
-                  <span>تفصيل الآيات الصح والغلط (اضغط للاستماع للشيخ {activeSheikh.shortNameAr}):</span>
-                </h4>
-
-                {outcome.evaluatedAyahs.map((item) => {
-                  const isPlayingThis = playingSheikhAyahId === item.ayah.id;
-                  return (
-                    <div
-                      key={item.ayah.id}
-                      className={`space-y-2.5 rounded-2xl border p-3.5 ${
-                        item.isAyahCorrect
-                          ? 'border-emerald-500/50 bg-[#04120A]'
-                          : 'border-rose-500/50 bg-[#120505]'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <span
-                          className={`inline-flex items-center gap-1 text-xs font-bold ${
-                            item.isAyahCorrect
-                              ? 'text-emerald-400'
-                              : 'text-rose-400'
-                          }`}
-                        >
-                          {item.isAyahCorrect ? (
-                            <CheckCircle2 className="h-4 w-4" />
-                          ) : (
-                            <XCircle className="h-4 w-4" />
-                          )}
-                          <span>
-                            الآية {toArabicDigits(item.ayah.n)} —{' '}
-                            {item.isAyahCorrect ? 'آية صحيحة' : 'تحتاج مراجعة'}
-                          </span>
-                        </span>
-
-                        <button
-                          type="button"
-                          onClick={() =>
-                            togglePlaySheikhAyah(
-                              outcome.surah.n,
-                              item.ayah.n,
-                              item.ayah.id,
-                            )
-                          }
-                          className="inline-flex min-h-[32px] items-center gap-1 rounded-xl border border-[#C9A227] bg-black px-2.5 text-[11px] font-bold text-[#FCE38A]"
-                        >
-                          {isPlayingThis ? (
-                            <Pause className="h-3.5 w-3.5" />
-                          ) : (
-                            <Volume2 className="h-3.5 w-3.5" />
-                          )}
-                          <span>{isPlayingThis ? 'إيقاف' : 'اسمع الشيخ'}</span>
-                        </button>
-                      </div>
-
-                      <div className="font-quran flex flex-wrap gap-1.5 text-lg leading-loose">
-                        {item.wordResults.map((w, wIdx) => (
-                          <span
-                            key={wIdx}
-                            className={`rounded-lg px-1.5 py-0.5 ${
-                              w.isMatch
-                                ? 'bg-emerald-500/20 text-emerald-300'
-                                : 'bg-rose-500/25 text-rose-300 underline decoration-rose-400'
-                            }`}
-                          >
-                            {w.raw}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  );
-                })}
-              </section>
-            </>
-          ) : (
-            <div className="rounded-3xl border-2 border-[#C9A227] bg-[#050505] p-5 text-center text-white">
-              <p className="text-sm font-bold text-[#FCE38A]">
-                لم يُسمع نص واضح للتعرف على السورة — حاول القراءة بصوت أوضح أو استمع لتسجيلك أدناه.
-              </p>
-            </div>
-          )}
-
-          {/* Recorded User Audio Clip Player */}
+          {/* Recorded User Audio Clip Player First so user immediately hears their recording */}
           <section className="space-y-3 rounded-3xl border-2 border-[#C9A227] bg-[#0A0904] p-4 text-white">
             <h4 className="text-sm font-bold text-[#FCE38A]">
-              المقطع الصوتي بتاعي بصوتي
+              تسجيل صوتك الآن (استمع لتلاوتك)
             </h4>
             {recordedAudioUrl ? (
               <div className="space-y-2.5">
@@ -788,13 +877,194 @@ export const VoiceTestView: React.FC<VoiceTestViewProps> = ({
             )}
           </section>
 
+          {outcome ? (
+            <>
+              {/* Detected Surah, Exact Ayah Range & Encouraging Feedback Banner */}
+              <section className="space-y-3 rounded-3xl border-2 border-[#C9A227] bg-[#050505] p-4 text-center text-white">
+                <div className="flex items-center justify-center gap-2">
+                  <Award className="h-6 w-6 text-[#FCE38A]" />
+                  <div>
+                    <h3 className="font-quran text-xl font-bold text-[#FCE38A]">
+                      {outcome.surah.name}
+                    </h3>
+                    <p className="text-xs font-bold text-[#C9A227]">
+                      {outcome.evaluatedAyahs.length === 1
+                        ? `الآية ${toArabicDigits(outcome.evaluatedAyahs[0].ayah.n)}`
+                        : `من الآية ${toArabicDigits(outcome.evaluatedAyahs[0].ayah.n)} إلى الآية ${toArabicDigits(outcome.evaluatedAyahs[outcome.evaluatedAyahs.length - 1].ayah.n)}`}
+                    </p>
+                  </div>
+                </div>
+
+                {feedback && (
+                  <div
+                    className={`rounded-2xl border p-3.5 text-sm leading-relaxed ${
+                      feedback.tone === 'emerald'
+                        ? 'border-emerald-500/60 bg-emerald-950/35 text-emerald-200'
+                        : feedback.tone === 'gold'
+                          ? 'border-[#C9A227] bg-[#141004] text-[#FCE38A]'
+                          : 'border-amber-500/60 bg-amber-950/30 text-amber-200'
+                    }`}
+                  >
+                    <p className="text-base font-extrabold">
+                      {feedback.headline}
+                    </p>
+                    <p className="mt-1 text-xs font-semibold">
+                      {feedback.message}
+                    </p>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-3 gap-2 text-xs">
+                  <div className="rounded-2xl border border-emerald-500/40 bg-emerald-950/20 p-2.5">
+                    <span className="text-[11px] text-zinc-300">كلمات صح</span>
+                    <p className="font-mono-num text-lg font-extrabold text-emerald-400">
+                      {toArabicDigits(outcome.totalCorrectWords)}
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border border-rose-500/40 bg-rose-950/20 p-2.5">
+                    <span className="text-[11px] text-zinc-300">كلمات غلط</span>
+                    <p className="font-mono-num text-lg font-extrabold text-rose-400">
+                      {toArabicDigits(outcome.totalWrongWords)}
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border border-[#C9A227]/40 bg-[#141004] p-2.5">
+                    <span className="text-[11px] text-zinc-300">نسبة الدقة</span>
+                    <p className="font-mono-num text-lg font-extrabold text-[#FCE38A]">
+                      {toArabicDigits(outcome.accuracyPercent)}٪
+                    </p>
+                  </div>
+                </div>
+              </section>
+
+              {/* Word-by-word & Ayah-by-ayah Analysis with Clickable Red Words */}
+              <section className="space-y-3 rounded-3xl border-2 border-[#C9A227] bg-[#050505] p-4 text-white">
+                <h4 className="flex items-center gap-1.5 text-xs font-bold text-[#FCE38A]">
+                  <Sparkles className="h-4 w-4 text-[#C9A227]" />
+                  <span>
+                    اضغط على أي كلمة حمراء لتسمع نطقها الصحيح بصوت الشيخ{' '}
+                    {activeSheikh.shortNameAr}:
+                  </span>
+                </h4>
+
+                {outcome.evaluatedAyahs.map((item) => {
+                  const isPlayingThis = playingSheikhAyahId === item.ayah.id;
+                  const activeCorrection =
+                    wordCorrectionInfo?.ayahId === item.ayah.id
+                      ? wordCorrectionInfo
+                      : null;
+                  return (
+                    <div
+                      key={item.ayah.id}
+                      className={`space-y-2.5 rounded-2xl border p-3.5 ${
+                        item.isAyahCorrect
+                          ? 'border-emerald-500/50 bg-[#04120A]'
+                          : 'border-rose-500/50 bg-[#120505]'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span
+                          className={`inline-flex items-center gap-1 text-xs font-bold ${
+                            item.isAyahCorrect
+                              ? 'text-emerald-400'
+                              : 'text-rose-400'
+                          }`}
+                        >
+                          {item.isAyahCorrect ? (
+                            <CheckCircle2 className="h-4 w-4" />
+                          ) : (
+                            <XCircle className="h-4 w-4" />
+                          )}
+                          <span>
+                            الآية {toArabicDigits(item.ayah.n)} —{' '}
+                            {item.isAyahCorrect
+                              ? 'قراءة صحيحة'
+                              : 'اضغط على الكلمة الحمراء لسماع الصحيح'}
+                          </span>
+                        </span>
+
+                        <button
+                          type="button"
+                          onClick={() =>
+                            togglePlaySheikhAyah(
+                              outcome.surah.n,
+                              item.ayah.n,
+                              item.ayah.id,
+                            )
+                          }
+                          className="inline-flex min-h-[32px] items-center gap-1 rounded-xl border border-[#C9A227] bg-black px-2.5 text-[11px] font-bold text-[#FCE38A]"
+                        >
+                          {isPlayingThis ? (
+                            <Pause className="h-3.5 w-3.5" />
+                          ) : (
+                            <Volume2 className="h-3.5 w-3.5" />
+                          )}
+                          <span>{isPlayingThis ? 'إيقاف' : 'اسمع الآية'}</span>
+                        </button>
+                      </div>
+
+                      <div className="font-quran flex flex-wrap gap-1.5 text-lg leading-loose">
+                        {item.wordResults.map((w, wIdx) =>
+                          w.isMatch ? (
+                            <span
+                              key={wIdx}
+                              className="rounded-lg bg-emerald-500/20 px-1.5 py-0.5 text-emerald-300"
+                            >
+                              {w.raw}
+                            </span>
+                          ) : (
+                            <button
+                              key={wIdx}
+                              type="button"
+                              onClick={() =>
+                                handleTapWrongWord(
+                                  outcome.surah.n,
+                                  item.ayah.n,
+                                  item.ayah.id,
+                                  w.raw,
+                                  w.hint,
+                                )
+                              }
+                              className="inline-flex items-center gap-1 rounded-lg border border-rose-400/70 bg-rose-500/25 px-1.5 py-0.5 text-rose-200 underline decoration-rose-400 active:scale-95"
+                            >
+                              <span>{w.raw}</span>
+                              <Volume2 className="h-3.5 w-3.5 shrink-0 text-rose-300" />
+                            </button>
+                          ),
+                        )}
+                      </div>
+
+                      {activeCorrection && (
+                        <div className="rounded-xl border border-[#C9A227]/60 bg-black/80 px-3 py-2 text-xs">
+                          <p className="font-bold text-[#FCE38A]">
+                            الكلمة الصحيحة: «{activeCorrection.expectedWord}» — جاري تشغيل النطق الصحيح بصوت الشيخ {activeSheikh.shortNameAr}
+                          </p>
+                          {activeCorrection.hint && (
+                            <p className="mt-0.5 text-[11px] text-rose-300">
+                              {activeCorrection.hint}
+                            </p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </section>
+            </>
+          ) : (
+            <div className="rounded-3xl border-2 border-[#C9A227] bg-[#050505] p-5 text-center text-white">
+              <p className="text-sm font-bold text-[#FCE38A]">
+                حاول تاني! لم يتم التقاط كلمات قرآنية واضحة للتعرف على السورة — اقرأ بصوت أوضح أو استمع لتسجيلك أعلاه.
+              </p>
+            </div>
+          )}
+
           <button
             type="button"
             onClick={handleReset}
             className="flex min-h-[48px] w-full items-center justify-center gap-2 rounded-2xl bg-[#C9A227] text-sm font-extrabold text-black"
           >
             <RotateCcw className="h-4 w-4" />
-            <span>اختبار تلاوة جديدة</span>
+            <span>جرّب تلاوة جديدة</span>
           </button>
         </div>
       )}
