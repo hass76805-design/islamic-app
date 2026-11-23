@@ -1004,6 +1004,49 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
                 <span>تجربة الإشعار</span>
               </button>
             </div>
+
+            <button
+              type="button"
+              onClick={async () => {
+                const next = !settings.lockScreenKeepAlive;
+                if (
+                  next &&
+                  typeof window !== 'undefined' &&
+                  'Notification' in window &&
+                  Notification.permission === 'default'
+                ) {
+                  try {
+                    const res = await Notification.requestPermission();
+                    setNotifPerm(res);
+                  } catch {
+                    // ignore
+                  }
+                }
+                onUpdateSettings((s) => ({
+                  ...s,
+                  lockScreenKeepAlive: next,
+                  adhanEnabled: next ? true : s.adhanEnabled,
+                }));
+                setTestNotifFeedback(
+                  next
+                    ? 'تم تفعيل تثبيت المؤذن في الخلفية ليعمل الأذان والإقامة والدعاء عند قفل الشاشة'
+                    : 'تم إيقاف وضع التثبيت المستمر على قفل الشاشة',
+                );
+              }}
+              className={`inline-flex min-h-[38px] w-full items-center justify-center gap-1.5 rounded-xl border px-3 text-xs font-bold ${
+                settings.lockScreenKeepAlive
+                  ? 'border-[#C9A227] bg-[#C9A227] text-black'
+                  : 'border-[#C9A227]/50 bg-black text-[#FCE38A]'
+              }`}
+            >
+              <BellRing className="h-3.5 w-3.5" />
+              <span>
+                {settings.lockScreenKeepAlive
+                  ? 'مؤذن قفل الشاشة نشط (يعمل والشاشة مقفولة)'
+                  : 'تثبيت المؤذن ليعمل والشاشة مقفولة'}
+              </span>
+            </button>
+
             {testNotifFeedback && (
               <p className="text-[11px] font-bold text-[#FCE38A]">
                 {testNotifFeedback}

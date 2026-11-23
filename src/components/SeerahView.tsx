@@ -4,6 +4,10 @@ import {
   Check,
   CheckCircle2,
   Copy,
+  Download,
+  Headphones,
+  ListMusic,
+  Loader2,
   Pause,
   Play,
   Search,
@@ -13,8 +17,14 @@ import {
   Square,
   Volume2,
 } from 'lucide-react';
-import {SEERAH_CHAPTERS, SeerahChapter} from '../data/seerahData';
+import {
+  SEERAH_AUDIO_EPISODES,
+  SEERAH_CHAPTERS,
+  SeerahAudioEpisode,
+  SeerahChapter,
+} from '../data/seerahData';
 import {useLocalStorage} from '../hooks/useLocalStorage';
+import {cacheAudioUrl, isAudioCached} from '../utils/offlineAudioCache';
 
 type SeerahPhaseFilter =
   | 'الكل'
@@ -35,6 +45,18 @@ function toArabicDigits(num: number | string): string {
   return String(num).replace(/\d/g, (d) => '٠١٢٣٤٥٦٧٨٩'[Number(d)]);
 }
 
+function formatDurationMMSS(sec: number): string {
+  if (!Number.isFinite(sec) || sec <= 0) return '00:00';
+  const total = Math.floor(sec);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  if (h > 0) {
+    return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  }
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
 export const SeerahView: React.FC = () => {
   const [phaseFilter, setPhaseFilter] = useState<SeerahPhaseFilter>('الكل');
   const [query, setQuery] = useState('');
@@ -47,104 +69,213 @@ export const SeerahView: React.FC = () => {
   );
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
-  // Speech narration state
-  const [playingChapterId, setPlayingChapterId] = useState<string | null>(null);
+  // Real Sheikh HTML5 Audio player state (ZERO speechSynthesis)
+  const [playingTrackId, setPlayingTrackId] = useState<string | null>(null);
+  const [playingTrackKind, setPlayingTrackKind] = useState<'chapter' | 'episode'>(
+    'chapter',
+  );
   const [isPaused, setIsPaused] = useState(false);
+  const [isBuffering, setIsBuffering] = useState(false);
+  const [audioError, setAudioError] = useState<string | null>(null);
   const [playbackRate, setPlaybackRate] = useState<0.85 | 1 | 1.2>(1);
   const [autoNext, setAutoNext] = useState(true);
-  const speechQueueAbortRef = useRef(false);
+  const [currentTimeSec, setCurrentTimeSec] = useState(0);
+  const [durationSec, setDurationSec] = useState(0);
+  const [showFullSeries, setShowFullSeries] = useState(false);
+  const [cachedTracks, setCachedTracks] = useState<Record<string, boolean>>({});
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
+
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const autoNextRef = useRef(autoNext);
+  autoNextRef.current = autoNext;
+  const playbackRateRef = useRef(playbackRate);
+  playbackRateRef.current = playbackRate;
 
   const readSet = useMemo(() => new Set(readIds), [readIds]);
-
-  const stopNarration = () => {
-    speechQueueAbortRef.current = true;
-    setPlayingChapterId(null);
-    setIsPaused(false);
-    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
-    }
-  };
-
-  useEffect(() => {
-    return () => {
-      speechQueueAbortRef.current = true;
-      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-        window.speechSynthesis.cancel();
-      }
-    };
-  }, []);
 
   const markChapterRead = (id: string) => {
     setReadIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
   };
 
-  const speakChapter = (
-    chapter: SeerahChapter,
-    rateOverride: number = playbackRate,
-  ) => {
-    if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
-      return;
-    }
-    window.speechSynthesis.cancel();
-    speechQueueAbortRef.current = false;
-    setPlayingChapterId(chapter.id);
-    setActiveChapterId(chapter.id);
-    setIsPaused(false);
-    markChapterRead(chapter.id);
-
-    const fullText = `${chapter.titleAr}. ${chapter.yearAr}. ${chapter.contentAr}. الدرس المستفاد: ${chapter.lessonAr}`;
-    const chunks = fullText
-      .split(/(?<=[.!؟،\n])\s+/)
-      .map((c) => c.trim())
-      .filter(Boolean);
-
-    const voices = window.speechSynthesis.getVoices();
-    const arVoice = voices.find((v) => v.lang.startsWith('ar'));
-
-    let idx = 0;
-    const speakNextChunk = () => {
-      if (speechQueueAbortRef.current) return;
-      if (idx >= chunks.length) {
-        setPlayingChapterId(null);
-        setIsPaused(false);
-        if (autoNext) {
-          const curIdx = SEERAH_CHAPTERS.findIndex((c) => c.id === chapter.id);
-          if (curIdx >= 0 && curIdx < SEERAH_CHAPTERS.length - 1) {
-            speakChapter(SEERAH_CHAPTERS[curIdx + 1], rateOverride);
-          }
-        }
-        return;
+  // Check offline cache status for active chapter & tracks
+  useEffect(() => {
+    let active = true;
+    async function checkAllCached() {
+      const entries = await Promise.all(
+        SEERAH_CHAPTERS.map(async (ch) => [
+          ch.id,
+          await isAudioCached(ch.audioUrl),
+        ]),
+      );
+      if (active) {
+        setCachedTracks((prev) => ({
+          ...prev,
+          ...Object.fromEntries(entries),
+        }));
       }
-      const utter = new SpeechSynthesisUtterance(chunks[idx]);
-      utter.lang = 'ar-SA';
-      utter.rate = rateOverride;
-      if (arVoice) utter.voice = arVoice;
-      utter.onend = () => {
-        idx += 1;
-        speakNextChunk();
-      };
-      utter.onerror = () => {
-        setPlayingChapterId(null);
-        setIsPaused(false);
-      };
-      window.speechSynthesis.speak(utter);
+    }
+    void checkAllCached();
+    return () => {
+      active = false;
     };
-    speakNextChunk();
+  }, []);
+
+  const stopNarration = () => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+    }
+    setPlayingTrackId(null);
+    setIsPaused(false);
+    setIsBuffering(false);
+    setCurrentTimeSec(0);
   };
 
-  const togglePlayPauseCurrent = (chapter: SeerahChapter) => {
-    if (playingChapterId !== chapter.id) {
-      speakChapter(chapter);
+  useEffect(() => {
+    return () => {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.src = '';
+      }
+    };
+  }, []);
+
+  const startAudioTrack = (
+    trackId: string,
+    url: string,
+    kind: 'chapter' | 'episode',
+    rateOverride: number = playbackRateRef.current,
+  ) => {
+    setAudioError(null);
+    if (!audioRef.current) {
+      audioRef.current = new Audio();
+    }
+    const audio = audioRef.current;
+
+    setPlayingTrackId(trackId);
+    setPlayingTrackKind(kind);
+    if (kind === 'chapter') {
+      setActiveChapterId(trackId);
+      markChapterRead(trackId);
+    }
+    setIsPaused(false);
+    setIsBuffering(true);
+    setCurrentTimeSec(0);
+    setDurationSec(0);
+
+    audio.onloadedmetadata = () => {
+      if (Number.isFinite(audio.duration)) {
+        setDurationSec(audio.duration);
+      }
+      audio.playbackRate = rateOverride;
+    };
+    audio.oncanplay = () => {
+      setIsBuffering(false);
+      audio.playbackRate = rateOverride;
+    };
+    audio.onwaiting = () => setIsBuffering(true);
+    audio.onplaying = () => {
+      setIsBuffering(false);
+      setIsPaused(false);
+      setAudioError(null);
+    };
+    audio.ontimeupdate = () => {
+      if (Number.isFinite(audio.currentTime)) {
+        setCurrentTimeSec(audio.currentTime);
+      }
+      if (Number.isFinite(audio.duration) && audio.duration > 0) {
+        setDurationSec(audio.duration);
+      }
+    };
+    audio.onended = () => {
+      setIsPaused(false);
+      setIsBuffering(false);
+      if (!autoNextRef.current) {
+        setPlayingTrackId(null);
+        return;
+      }
+      if (kind === 'chapter') {
+        const curIdx = SEERAH_CHAPTERS.findIndex((c) => c.id === trackId);
+        if (curIdx >= 0 && curIdx < SEERAH_CHAPTERS.length - 1) {
+          const nextCh = SEERAH_CHAPTERS[curIdx + 1];
+          startAudioTrack(nextCh.id, nextCh.audioUrl, 'chapter');
+        } else {
+          setPlayingTrackId(null);
+        }
+      } else {
+        const curIdx = SEERAH_AUDIO_EPISODES.findIndex((e) => e.id === trackId);
+        if (curIdx >= 0 && curIdx < SEERAH_AUDIO_EPISODES.length - 1) {
+          const nextEp = SEERAH_AUDIO_EPISODES[curIdx + 1];
+          startAudioTrack(nextEp.id, nextEp.url, 'episode');
+        } else {
+          setPlayingTrackId(null);
+        }
+      }
+    };
+    audio.onerror = () => {
+      setIsBuffering(false);
+      setIsPaused(false);
+      setPlayingTrackId(null);
+      setAudioError(
+        'تعذر تشغيل صوت الشيخ — تحقق من الاتصال أو اضغط «حفظ بدون نت» أثناء الاتصال',
+      );
+    };
+
+    audio.src = url;
+    audio.playbackRate = rateOverride;
+    audio.load();
+    audio.play().catch(() => {
+      setIsBuffering(false);
+      setAudioError('اضغط تشغيل مرة أخرى لبدء الاستماع لصوت الشيخ');
+    });
+  };
+
+  const togglePlayPauseChapter = (chapter: SeerahChapter) => {
+    if (playingTrackId !== chapter.id || playingTrackKind !== 'chapter') {
+      startAudioTrack(chapter.id, chapter.audioUrl, 'chapter');
       return;
     }
-    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
-    if (isPaused) {
-      window.speechSynthesis.resume();
-      setIsPaused(false);
+    const audio = audioRef.current;
+    if (!audio) return;
+    if (isPaused || audio.paused) {
+      audio
+        .play()
+        .then(() => setIsPaused(false))
+        .catch(() => {});
     } else {
-      window.speechSynthesis.pause();
+      audio.pause();
       setIsPaused(true);
     }
+  };
+
+  const togglePlayPauseEpisode = (ep: SeerahAudioEpisode) => {
+    if (playingTrackId !== ep.id || playingTrackKind !== 'episode') {
+      startAudioTrack(ep.id, ep.url, 'episode');
+      return;
+    }
+    const audio = audioRef.current;
+    if (!audio) return;
+    if (isPaused || audio.paused) {
+      audio
+        .play()
+        .then(() => setIsPaused(false))
+        .catch(() => {});
+    } else {
+      audio.pause();
+      setIsPaused(true);
+    }
+  };
+
+  const handleDownloadOffline = async (id: string, url: string) => {
+    if (downloadingId) return;
+    setDownloadingId(id);
+    const ok = await cacheAudioUrl(url);
+    if (ok) {
+      setCachedTracks((prev) => ({...prev, [id]: true}));
+    } else {
+      setAudioError('تعذر حفظ الملف الصوتي — تأكد من توفر الإنترنت أثناء الحفظ');
+    }
+    setDownloadingId(null);
   };
 
   const filteredChapters = useMemo(() => {
@@ -162,17 +293,38 @@ export const SeerahView: React.FC = () => {
     });
   }, [phaseFilter, query]);
 
-  const currentPlayingObj =
-    SEERAH_CHAPTERS.find((c) => c.id === (playingChapterId || activeChapterId)) ||
-    SEERAH_CHAPTERS[0];
+  const currentEpisodeObj =
+    playingTrackKind === 'episode' && playingTrackId
+      ? SEERAH_AUDIO_EPISODES.find((e) => e.id === playingTrackId) || null
+      : null;
+
+  const currentChapterObj =
+    SEERAH_CHAPTERS.find(
+      (c) =>
+        c.id ===
+        (playingTrackKind === 'chapter' && playingTrackId
+          ? playingTrackId
+          : activeChapterId),
+    ) || SEERAH_CHAPTERS[0];
 
   const currentIdx = SEERAH_CHAPTERS.findIndex(
-    (c) => c.id === currentPlayingObj.id,
+    (c) => c.id === currentChapterObj.id,
   );
+  const activeUrlForDownload = currentEpisodeObj
+    ? currentEpisodeObj.url
+    : currentChapterObj.audioUrl;
+  const activeTrackIdForDownload = currentEpisodeObj
+    ? currentEpisodeObj.id
+    : currentChapterObj.id;
+  const isCurrentActivePlaying =
+    (currentEpisodeObj
+      ? playingTrackId === currentEpisodeObj.id && playingTrackKind === 'episode'
+      : playingTrackId === currentChapterObj.id &&
+        playingTrackKind === 'chapter') && !isPaused;
 
   return (
     <div className="space-y-4 pb-4">
-      {/* Header & Audio Narration Player */}
+      {/* Header & Real Sheikh Audio Narration Player */}
       <section className="rounded-3xl border-2 border-[#C9A227] bg-[#050505] p-4 text-white">
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2.5">
@@ -184,25 +336,33 @@ export const SeerahView: React.FC = () => {
                 السيرة النبوية الكاملة ﷺ
               </h2>
               <p className="text-[11px] text-zinc-300">
-                من المولد الشريف إلى الوفاة · قراءة واستماع بدون نت
+                من المولد الشريف إلى الوفاة · بصوت الشيخ نبيل العوضي
               </p>
             </div>
           </div>
 
           <span className="font-mono-num rounded-xl border border-[#C9A227]/50 bg-[#0A0904] px-2.5 py-1 text-[11px] font-bold text-[#F3D56B]">
-            {toArabicDigits(readIds.length)}/{toArabicDigits(SEERAH_CHAPTERS.length)}
+            {toArabicDigits(readIds.length)}/
+            {toArabicDigits(SEERAH_CHAPTERS.length)}
           </span>
         </div>
 
-        {/* Sticky-like Seerah Voice Player */}
+        {/* Sticky-like Real Sheikh Seerah Audio Player */}
         <div className="mt-3 space-y-2.5 rounded-2xl border border-[#C9A227]/60 bg-[#0A0904] p-3">
           <div className="flex items-center justify-between gap-2">
             <div className="min-w-0">
-              <p className="text-[10px] font-bold text-[#C9A227]">
-                المشغل الصوتي للسيرة ({currentPlayingObj.yearAr})
+              <p className="flex items-center gap-1.5 text-[10px] font-bold text-[#C9A227]">
+                <Headphones className="h-3.5 w-3.5" />
+                <span>
+                  {currentEpisodeObj
+                    ? currentEpisodeObj.sheikhNameAr
+                    : `${currentChapterObj.sheikhNameAr} · ${currentChapterObj.yearAr}`}
+                </span>
               </p>
               <p className="truncate text-xs font-bold text-white">
-                {currentPlayingObj.number}. {currentPlayingObj.titleAr}
+                {currentEpisodeObj
+                  ? currentEpisodeObj.titleAr
+                  : `${currentChapterObj.number}. ${currentChapterObj.titleAr}`}
               </p>
             </div>
             <button
@@ -218,16 +378,59 @@ export const SeerahView: React.FC = () => {
             </button>
           </div>
 
+          {/* Interactive Progress & Seek Bar */}
+          {playingTrackId && (
+            <div className="space-y-1">
+              <input
+                type="range"
+                min={0}
+                max={Math.max(1, Math.floor(durationSec))}
+                value={Math.min(
+                  Math.floor(currentTimeSec),
+                  Math.max(1, Math.floor(durationSec)),
+                )}
+                onChange={(e) => {
+                  const val = Number(e.target.value);
+                  setCurrentTimeSec(val);
+                  if (audioRef.current) {
+                    audioRef.current.currentTime = val;
+                  }
+                }}
+                aria-label="تقديم أو تأخير الصوت"
+                className="h-1.5 w-full cursor-pointer accent-[#C9A227]"
+              />
+              <div className="font-mono-num flex items-center justify-between text-[10px] font-bold text-zinc-400">
+                <span>{formatDurationMMSS(currentTimeSec)}</span>
+                <span>
+                  {isBuffering
+                    ? 'جاري تحميل صوت الشيخ...'
+                    : formatDurationMMSS(durationSec)}
+                </span>
+              </div>
+            </div>
+          )}
+
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-1.5">
               <button
                 type="button"
-                disabled={currentIdx <= 0}
+                disabled={!currentEpisodeObj && currentIdx <= 0}
                 onClick={() => {
-                  const prevCh = SEERAH_CHAPTERS[Math.max(0, currentIdx - 1)];
-                  if (prevCh) speakChapter(prevCh);
+                  if (currentEpisodeObj) {
+                    const epIdx = SEERAH_AUDIO_EPISODES.findIndex(
+                      (e) => e.id === currentEpisodeObj.id,
+                    );
+                    if (epIdx > 0) {
+                      const prevEp = SEERAH_AUDIO_EPISODES[epIdx - 1];
+                      startAudioTrack(prevEp.id, prevEp.url, 'episode');
+                    }
+                  } else {
+                    const prevCh = SEERAH_CHAPTERS[Math.max(0, currentIdx - 1)];
+                    if (prevCh)
+                      startAudioTrack(prevCh.id, prevCh.audioUrl, 'chapter');
+                  }
                 }}
-                aria-label="الفصل السابق"
+                aria-label="السابق"
                 className="flex h-9 w-9 items-center justify-center rounded-xl border border-[#C9A227]/50 bg-black text-[#FCE38A] disabled:opacity-40"
               >
                 <SkipForward className="h-4 w-4" />
@@ -235,10 +438,19 @@ export const SeerahView: React.FC = () => {
 
               <button
                 type="button"
-                onClick={() => togglePlayPauseCurrent(currentPlayingObj)}
+                onClick={() =>
+                  currentEpisodeObj
+                    ? togglePlayPauseEpisode(currentEpisodeObj)
+                    : togglePlayPauseChapter(currentChapterObj)
+                }
                 className="inline-flex min-h-[38px] items-center gap-1.5 rounded-xl bg-[#C9A227] px-3.5 text-xs font-extrabold text-black"
               >
-                {playingChapterId === currentPlayingObj.id && !isPaused ? (
+                {isBuffering && playingTrackId ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    <span>جاري التحميل</span>
+                  </>
+                ) : isCurrentActivePlaying ? (
                   <>
                     <Pause className="h-4 w-4" />
                     <span>إيقاف مؤقت</span>
@@ -246,12 +458,12 @@ export const SeerahView: React.FC = () => {
                 ) : (
                   <>
                     <Play className="h-4 w-4" />
-                    <span>استمع</span>
+                    <span>استمع للشيخ</span>
                   </>
                 )}
               </button>
 
-              {playingChapterId && (
+              {playingTrackId && (
                 <button
                   type="button"
                   onClick={stopNarration}
@@ -264,15 +476,32 @@ export const SeerahView: React.FC = () => {
 
               <button
                 type="button"
-                disabled={currentIdx >= SEERAH_CHAPTERS.length - 1}
+                disabled={
+                  !currentEpisodeObj &&
+                  currentIdx >= SEERAH_CHAPTERS.length - 1
+                }
                 onClick={() => {
-                  const nextCh =
-                    SEERAH_CHAPTERS[
-                      Math.min(SEERAH_CHAPTERS.length - 1, currentIdx + 1)
-                    ];
-                  if (nextCh) speakChapter(nextCh);
+                  if (currentEpisodeObj) {
+                    const epIdx = SEERAH_AUDIO_EPISODES.findIndex(
+                      (e) => e.id === currentEpisodeObj.id,
+                    );
+                    if (
+                      epIdx >= 0 &&
+                      epIdx < SEERAH_AUDIO_EPISODES.length - 1
+                    ) {
+                      const nextEp = SEERAH_AUDIO_EPISODES[epIdx + 1];
+                      startAudioTrack(nextEp.id, nextEp.url, 'episode');
+                    }
+                  } else {
+                    const nextCh =
+                      SEERAH_CHAPTERS[
+                        Math.min(SEERAH_CHAPTERS.length - 1, currentIdx + 1)
+                      ];
+                    if (nextCh)
+                      startAudioTrack(nextCh.id, nextCh.audioUrl, 'chapter');
+                  }
                 }}
-                aria-label="الفصل التالي"
+                aria-label="التالي"
                 className="flex h-9 w-9 items-center justify-center rounded-xl border border-[#C9A227]/50 bg-black text-[#FCE38A] disabled:opacity-40"
               >
                 <SkipBack className="h-4 w-4" />
@@ -286,11 +515,8 @@ export const SeerahView: React.FC = () => {
                   type="button"
                   onClick={() => {
                     setPlaybackRate(r);
-                    if (playingChapterId) {
-                      const ch = SEERAH_CHAPTERS.find(
-                        (x) => x.id === playingChapterId,
-                      );
-                      if (ch) speakChapter(ch, r);
+                    if (audioRef.current) {
+                      audioRef.current.playbackRate = r;
                     }
                   }}
                   className={`font-mono-num rounded-lg border px-2 py-1 text-[10px] font-bold ${
@@ -304,7 +530,112 @@ export const SeerahView: React.FC = () => {
               ))}
             </div>
           </div>
+
+          {/* Offline Save & 30-Lecture Full Series Toggle */}
+          <div className="grid grid-cols-2 gap-2 pt-0.5">
+            <button
+              type="button"
+              disabled={downloadingId === activeTrackIdForDownload}
+              onClick={() =>
+                handleDownloadOffline(
+                  activeTrackIdForDownload,
+                  activeUrlForDownload,
+                )
+              }
+              className={`inline-flex min-h-[34px] items-center justify-center gap-1.5 rounded-xl border px-2 text-[11px] font-bold ${
+                cachedTracks[activeTrackIdForDownload]
+                  ? 'border-emerald-500/50 bg-emerald-950/30 text-emerald-300'
+                  : 'border-[#C9A227]/50 bg-black text-[#FCE38A]'
+              }`}
+            >
+              {downloadingId === activeTrackIdForDownload ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : cachedTracks[activeTrackIdForDownload] ? (
+                <Check className="h-3.5 w-3.5" />
+              ) : (
+                <Download className="h-3.5 w-3.5" />
+              )}
+              <span>
+                {cachedTracks[activeTrackIdForDownload]
+                  ? 'محفوظ بدون نت'
+                  : 'حفظ الدرس أوفلاين'}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setShowFullSeries((v) => !v)}
+              className={`inline-flex min-h-[34px] items-center justify-center gap-1.5 rounded-xl border px-2 text-[11px] font-bold ${
+                showFullSeries
+                  ? 'border-[#C9A227] bg-[#C9A227] text-black'
+                  : 'border-[#C9A227]/50 bg-black text-[#FCE38A]'
+              }`}
+            >
+              <ListMusic className="h-3.5 w-3.5" />
+              <span>السلسلة الصوتية (٣٠ درسًا)</span>
+            </button>
+          </div>
+
+          {audioError && (
+            <p className="rounded-xl border border-rose-500/40 bg-rose-950/30 px-2.5 py-1.5 text-[11px] font-bold text-rose-300">
+              {audioError}
+            </p>
+          )}
         </div>
+
+        {/* Collapsible 30-Lecture Complete Audio Series */}
+        {showFullSeries && (
+          <div className="mt-3 max-h-[260px] space-y-1.5 overflow-y-auto rounded-2xl border border-[#C9A227]/50 bg-black p-2.5">
+            <p className="px-1 text-[11px] font-bold text-[#FCE38A]">
+              سلسلة السيرة النبوية الكاملة — الشيخ نبيل العوضي (٣٠ درسًا):
+            </p>
+            {SEERAH_AUDIO_EPISODES.map((ep) => {
+              const isPlayingEp =
+                playingTrackId === ep.id && playingTrackKind === 'episode';
+              return (
+                <div
+                  key={ep.id}
+                  className={`flex items-center justify-between gap-2 rounded-xl border px-2.5 py-2 ${
+                    isPlayingEp
+                      ? 'border-[#C9A227] bg-[#141004]'
+                      : 'border-[#C9A227]/25 bg-[#080703]'
+                  }`}
+                >
+                  <button
+                    type="button"
+                    onClick={() => togglePlayPauseEpisode(ep)}
+                    className="flex min-w-0 flex-1 items-center gap-2 text-right"
+                  >
+                    <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-[#C9A227] text-black">
+                      {isPlayingEp && !isPaused ? (
+                        <Pause className="h-3.5 w-3.5" />
+                      ) : (
+                        <Play className="h-3.5 w-3.5" />
+                      )}
+                    </span>
+                    <span className="truncate text-xs font-bold text-white">
+                      {ep.titleAr}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`حفظ ${ep.titleAr}`}
+                    onClick={() => handleDownloadOffline(ep.id, ep.url)}
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-[#C9A227]/40 text-[#FCE38A]"
+                  >
+                    {downloadingId === ep.id ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : cachedTracks[ep.id] ? (
+                      <Check className="h-3.5 w-3.5 text-emerald-400" />
+                    ) : (
+                      <Download className="h-3.5 w-3.5" />
+                    )}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
 
         {/* Search & Phase Filters */}
         <div className="relative mt-3">
@@ -343,11 +674,12 @@ export const SeerahView: React.FC = () => {
         </div>
       </section>
 
-      {/* Chapters List */}
+      {/* Chapters List (100% Written Text Available Offline) */}
       <div className="space-y-3">
         {filteredChapters.map((chapter) => {
           const isExpanded = activeChapterId === chapter.id;
-          const isThisPlaying = playingChapterId === chapter.id;
+          const isThisPlaying =
+            playingTrackId === chapter.id && playingTrackKind === 'chapter';
           const isRead = readSet.has(chapter.id);
           const isCopied = copiedId === chapter.id;
 
@@ -408,7 +740,7 @@ export const SeerahView: React.FC = () => {
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <button
                       type="button"
-                      onClick={() => togglePlayPauseCurrent(chapter)}
+                      onClick={() => togglePlayPauseChapter(chapter)}
                       className="inline-flex min-h-[38px] items-center gap-1.5 rounded-xl bg-[#C9A227] px-3.5 text-xs font-extrabold text-black"
                     >
                       {isThisPlaying && !isPaused ? (
@@ -419,7 +751,7 @@ export const SeerahView: React.FC = () => {
                       <span>
                         {isThisPlaying && !isPaused
                           ? 'إيقاف الصوت'
-                          : 'اسمع الفصل بالصوت'}
+                          : `استمع (${chapter.sheikhNameAr})`}
                       </span>
                     </button>
 

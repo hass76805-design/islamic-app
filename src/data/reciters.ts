@@ -563,7 +563,7 @@ export const PRE_ADHAN_VOICES_3: Array<{
   },
 ];
 
-// تواشيح الشيخ سيد النقشبندي فقط (تعمل بدون نت)
+// تواشيح وابتهالات الشيخ سيد النقشبندي الأصلية فقط (تعمل بدون نت)
 export const TAWASIH_NAQSHABANDI: Array<{
   id: string;
   titleAr: string;
@@ -572,15 +572,21 @@ export const TAWASIH_NAQSHABANDI: Array<{
 }> = [
   {
     id: 'tawasih-naqshabandi-1',
-    titleAr: 'ابتهال مولاي إني ببابك — الفجر',
+    titleAr: 'ابتهال مولاي إني ببابك قد بسطت يدي',
     reciterAr: 'الشيخ سيد النقشبندي',
     url: '/audio/tawasih-naqshabandi-1.mp3',
   },
   {
     id: 'tawasih-naqshabandi-2',
-    titleAr: 'مناجاة السحر وابتهالات الفجر',
+    titleAr: 'ابتهال أغيب وذو اللطائف لا يغيب',
     reciterAr: 'الشيخ سيد النقشبندي',
     url: '/audio/tawasih-naqshabandi-2.mp3',
+  },
+  {
+    id: 'tawasih-naqshabandi-3',
+    titleAr: 'ابتهال يا رب إن عظمت ذنوبي كثرة',
+    reciterAr: 'الشيخ سيد النقشبندي',
+    url: '/audio/tawasih-naqshabandi-3.mp3',
   },
 ];
 

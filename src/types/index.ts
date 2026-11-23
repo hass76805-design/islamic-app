@@ -316,4 +316,5 @@ export interface AppSettings {
   fridayKahfReminder: boolean;
   postPrayerAzkarEnabled: boolean;
   backgroundAlertsEnabled: boolean;
+  lockScreenKeepAlive?: boolean;
 }

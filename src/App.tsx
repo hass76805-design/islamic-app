@@ -52,13 +52,78 @@ import {
 } from './types';
 import {pushNavigationState, setRootBackHandler} from './utils/backNavigation';
 import {getDateKey, getHijriParts} from './utils/hijri';
-import {cacheBatchUrls} from './utils/offlineAudioCache';
+import {
+  cacheBatchUrls,
+  prewarmCoreOfflineTextData,
+} from './utils/offlineAudioCache';
 import {
   computeDailyPrayerData,
   computeQiyamAlLaylTime,
   DEFAULT_PRAYER_OFFSETS,
 } from './utils/prayerTimes';
 import {playRamadanCannonSound} from './utils/ramadanCannon';
+
+const FIRED_ALERTS_STORAGE_KEY = 'alzahabi_fired_alerts_v1';
+
+function readPersistedFiredAlerts(): Set<string> {
+  if (typeof window === 'undefined') return new Set();
+  try {
+    const raw = window.localStorage.getItem(FIRED_ALERTS_STORAGE_KEY);
+    if (!raw) return new Set();
+    const parsed = JSON.parse(raw) as Record<string, number>;
+    const cutoff = Date.now() - 48 * 60 * 60 * 1000;
+    const validKeys = Object.entries(parsed)
+      .filter(([, ts]) => typeof ts === 'number' && ts >= cutoff)
+      .map(([k]) => k);
+    return new Set(validKeys);
+  } catch {
+    return new Set();
+  }
+}
+
+function persistFiredAlert(key: string) {
+  if (typeof window === 'undefined') return;
+  try {
+    const raw = window.localStorage.getItem(FIRED_ALERTS_STORAGE_KEY);
+    const parsed: Record<string, number> = raw ? JSON.parse(raw) : {};
+    const nowTs = Date.now();
+    const cutoff = nowTs - 48 * 60 * 60 * 1000;
+    const cleaned: Record<string, number> = {};
+    for (const [k, ts] of Object.entries(parsed)) {
+      if (typeof ts === 'number' && ts >= cutoff) cleaned[k] = ts;
+    }
+    cleaned[key] = nowTs;
+    window.localStorage.setItem(FIRED_ALERTS_STORAGE_KEY, JSON.stringify(cleaned));
+  } catch {
+    // ignore storage limits
+  }
+}
+
+function createSilentWavBlobUrl(): string {
+  const sampleRate = 8000;
+  const numSamples = 8000; // 1 second of silence
+  const buffer = new ArrayBuffer(44 + numSamples * 2);
+  const view = new DataView(buffer);
+  const writeStr = (offset: number, str: string) => {
+    for (let i = 0; i < str.length; i++) {
+      view.setUint8(offset + i, str.charCodeAt(i));
+    }
+  };
+  writeStr(0, 'RIFF');
+  view.setUint32(4, 36 + numSamples * 2, true);
+  writeStr(8, 'WAVE');
+  writeStr(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeStr(36, 'data');
+  view.setUint32(40, numSamples * 2, true);
+  return URL.createObjectURL(new Blob([buffer], {type: 'audio/wav'}));
+}
 
 const DEFAULT_SETTINGS: AppSettings = {
   calculationMethod: 'UmmAlQura',
@@ -100,6 +165,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   fridayKahfReminder: true,
   postPrayerAzkarEnabled: true,
   backgroundAlertsEnabled: true,
+  lockScreenKeepAlive: false,
 };
 
 const NAV_ITEMS: Array<{id: TabId; labelAr: string; icon: typeof Home}> = [
@@ -225,7 +291,8 @@ function AppContent({
     mode?: 'adhan' | 'iqamah' | 'dua';
   } | null>(null);
   const adhanAudioRef = useRef<HTMLAudioElement | null>(null);
-  const triggeredAlertsRef = useRef<Set<string>>(new Set());
+  const keepAliveAudioRef = useRef<HTMLAudioElement | null>(null);
+  const triggeredAlertsRef = useRef<Set<string>>(readPersistedFiredAlerts());
   const navStateRef = useRef<{activeTab: TabId; moreSubPage: MoreSubPageId}>({
     activeTab: 'home',
     moreSubPage: 'menu',
@@ -276,6 +343,18 @@ function AppContent({
     );
   }, [setLocation]);
 
+  // Automatically pre-warm all core offline Quran/Tafsir text + local Adhan/Naqshabandi audio immediately when online
+  const corePrewarmedRef = useRef(false);
+  useEffect(() => {
+    if (corePrewarmedRef.current) return;
+    if (typeof navigator !== 'undefined' && !navigator.onLine) return;
+    corePrewarmedRef.current = true;
+    const t = window.setTimeout(() => {
+      void prewarmCoreOfflineTextData();
+    }, 450);
+    return () => window.clearTimeout(t);
+  }, []);
+
   // Quietly pre-warm Al-Fatihah recitation audio once online after splash
   const prewarmedRef = useRef<string | null>(null);
   useEffect(() => {
@@ -294,6 +373,59 @@ function AppContent({
     }, 2500);
     return () => window.clearTimeout(timer);
   }, [showSplash, settings.preferredReciter]);
+
+  // Optional Lock-Screen Electronic Muezzin Keep-Alive (silent WAV + MediaSession + WakeLock)
+  useEffect(() => {
+    if (
+      !settings.adhanEnabled ||
+      !settings.lockScreenKeepAlive ||
+      typeof window === 'undefined'
+    ) {
+      if (keepAliveAudioRef.current) {
+        keepAliveAudioRef.current.pause();
+      }
+      return;
+    }
+
+    const wavUrl = createSilentWavBlobUrl();
+    const audio = keepAliveAudioRef.current || new Audio();
+    keepAliveAudioRef.current = audio;
+    audio.src = wavUrl;
+    audio.loop = true;
+    audio.volume = 0.001;
+    audio.play().catch(() => {});
+
+    if ('mediaSession' in navigator) {
+      try {
+        navigator.mediaSession.metadata = new MediaMetadata({
+          title: 'المؤذن الإلكتروني الذهبي نشط',
+          artist: `${location.city} · يعمل في الخلفية`,
+          album: 'البرنامج الإسلامي الذهبي',
+        });
+      } catch {
+        // ignore unsupported mediaSession
+      }
+    }
+
+    let wakeSentinel: {release?: () => Promise<void>} | null = null;
+    const navWithWakeLock = navigator as Navigator & {
+      wakeLock?: {request: (type: string) => Promise<{release?: () => Promise<void>}>};
+    };
+    if (navWithWakeLock.wakeLock) {
+      navWithWakeLock.wakeLock
+        .request('screen')
+        .then((s) => {
+          wakeSentinel = s;
+        })
+        .catch(() => {});
+    }
+
+    return () => {
+      audio.pause();
+      URL.revokeObjectURL(wavUrl);
+      wakeSentinel?.release?.().catch(() => {});
+    };
+  }, [settings.adhanEnabled, settings.lockScreenKeepAlive, location.city]);
 
   const showSystemNotification = useCallback(
     (title: string, body: string, tag: string) => {
@@ -468,6 +600,7 @@ function AppContent({
     };
     const onVisibility = () => {
       if (document.visibilityState === 'visible') {
+        setNow(new Date());
         navigator.serviceWorker.ready
           .then((reg) => {
             reg.active?.postMessage({type: 'CHECK_DUE_ADHAN_ALERTS'});
@@ -475,11 +608,23 @@ function AppContent({
           .catch(() => {});
       }
     };
+    const onFocusOrPageShow = () => {
+      setNow(new Date());
+      navigator.serviceWorker.ready
+        .then((reg) => {
+          reg.active?.postMessage({type: 'CHECK_DUE_ADHAN_ALERTS'});
+        })
+        .catch(() => {});
+    };
     navigator.serviceWorker.addEventListener('message', onSwMessage);
     document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('focus', onFocusOrPageShow);
+    window.addEventListener('pageshow', onFocusOrPageShow);
     return () => {
       navigator.serviceWorker.removeEventListener('message', onSwMessage);
       document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('focus', onFocusOrPageShow);
+      window.removeEventListener('pageshow', onFocusOrPageShow);
     };
   }, [playManagedAudio]);
 
@@ -741,8 +886,9 @@ function AppContent({
       }
     }
 
-    navigator.serviceWorker.ready
-      .then(async (reg) => {
+    const syncScheduleToSW = async () => {
+      try {
+        const reg = await navigator.serviceWorker.ready;
         reg.active?.postMessage({
           type: 'SCHEDULE_ADHAN_ALERTS',
           alerts,
@@ -771,8 +917,25 @@ function AppContent({
             // ignore unsupported periodicSync permission errors
           }
         }
-      })
-      .catch(() => {});
+      } catch {
+        // ignore SW not ready yet
+      }
+    };
+
+    void syncScheduleToSW();
+    const onControllerChange = () => {
+      void syncScheduleToSW();
+    };
+    navigator.serviceWorker.addEventListener(
+      'controllerchange',
+      onControllerChange,
+    );
+    return () => {
+      navigator.serviceWorker.removeEventListener(
+        'controllerchange',
+        onControllerChange,
+      );
+    };
   }, [
     scheduleDateKey,
     location.latitude,
@@ -847,6 +1010,14 @@ function AppContent({
       FRIDAY_KAHF_VOICES_3.find((v) => v.id === settings.preferredFridayKahf) ||
       FRIDAY_KAHF_VOICES_3[0];
 
+    const isDueWithinWindow = (targetSec: number, windowSec = 300) =>
+      nowSec >= targetSec && nowSec - targetSec <= windowSec;
+
+    const markAlertHandled = (key: string) => {
+      triggeredAlertsRef.current.add(key);
+      persistFiredAlert(key);
+    };
+
     for (const item of schedule) {
       if (item.key === 'sunrise') continue;
       const prayerKey = item.key as TrackablePrayer;
@@ -856,10 +1027,10 @@ function AppContent({
 
       if (
         isPrayerEnabled &&
-        Math.abs(nowSec - targetSec) <= 3 &&
+        isDueWithinWindow(targetSec, 300) &&
         !triggeredAlertsRef.current.has(exactKey)
       ) {
-        triggeredAlertsRef.current.add(exactKey);
+        markAlertHandled(exactKey);
         const voiceId =
           settings.perPrayerAdhan[prayerKey] || settings.preferredAdhan;
         const voice =
@@ -897,10 +1068,14 @@ function AppContent({
         const duaSec = targetSec + 150;
         const duaKey = `dua-${todayStr}-${item.key}`;
         if (
-          Math.abs(nowSec - duaSec) <= 3 &&
+          isDueWithinWindow(duaSec, 300) &&
           !triggeredAlertsRef.current.has(duaKey)
         ) {
-          triggeredAlertsRef.current.add(duaKey);
+          markAlertHandled(duaKey);
+          const voiceId =
+            settings.perPrayerAdhan[prayerKey] || settings.preferredAdhan;
+          const voice =
+            ADHAN_VOICES_30.find((a) => a.id === voiceId) || ADHAN_VOICES_30[0];
           showSystemNotification(
             `دعاء ما بعد أذان ${item.nameAr}`,
             POST_ADHAN_DUA.textAr,
@@ -909,6 +1084,15 @@ function AppContent({
           setAdhanBanner({
             text: `دعاء بعد أذان ${item.nameAr}: اللهم رب هذه الدعوة التامة...`,
           });
+          setLiveAdhanModal((prev) =>
+            prev
+              ? prev
+              : {
+                  prayerNameAr: `صلاة ${item.nameAr}`,
+                  voice,
+                  mode: 'dua',
+                },
+          );
         }
       }
 
@@ -916,10 +1100,10 @@ function AppContent({
         const iqamahSec = targetSec + 12 * 60;
         const iqamahKey = `iqamah-${todayStr}-${item.key}`;
         if (
-          Math.abs(nowSec - iqamahSec) <= 3 &&
+          isDueWithinWindow(iqamahSec, 300) &&
           !triggeredAlertsRef.current.has(iqamahKey)
         ) {
-          triggeredAlertsRef.current.add(iqamahKey);
+          markAlertHandled(iqamahKey);
           showSystemNotification(
             'البرنامج الإسلامي الذهبي — إقامة الصلاة',
             `حان وقت إقامة صلاة ${item.nameAr} (${activeIqamahVoice.nameAr})`,
@@ -936,11 +1120,11 @@ function AppContent({
       if (
         settings.fajrTawasihEnabled &&
         item.key === 'fajr' &&
-        Math.abs(nowSec - (targetSec - 20 * 60)) <= 3
+        isDueWithinWindow(targetSec - 20 * 60, 300)
       ) {
         const tawasihKey = `tawasih-${todayStr}`;
         if (!triggeredAlertsRef.current.has(tawasihKey)) {
-          triggeredAlertsRef.current.add(tawasihKey);
+          markAlertHandled(tawasihKey);
           setAdhanBanner({
             text: `${activeTawasihVoice.titleAr} — قبل أذان الفجر بـ 20 دقيقة`,
           });
@@ -957,10 +1141,10 @@ function AppContent({
         const preTargetSec = targetSec - settings.preAdhanMinutes * 60;
         const preKey = `pre-${todayStr}-${item.key}-${settings.preAdhanMinutes}`;
         if (
-          Math.abs(nowSec - preTargetSec) <= 3 &&
+          isDueWithinWindow(preTargetSec, 300) &&
           !triggeredAlertsRef.current.has(preKey)
         ) {
-          triggeredAlertsRef.current.add(preKey);
+          markAlertHandled(preKey);
           setAdhanBanner({
             text: `تنبيه: متبقي ${settings.preAdhanMinutes} دقائق على أذان ${item.nameAr}`,
           });
@@ -986,10 +1170,10 @@ function AppContent({
       const qiyamSec = Math.floor(qiyamData.lastThirdStart.getTime() / 1000);
       const qiyamKey = `qiyam-${todayStr}`;
       if (
-        Math.abs(nowSec - qiyamSec) <= 3 &&
+        isDueWithinWindow(qiyamSec, 300) &&
         !triggeredAlertsRef.current.has(qiyamKey)
       ) {
-        triggeredAlertsRef.current.add(qiyamKey);
+        markAlertHandled(qiyamKey);
         showSystemNotification(
           'قيام الليل — الثلث الأخير من الليل',
           'وقت النزول الإلهي واستجابة الدعاء — أقم صلاة القيام الآن',

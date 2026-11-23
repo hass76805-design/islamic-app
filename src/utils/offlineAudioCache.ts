@@ -17,12 +17,185 @@ export const IMAGE_CACHE_NAME = 'alzahabi-offline-images-v1';
 export const CORE_DATA_CACHE_NAME = 'alzahabi-core-data-v1';
 export const OFFLINE_READY_KEY = 'alzahabi_all_offline_ready_v1';
 
+const IDB_NAME = 'alzahabi-offline-json-db';
+const IDB_STORE = 'json_cache';
+const memoryJsonCache = new Map<string, unknown>();
+const inflightJsonLoads = new Map<string, Promise<unknown>>();
+let prewarmStarted = false;
+
+function openJsonDb(): Promise<IDBDatabase | null> {
+  if (typeof indexedDB === 'undefined') return Promise.resolve(null);
+  return new Promise((resolve) => {
+    try {
+      const req = indexedDB.open(IDB_NAME, 1);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(IDB_STORE)) {
+          db.createObjectStore(IDB_STORE);
+        }
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => resolve(null);
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
+async function readJsonFromIdb<T>(key: string): Promise<T | null> {
+  const db = await openJsonDb();
+  if (!db) return null;
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(IDB_STORE, 'readonly');
+      const store = tx.objectStore(IDB_STORE);
+      const req = store.get(key);
+      req.onsuccess = () => {
+        resolve((req.result as T | undefined) ?? null);
+      };
+      req.onerror = () => resolve(null);
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
+async function writeJsonToIdb<T>(key: string, data: T): Promise<void> {
+  const db = await openJsonDb();
+  if (!db) return;
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(IDB_STORE, 'readwrite');
+      const store = tx.objectStore(IDB_STORE);
+      store.put(data, key);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+    } catch {
+      resolve();
+    }
+  });
+}
+
+/**
+ * Loads JSON reliably offline & online using:
+ * 1) In-memory cache
+ * 2) IndexedDB persistent store
+ * 3) CacheStorage (alzahabi-core-data-v1 / any SW cache)
+ * 4) Network fetch -> persists into BOTH IndexedDB and CacheStorage
+ */
+export async function loadOfflineJson<T>(url: string): Promise<T> {
+  if (memoryJsonCache.has(url)) {
+    return memoryJsonCache.get(url) as T;
+  }
+
+  const existingInflight = inflightJsonLoads.get(url);
+  if (existingInflight) {
+    return existingInflight as Promise<T>;
+  }
+
+  const task = (async (): Promise<T> => {
+    // 1. Check IndexedDB first (fastest reliable persistent storage across restarts)
+    const idbData = await readJsonFromIdb<T>(url);
+    if (idbData !== null) {
+      memoryJsonCache.set(url, idbData);
+      return idbData;
+    }
+
+    // 2. Check CacheStorage (Service Worker / downloadAllOfflinePackage bucket)
+    if (typeof caches !== 'undefined') {
+      try {
+        const directMatch = await caches.match(url);
+        if (directMatch && directMatch.ok) {
+          const parsed = (await directMatch.json()) as T;
+          memoryJsonCache.set(url, parsed);
+          void writeJsonToIdb(url, parsed);
+          return parsed;
+        }
+      } catch {
+        // continue to fetch
+      }
+    }
+
+    // 3. Network fetch & persist to both IndexedDB and CacheStorage
+    const res = await fetch(url);
+    if (!res.ok) {
+      throw new Error(`تعذر تحميل البيانات (${url})`);
+    }
+    const clone = res.clone();
+    const data = (await res.json()) as T;
+    memoryJsonCache.set(url, data);
+    void writeJsonToIdb(url, data);
+    if (typeof caches !== 'undefined') {
+      caches
+        .open(CORE_DATA_CACHE_NAME)
+        .then((cache) => cache.put(url, clone))
+        .catch(() => {});
+    }
+    return data;
+  })();
+
+  inflightJsonLoads.set(url, task);
+  try {
+    return await task;
+  } finally {
+    inflightJsonLoads.delete(url);
+  }
+}
+
+/**
+ * Automatically pre-warms all core written Quran/Tafsir data + local Adhan/Naqshabandi files
+ * silently when online so opening Mushaf/Details/Stories/Seerah/Bukhari offline always works.
+ */
+export async function prewarmCoreOfflineTextData(): Promise<void> {
+  if (
+    prewarmStarted ||
+    typeof window === 'undefined' ||
+    (typeof navigator !== 'undefined' && !navigator.onLine)
+  ) {
+    return;
+  }
+  prewarmStarted = true;
+
+  if (typeof navigator !== 'undefined' && navigator.storage?.persist) {
+    try {
+      await navigator.storage.persist();
+    } catch {
+      // ignore
+    }
+  }
+
+  // Always cache Quran & Tafsir JSONs in IndexedDB + CacheStorage
+  await Promise.allSettled([
+    loadOfflineJson('/data/quran.json'),
+    loadOfflineJson('/data/tafsir.json'),
+  ]);
+
+  // Also quietly cache bundled local MP3s (Adhan, Iqamah, Naqshabandi Tawasih)
+  const localAudioAssets = [
+    '/audio/adhan-makkah.mp3',
+    '/audio/adhan-madinah.mp3',
+    '/audio/adhan-alafasy.mp3',
+    '/audio/iqamah-makkah.mp3',
+    '/audio/iqamah-madinah.mp3',
+    '/audio/iqamah-haram.mp3',
+    '/audio/pre-chime.mp3',
+    '/audio/pre-istighfar.mp3',
+    '/audio/pre-takbeer.mp3',
+    '/audio/tawasih-naqshabandi-1.mp3',
+    '/audio/tawasih-naqshabandi-2.mp3',
+    '/audio/tawasih-naqshabandi-3.mp3',
+  ];
+  await cacheBatchUrls(localAudioAssets, undefined, 3);
+}
+
 export async function isAudioCached(url: string): Promise<boolean> {
   if (typeof caches === 'undefined' || !url) return false;
   try {
     const cache = await caches.open(AUDIO_CACHE_NAME);
     const match = await cache.match(url);
-    return !!match;
+    if (match) return true;
+    const anyMatch = await caches.match(url);
+    return !!anyMatch;
   } catch {
     return false;
   }
@@ -134,7 +307,7 @@ export function isOfflinePackageDownloaded(): boolean {
 
 /**
  * Downloads the complete essential offline pack once ("تحميل الكل للجهاز"):
- * - Full Quran & Tafsir JSONs
+ * - Full Quran & Tafsir JSONs (IndexedDB + CacheStorage)
  * - All local + 30 Muezzins Adhan, Iqamah, Pre-Adhan, Naqshabandi Tawasih, Eid & Kahf
  * - Post-prayer Azkar audio clips
  * - All 30 Rafiqi word ayahs for the preferred reciter
@@ -152,11 +325,13 @@ export async function downloadAllOfflinePackage(
     }
   }
 
-  const coreDataUrls = [
-    '/data/quran.json',
-    '/data/tafsir.json',
-    '/audio/sheikh-start-reading.mp3',
-  ];
+  // Persist JSONs directly into IndexedDB as well as CacheStorage
+  await Promise.allSettled([
+    loadOfflineJson('/data/quran.json'),
+    loadOfflineJson('/data/tafsir.json'),
+  ]);
+
+  const coreDataUrls = ['/data/quran.json', '/data/tafsir.json'];
 
   const muezzinUrls = [
     ...ADHAN_VOICES_30.map((a) => a.url),

@@ -20,7 +20,18 @@ export default defineConfig(() => {
           'assets/aistudio/IMG-20261120-WA4940_5880b328.jpg',
           'adhan-sw-ext.js',
           'offline.html',
-          'audio/sheikh-start-reading.mp3',
+          'audio/adhan-makkah.mp3',
+          'audio/adhan-madinah.mp3',
+          'audio/adhan-alafasy.mp3',
+          'audio/iqamah-makkah.mp3',
+          'audio/iqamah-madinah.mp3',
+          'audio/iqamah-haram.mp3',
+          'audio/pre-chime.mp3',
+          'audio/pre-istighfar.mp3',
+          'audio/pre-takbeer.mp3',
+          'audio/tawasih-naqshabandi-1.mp3',
+          'audio/tawasih-naqshabandi-2.mp3',
+          'audio/tawasih-naqshabandi-3.mp3',
           'data/quran.json',
           'data/tafsir.json',
         ],
@@ -91,6 +102,56 @@ export default defineConfig(() => {
           clientsClaim: true,
           importScripts: ['/adhan-sw-ext.js'],
           runtimeCaching: [
+            {
+              urlPattern: ({sameOrigin, url}) =>
+                sameOrigin && url.pathname.startsWith('/data/'),
+              handler: 'CacheFirst',
+              options: {
+                cacheName: 'alzahabi-core-data-v1',
+                expiration: {
+                  maxEntries: 20,
+                  maxAgeSeconds: 60 * 60 * 24 * 365,
+                },
+                cacheableResponse: {
+                  statuses: [0, 200],
+                },
+              },
+            },
+            {
+              urlPattern: ({sameOrigin, url}) =>
+                sameOrigin && url.pathname.startsWith('/audio/'),
+              handler: 'CacheFirst',
+              options: {
+                cacheName: 'alzahabi-offline-audio-v1',
+                expiration: {
+                  maxEntries: 120,
+                  maxAgeSeconds: 60 * 60 * 24 * 365,
+                },
+                cacheableResponse: {
+                  statuses: [0, 200],
+                },
+              },
+            },
+            {
+              urlPattern: ({sameOrigin, url}) =>
+                sameOrigin &&
+                !url.pathname.startsWith('/api/') &&
+                !url.pathname.startsWith('/@vite') &&
+                !url.pathname.startsWith('/data/') &&
+                !url.pathname.startsWith('/audio/'),
+              handler: 'NetworkFirst',
+              options: {
+                cacheName: 'alzahabi-app-shell-v1',
+                networkTimeoutSeconds: 3,
+                expiration: {
+                  maxEntries: 300,
+                  maxAgeSeconds: 60 * 60 * 24 * 30,
+                },
+                cacheableResponse: {
+                  statuses: [0, 200],
+                },
+              },
+            },
             {
               urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
               handler: 'CacheFirst',

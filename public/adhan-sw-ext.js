@@ -122,8 +122,8 @@ async function checkAndFireDueAlerts() {
     const tag = item.tag || `alert-${item.timestamp}`;
     const elapsed = now - item.timestamp;
 
-    // Fire due alerts within 20-minute background sync catch-up window once
-    if (elapsed >= 0 && elapsed <= 20 * 60 * 1000 && !firedTags[tag]) {
+    // Fire due alerts within 30-minute background sync catch-up window once
+    if (elapsed >= 0 && elapsed <= 30 * 60 * 1000 && !firedTags[tag]) {
       firedTags[tag] = now;
       firedAny = true;
       try {
@@ -159,8 +159,18 @@ async function checkAndFireDueAlerts() {
   await saveScheduledAlerts(remaining);
 }
 
+let lastWakeupCheckTs = 0;
+
 self.addEventListener('activate', (event) => {
   event.waitUntil(checkAndFireDueAlerts());
+});
+
+self.addEventListener('fetch', (event) => {
+  const now = Date.now();
+  if (now - lastWakeupCheckTs > 20 * 1000) {
+    lastWakeupCheckTs = now;
+    event.waitUntil(checkAndFireDueAlerts());
+  }
 });
 
 self.addEventListener('message', (event) => {
@@ -189,6 +199,7 @@ self.addEventListener('message', (event) => {
   event.waitUntil(
     (async () => {
       await saveScheduledAlerts(alerts);
+      await checkAndFireDueAlerts();
 
       // Schedule native TimestampTrigger notifications when browser/installed PWA supports Notification Triggers
       if (typeof self.TimestampTrigger === 'function') {

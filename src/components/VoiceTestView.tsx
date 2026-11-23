@@ -20,6 +20,7 @@ import {
   RECITERS_30,
 } from '../data/reciters';
 import {CompactAyah, CompactSurah, ReciterId} from '../types';
+import {loadOfflineJson} from '../utils/offlineAudioCache';
 import {
   compareArabicWords,
   normalizeQuranWord,
@@ -277,9 +278,8 @@ export const VoiceTestView: React.FC<VoiceTestViewProps> = ({
 
   useEffect(() => {
     let active = true;
-    fetch('/data/quran.json')
-      .then((res) => res.json())
-      .then((data: CompactSurah[]) => {
+    loadOfflineJson<CompactSurah[]>('/data/quran.json')
+      .then((data) => {
         if (active) {
           setSurahs(data);
           setLoadingQuran(false);

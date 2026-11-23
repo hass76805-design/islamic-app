@@ -39,7 +39,7 @@ import {
   extractAyahWordMeanings,
 } from '../utils/ayahWordMeanings';
 import {useHardwareBack} from '../utils/backNavigation';
-import {cacheBatchUrls} from '../utils/offlineAudioCache';
+import {cacheBatchUrls, loadOfflineJson} from '../utils/offlineAudioCache';
 import {AyahReciterSheet} from './AyahReciterSheet';
 import {SurahHeaderFrame} from './IslamicOrnament';
 import {QuranTeacherModal} from './QuranTeacherModal';
@@ -194,37 +194,47 @@ export const QuranView: React.FC<QuranViewProps> = ({
   const [pageAudioCached, setPageAudioCached] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
-  // Load offline Quran & Tafsir JSONs
+  const [retryTick, setRetryTick] = useState(0);
+
+  // Load offline Quran & Tafsir JSONs (IndexedDB -> CacheStorage -> Network)
   useEffect(() => {
     let active = true;
     async function loadData() {
-      if (cachedSurahs && cachedTafsir) {
+      if (cachedSurahs) {
         setSurahs(cachedSurahs);
         setTafsir(cachedTafsir);
+        setLoadError(null);
         setLoading(false);
+        if (!cachedTafsir) {
+          loadOfflineJson<Record<number, string>>('/data/tafsir.json')
+            .then((tData) => {
+              cachedTafsir = tData;
+              if (active) setTafsir(tData);
+            })
+            .catch(() => {});
+        }
         return;
       }
       try {
         setLoading(true);
-        const [qRes, tRes] = await Promise.all([
-          fetch('/data/quran.json'),
-          fetch('/data/tafsir.json'),
-        ]);
-        if (!qRes.ok || !tRes.ok) throw new Error('تعذر تحميل بيانات المصحف');
-        const [qData, tData] = await Promise.all([qRes.json(), tRes.json()]);
+        setLoadError(null);
+        const qData = await loadOfflineJson<CompactSurah[]>('/data/quran.json');
         cachedSurahs = qData;
-        cachedTafsir = tData;
         if (active) {
           setSurahs(qData);
-          setTafsir(tData);
           setLoading(false);
         }
-      } catch (err) {
+        // Load tafsir in parallel non-blocking so Quran 604 pages ALWAYS open offline
+        loadOfflineJson<Record<number, string>>('/data/tafsir.json')
+          .then((tData) => {
+            cachedTafsir = tData;
+            if (active) setTafsir(tData);
+          })
+          .catch(() => {});
+      } catch {
         if (active) {
           setLoadError(
-            err instanceof Error
-              ? err.message
-              : 'حدث خطأ أثناء تحميل المصحف الشريف',
+            'تعذر فتح المصحف — اضغط إعادة المحاولة أو افتح الصفحة مرة واحدة مع الإنترنت لحفظ المصحف على الجهاز',
           );
           setLoading(false);
         }
@@ -234,7 +244,7 @@ export const QuranView: React.FC<QuranViewProps> = ({
     return () => {
       active = false;
     };
-  }, []);
+  }, [retryTick]);
 
   const handledDirectiveKeyRef = useRef<number | null>(null);
   const lastReadRef = useRef(lastRead);
@@ -590,8 +600,15 @@ export const QuranView: React.FC<QuranViewProps> = ({
 
   if (loadError) {
     return (
-      <div className="rounded-3xl border-2 border-rose-500 bg-white p-6 text-center dark:bg-[#050505]">
+      <div className="space-y-3 rounded-3xl border-2 border-[#C9A227] bg-white p-6 text-center dark:bg-[#050505]">
         <p className="text-sm font-bold text-rose-500">{loadError}</p>
+        <button
+          type="button"
+          onClick={() => setRetryTick((t) => t + 1)}
+          className="inline-flex min-h-[40px] items-center justify-center rounded-xl bg-[#C9A227] px-5 text-xs font-extrabold text-black"
+        >
+          إعادة المحاولة
+        </button>
       </div>
     );
   }
