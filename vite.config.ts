@@ -136,7 +136,7 @@ export default defineConfig(() => {
               options: {
                 cacheName: 'alzahabi-offline-audio-v1',
                 expiration: {
-                  maxEntries: 120,
+                  maxEntries: 3000,
                   maxAgeSeconds: 60 * 60 * 24 * 365,
                 },
                 cacheableResponse: {

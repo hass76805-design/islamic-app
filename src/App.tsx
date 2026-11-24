@@ -4,11 +4,14 @@ import {
   BookOpen,
   Check,
   Compass,
+  Download,
   HeartHandshake,
   Home,
   LayoutGrid,
   MapPin,
   Moon,
+  Pause,
+  Play,
   ShieldCheck,
   Sun,
   X,
@@ -57,8 +60,16 @@ import {
 import {pushNavigationState, setRootBackHandler} from './utils/backNavigation';
 import {getDateKey, getHijriParts} from './utils/hijri';
 import {
+  BackgroundOfflineProgress,
   cacheBatchUrls,
+  cancelFullOfflineBackgroundDownload,
+  getCurrentOfflineProgress,
+  notifyNetworkOfflineToSw,
+  notifyNetworkOnlineAutoResumeToSw,
+  pauseFullOfflineBackgroundDownload,
   prewarmCoreOfflineTextData,
+  resumeFullOfflineBackgroundDownload,
+  subscribeOfflineDownloadState,
   syncOfflineContentUpdatesInBackground,
 } from './utils/offlineAudioCache';
 import {
@@ -482,7 +493,62 @@ function AppContent({
     };
   }, [audioUnlocked, unlockAudioEngine]);
 
-  // Automatically pre-warm all core offline Quran/Tafsir text + local & 30 Muezzins/Azkar/Rafiqi audio silently when online
+  // Unified full offline pack progress state + automatic network offline/online resume & updates
+  const [offlineDl, setOfflineDl] = useState<BackgroundOfflineProgress>(() =>
+    getCurrentOfflineProgress(),
+  );
+  const [offlineDoneBannerVisible, setOfflineDoneBannerVisible] =
+    useState(false);
+  const prevOfflineDlStatusRef = useRef<BackgroundOfflineProgress['status']>(
+    offlineDl.status,
+  );
+
+  useEffect(() => {
+    const unsub = subscribeOfflineDownloadState((next) => {
+      const prevStatus = prevOfflineDlStatusRef.current;
+      prevOfflineDlStatusRef.current = next.status;
+      setOfflineDl(next);
+      if (
+        next.status === 'completed' &&
+        (prevStatus === 'downloading' || prevStatus === 'paused')
+      ) {
+        setOfflineDoneBannerVisible(true);
+      } else if (next.status !== 'completed') {
+        setOfflineDoneBannerVisible(false);
+      }
+    });
+
+    const handleOffline = () => {
+      void notifyNetworkOfflineToSw();
+    };
+    const handleOnline = () => {
+      void notifyNetworkOnlineAutoResumeToSw();
+      void syncOfflineContentUpdatesInBackground(settings.preferredReciter);
+    };
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        if (navigator.onLine) {
+          void notifyNetworkOnlineAutoResumeToSw();
+          void syncOfflineContentUpdatesInBackground(settings.preferredReciter);
+        } else {
+          void notifyNetworkOfflineToSw();
+        }
+      }
+    };
+
+    window.addEventListener('offline', handleOffline);
+    window.addEventListener('online', handleOnline);
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    return () => {
+      unsub();
+      window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('online', handleOnline);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, [settings.preferredReciter]);
+
+  // Automatically pre-warm core offline Quran/Tafsir text + local audio silently when online
   const corePrewarmedRef = useRef(false);
   useEffect(() => {
     if (corePrewarmedRef.current) return;
@@ -2161,6 +2227,96 @@ function AppContent({
                   <X className="h-4 w-4" />
                 </button>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* Single Unified In-App Offline Download / Auto-Update Notification Bar */}
+        {(offlineDl.status === 'downloading' ||
+          offlineDl.status === 'paused' ||
+          (offlineDl.status === 'completed' && offlineDoneBannerVisible)) && (
+          <div className="w-full px-3 pt-2.5">
+            <div className="space-y-2 rounded-2xl border-2 border-[#C9A227] bg-[#0B0902] p-3 text-white shadow-[0_6px_22px_rgba(201,162,39,0.22)]">
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex min-w-0 items-start gap-2">
+                  <Download className="mt-0.5 h-4 w-4 shrink-0 text-[#FCE38A]" />
+                  <div className="min-w-0 space-y-0.5">
+                    <p className="text-xs font-extrabold text-[#FCE38A]">
+                      {offlineDl.status === 'completed'
+                        ? 'تم تحميل محتوى التطبيق بالكامل ✓'
+                        : offlineDl.status === 'paused'
+                          ? `التحميل متوقف — باقي ${offlineDl.remainingMb} ميجا`
+                          : offlineDl.mode === 'updating'
+                            ? 'جاري تحميل تحديث المحتوى تلقائيًا...'
+                            : 'جاري تحميل محتوى التطبيق بالكامل'}
+                    </p>
+                    <p className="text-[11px] font-semibold text-zinc-300">
+                      {offlineDl.status === 'completed'
+                        ? 'تم تحميل 850 ميجا من 850 ميجا — باقي 0 ميجا — 100%'
+                        : offlineDl.status === 'paused' &&
+                            offlineDl.pauseReason === 'offline'
+                          ? `تم تحميل ${offlineDl.downloadedMb} من 850 ميجا (${offlineDl.percent}%) — سيكمل تلقائيًا فور عودة النت`
+                          : `تم تحميل ${offlineDl.downloadedMb} ميجا من 850 ميجا — باقي ${offlineDl.remainingMb} ميجا — ${offlineDl.percent}%`}
+                    </p>
+                  </div>
+                </div>
+                {offlineDl.status === 'completed' && (
+                  <button
+                    type="button"
+                    onClick={() => setOfflineDoneBannerVisible(false)}
+                    aria-label="إغلاق إشعار اكتمال التحميل"
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-xl border border-[#C9A227]/60 text-[#FCE38A]"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
+
+              <div className="h-2.5 w-full overflow-hidden rounded-full border border-[#C9A227]/45 bg-black">
+                <div
+                  className="h-full bg-gradient-to-l from-[#FCE38A] to-[#C9A227] transition-all duration-300"
+                  style={{
+                    width: `${offlineDl.status === 'completed' ? 100 : Math.max(3, offlineDl.percent)}%`,
+                  }}
+                />
+              </div>
+
+              {(offlineDl.status === 'downloading' ||
+                offlineDl.status === 'paused') && (
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  {offlineDl.status === 'downloading' ? (
+                    <button
+                      type="button"
+                      onClick={() => void pauseFullOfflineBackgroundDownload()}
+                      className="inline-flex min-h-[34px] items-center gap-1 rounded-xl border border-[#C9A227] bg-black px-3 text-[11px] font-extrabold text-[#FCE38A]"
+                    >
+                      <Pause className="h-3.5 w-3.5" />
+                      <span>إيقاف مؤقت</span>
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void resumeFullOfflineBackgroundDownload(
+                          settings.preferredReciter,
+                        )
+                      }
+                      className="inline-flex min-h-[34px] items-center gap-1 rounded-xl bg-[#C9A227] px-3 text-[11px] font-extrabold text-black"
+                    >
+                      <Play className="h-3.5 w-3.5 fill-current" />
+                      <span>استئناف</span>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => void cancelFullOfflineBackgroundDownload()}
+                    className="inline-flex min-h-[34px] items-center gap-1 rounded-xl border border-red-500/60 bg-red-950/30 px-3 text-[11px] font-bold text-red-200"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                    <span>إلغاء</span>
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         )}

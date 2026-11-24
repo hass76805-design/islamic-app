@@ -222,12 +222,6 @@ export async function prewarmCoreOfflineTextData(
     ),
   ];
   await cacheBatchUrls(externalMuezzinsAndAzkar, undefined, 3);
-
-  try {
-    window.localStorage.setItem(OFFLINE_READY_KEY, '1');
-  } catch {
-    // ignore storage errors
-  }
 }
 
 export async function isAudioCached(url: string): Promise<boolean> {
@@ -253,19 +247,45 @@ export async function cacheAssetInBucket(
     const existing = await cache.match(url);
     if (existing) return true;
 
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      return false;
+    }
+
+    const isSameOrigin =
+      url.startsWith('/') ||
+      (typeof window !== 'undefined' && url.startsWith(window.location.origin));
+
+    if (isSameOrigin) {
+      const res = await fetch(url);
+      if (res.ok) {
+        await cache.put(url, res);
+        return true;
+      }
+      return false;
+    }
+
     try {
       const corsRes = await fetch(url, {mode: 'cors'});
       if (corsRes.ok) {
         await cache.put(url, corsRes);
         return true;
       }
+      if (corsRes.status === 404 || corsRes.status === 410) {
+        return false;
+      }
     } catch {
-      // Fallback to opaque no-cors response for cross-origin CDNs without ACAO
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+        return false;
+      }
     }
 
-    const noCorsRes = await fetch(url, {mode: 'no-cors'});
-    await cache.put(url, noCorsRes);
-    return true;
+    try {
+      const noCorsRes = await fetch(url, {mode: 'no-cors'});
+      await cache.put(url, noCorsRes);
+      return true;
+    } catch {
+      return false;
+    }
   } catch {
     return false;
   }
@@ -341,24 +361,19 @@ export async function countCachedAudioItems(): Promise<number> {
 export function isOfflinePackageDownloaded(): boolean {
   if (typeof window === 'undefined') return false;
   try {
-    return window.localStorage.getItem(OFFLINE_READY_KEY) === '1';
+    return (
+      window.localStorage.getItem(OFFLINE_READY_KEY) === '1' &&
+      window.localStorage.getItem('alzahabi_full_850_dl_done_v1') === '1'
+    );
   } catch {
     return false;
   }
 }
 
-/**
- * Builds the complete all-in-one offline download list:
- * - Full Quran & Tafsir JSONs + 30-day prayer cache
- * - All 24 local audio assets (Adhan, Iqamah, Tawasih, Dua, Eid, Kahf, Salawat)
- * - All 30 Adhan Muezzins + all Azkar audio clips
- * - All 30 Rafiqi ayahs
- * - Core Surahs for ALL 30 Sheikhs + full 114 Surahs for preferred reciter
- */
 export function buildFullOfflineDownloadList(
   preferredReciter: ReciterId,
 ): string[] {
-  const coreDataUrls = ['/data/quran.json', '/data/tafsir.json'];
+  const coreDataUrls = ['/data/quran.json', '/data/tafsir.json', '/offline.html'];
 
   const localAudioAssets = [
     '/audio/adhan-makkah.mp3',
@@ -412,12 +427,10 @@ export function buildFullOfflineDownloadList(
     getAyahAudioUrl(preferredReciter, 1, a),
   );
 
-  // Preferred Sheikh full 114 surahs
   const full114Preferred = Array.from({length: 114}, (_, i) =>
     getSurahAudioUrl(preferredReciter, i + 1),
   );
 
-  // Core popular Surahs across ALL 30 Sheikhs
   const sharedSheikhSurahs = [1, 18, 36, 55, 56, 67, 87, 97, 108, 112, 113, 114];
   const all30SheikhsCore = RECITERS_30.flatMap((reciter) =>
     sharedSheikhSurahs.map((sNum) => getSurahAudioUrl(reciter.id, sNum)),
@@ -436,53 +449,248 @@ export function buildFullOfflineDownloadList(
   );
 }
 
-export async function downloadAllOfflinePackage(
-  preferredReciter: ReciterId,
-  onProgress?: (done: number, total: number, stageLabel: string) => void,
-): Promise<{success: number; total: number}> {
-  if (typeof navigator !== 'undefined' && navigator.storage?.persist) {
-    try {
-      await navigator.storage.persist();
-    } catch {
-      // ignore
-    }
-  }
-
-  await Promise.allSettled([
-    loadOfflineJson('/data/quran.json'),
-    loadOfflineJson('/data/tafsir.json'),
-  ]);
-
-  const allUrls = buildFullOfflineDownloadList(preferredReciter);
-  const success = await cacheBatchUrls(allUrls, (done, total) => {
-    const pct = total > 0 ? Math.round((done / total) * 100) : 0;
-    onProgress?.(
-      done,
-      total,
-      pct < 15
-        ? 'تجهيز المصحف والتفسير والقصص...'
-        : pct < 45
-          ? 'تحميل الأذان والإقامة والتواشيح والدعاء والتكبيرات...'
-          : 'تحميل أصوات الـ 30 شيخًا والسور الكاملة...',
-    );
-  });
-
-  try {
-    window.localStorage.setItem(OFFLINE_READY_KEY, '1');
-  } catch {
-    // ignore
-  }
-
-  return {success, total: allUrls.length};
-}
-
 export const CONTENT_PACK_VERSION = '2026.11.24.1';
+export const TOTAL_PACKAGE_MB = 850;
+export const FULL_850_DONE_KEY = 'alzahabi_full_850_dl_done_v1';
 
 export interface BackgroundOfflineProgress {
   status: 'idle' | 'downloading' | 'paused' | 'completed';
+  pauseReason?: 'user' | 'offline';
+  mode?: 'full' | 'updating';
   percent: number;
   done: number;
   total: number;
+  downloadedMb: number;
+  remainingMb: number;
+  totalMb: number;
+}
+
+export function computeMbProgress(
+  done: number,
+  total: number,
+  completedAll: boolean,
+): Pick<
+  BackgroundOfflineProgress,
+  'percent' | 'downloadedMb' | 'remainingMb' | 'totalMb'
+> {
+  if (completedAll && total > 0 && done >= total) {
+    return {
+      percent: 100,
+      downloadedMb: TOTAL_PACKAGE_MB,
+      remainingMb: 0,
+      totalMb: TOTAL_PACKAGE_MB,
+    };
+  }
+  const ratio = total > 0 ? Math.min(0.999, Math.max(0, done / total)) : 0;
+  const downloadedMb = Math.min(
+    TOTAL_PACKAGE_MB - 1,
+    Math.max(0, Math.round(ratio * TOTAL_PACKAGE_MB)),
+  );
+  const remainingMb = Math.max(1, TOTAL_PACKAGE_MB - downloadedMb);
+  const percent = Math.min(99, Math.max(0, Math.round(ratio * 100)));
+  return {
+    percent,
+    downloadedMb,
+    remainingMb,
+    totalMb: TOTAL_PACKAGE_MB,
+  };
+}
+
+let sharedOfflineProgress: BackgroundOfflineProgress = (() => {
+  const doneAlready =
+    typeof window !== 'undefined' &&
+    window.localStorage.getItem(OFFLINE_READY_KEY) === '1' &&
+    window.localStorage.getItem(FULL_850_DONE_KEY) === '1';
+  return doneAlready
+    ? {
+        status: 'completed',
+        mode: 'full',
+        percent: 100,
+        done: 1,
+        total: 1,
+        downloadedMb: TOTAL_PACKAGE_MB,
+        remainingMb: 0,
+        totalMb: TOTAL_PACKAGE_MB,
+      }
+    : {
+        status: 'idle',
+        mode: 'full',
+        percent: 0,
+        done: 0,
+        total: 0,
+        downloadedMb: 0,
+        remainingMb: TOTAL_PACKAGE_MB,
+        totalMb: TOTAL_PACKAGE_MB,
+      };
+})();
+
+const progressSubscribers = new Set<
+  (state: BackgroundOfflineProgress) => void
+>();
+let swBridgeInitialized = false;
+
+// Fallback non-SW runner controls (if SW is unavailable in current context)
+let fallbackRunning = false;
+let fallbackPauseRequested = false;
+let fallbackCancelRequested = false;
+let fallbackUrls: string[] = [];
+
+function persistCompletedFlag(isCompleted: boolean) {
+  if (typeof window === 'undefined') return;
+  try {
+    if (isCompleted) {
+      window.localStorage.setItem(OFFLINE_READY_KEY, '1');
+      window.localStorage.setItem(FULL_850_DONE_KEY, '1');
+    } else {
+      window.localStorage.removeItem(OFFLINE_READY_KEY);
+      window.localStorage.removeItem(FULL_850_DONE_KEY);
+    }
+  } catch {
+    // ignore storage failures
+  }
+}
+
+function setSharedOfflineProgress(next: BackgroundOfflineProgress) {
+  sharedOfflineProgress = next;
+  if (next.status === 'completed' && next.percent === 100) {
+    persistCompletedFlag(true);
+  } else if (
+    next.status === 'idle' ||
+    next.status === 'paused' ||
+    next.status === 'downloading'
+  ) {
+    if (next.mode !== 'updating') {
+      persistCompletedFlag(false);
+    }
+  }
+  for (const listener of progressSubscribers) {
+    listener(next);
+  }
+}
+
+export function getCurrentOfflineProgress(): BackgroundOfflineProgress {
+  return sharedOfflineProgress;
+}
+
+function normalizeSwPayloadToProgress(data: {
+  status?: string;
+  pauseReason?: 'user' | 'offline';
+  mode?: 'full' | 'updating';
+  done?: number;
+  total?: number;
+  percent?: number;
+  downloadedMb?: number;
+  remainingMb?: number;
+  totalMb?: number;
+}): BackgroundOfflineProgress {
+  const status =
+    data.status === 'downloading' ||
+    data.status === 'paused' ||
+    data.status === 'completed'
+      ? data.status
+      : 'idle';
+  const done = typeof data.done === 'number' ? data.done : 0;
+  const total = typeof data.total === 'number' ? data.total : 0;
+  const isCompleted = status === 'completed';
+  const computed = computeMbProgress(done, total, isCompleted);
+  return {
+    status,
+    pauseReason: data.pauseReason,
+    mode: data.mode || 'full',
+    done,
+    total,
+    percent:
+      typeof data.percent === 'number' ? data.percent : computed.percent,
+    downloadedMb:
+      typeof data.downloadedMb === 'number'
+        ? data.downloadedMb
+        : computed.downloadedMb,
+    remainingMb:
+      typeof data.remainingMb === 'number'
+        ? data.remainingMb
+        : computed.remainingMb,
+    totalMb: TOTAL_PACKAGE_MB,
+  };
+}
+
+function initSwProgressBridge() {
+  if (swBridgeInitialized || typeof navigator === 'undefined') return;
+  swBridgeInitialized = true;
+
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.addEventListener('message', (event: MessageEvent) => {
+      const data = event.data as
+        | {
+            type?: string;
+            status?: string;
+            pauseReason?: 'user' | 'offline';
+            mode?: 'full' | 'updating';
+            done?: number;
+            total?: number;
+            percent?: number;
+            downloadedMb?: number;
+            remainingMb?: number;
+            totalMb?: number;
+            state?: {
+              status?: string;
+              pauseReason?: 'user' | 'offline';
+              mode?: 'full' | 'updating';
+              done?: number;
+              total?: number;
+              percent?: number;
+              downloadedMb?: number;
+              remainingMb?: number;
+              totalMb?: number;
+            } | null;
+          }
+        | undefined;
+      if (!data) return;
+
+      if (
+        data.type === 'OFFLINE_DOWNLOAD_PROGRESS' ||
+        data.type === 'OFFLINE_DOWNLOAD_PAUSED' ||
+        data.type === 'OFFLINE_DOWNLOAD_COMPLETE' ||
+        data.type === 'OFFLINE_AUTO_UPDATE_APPLIED' ||
+        data.type === 'OFFLINE_DOWNLOAD_CANCELLED'
+      ) {
+        const mapped = normalizeSwPayloadToProgress({
+          ...data,
+          status:
+            data.type === 'OFFLINE_DOWNLOAD_PROGRESS'
+              ? 'downloading'
+              : data.type === 'OFFLINE_DOWNLOAD_PAUSED'
+                ? 'paused'
+                : data.type === 'OFFLINE_DOWNLOAD_CANCELLED'
+                  ? 'idle'
+                  : 'completed',
+        });
+        setSharedOfflineProgress(mapped);
+      } else if (
+        data.type === 'OFFLINE_DOWNLOAD_STATE_SNAPSHOT' &&
+        data.state
+      ) {
+        setSharedOfflineProgress(normalizeSwPayloadToProgress(data.state));
+      }
+    });
+
+    navigator.serviceWorker.ready
+      .then((reg) => {
+        const target = reg.active || navigator.serviceWorker.controller;
+        target?.postMessage({type: 'GET_OFFLINE_DOWNLOAD_STATE'});
+      })
+      .catch(() => {});
+  }
+}
+
+export function subscribeOfflineDownloadState(
+  listener: (state: BackgroundOfflineProgress) => void,
+): () => void {
+  initSwProgressBridge();
+  progressSubscribers.add(listener);
+  listener(sharedOfflineProgress);
+  return () => {
+    progressSubscribers.delete(listener);
+  };
 }
 
 async function registerBackgroundOfflineSync(reg: ServiceWorkerRegistration) {
@@ -511,16 +719,161 @@ async function registerBackgroundOfflineSync(reg: ServiceWorkerRegistration) {
   }
 }
 
-/**
- * Starts the unified full-content download inside the Service Worker so it continues
- * downloading in the background with top OS percentage notifications even if the app closes,
- * and enables automatic background updates when new content is added.
- */
+async function isUrlCachedLocally(url: string): Promise<boolean> {
+  if (typeof caches === 'undefined' || !url) return false;
+  try {
+    const bucket =
+      url.endsWith('.json') || url.endsWith('.html')
+        ? CORE_DATA_CACHE_NAME
+        : AUDIO_CACHE_NAME;
+    const cache = await caches.open(bucket);
+    const match = await cache.match(url);
+    return !!match;
+  } catch {
+    return false;
+  }
+}
+
+async function runFallbackOfflineDownload(urls: string[]) {
+  if (fallbackRunning) return;
+  fallbackRunning = true;
+  fallbackPauseRequested = false;
+  fallbackCancelRequested = false;
+  fallbackUrls = Array.from(new Set(urls.filter(Boolean)));
+  const total = fallbackUrls.length;
+  if (total === 0) {
+    fallbackRunning = false;
+    return;
+  }
+
+  let cachedCount = 0;
+  const pending: string[] = [];
+  for (const u of fallbackUrls) {
+    if (await isUrlCachedLocally(u)) {
+      cachedCount++;
+    } else {
+      pending.push(u);
+    }
+  }
+
+  let done = cachedCount;
+  let cursor = 0;
+  let offlineInterrupted = false;
+  let consecutiveFailures = 0;
+
+  setSharedOfflineProgress({
+    status: 'downloading',
+    mode: 'full',
+    done,
+    total,
+    ...computeMbProgress(done, total, false),
+  });
+
+  const worker = async () => {
+    while (
+      cursor < pending.length &&
+      !fallbackPauseRequested &&
+      !fallbackCancelRequested &&
+      !offlineInterrupted
+    ) {
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        offlineInterrupted = true;
+        break;
+      }
+      const url = pending[cursor++];
+      const bucket =
+        url.endsWith('.json') || url.endsWith('.html')
+          ? CORE_DATA_CACHE_NAME
+          : AUDIO_CACHE_NAME;
+      const ok = await cacheAssetInBucket(bucket, url);
+      if (fallbackCancelRequested) break;
+      if (!ok) {
+        consecutiveFailures++;
+        if (!navigator.onLine || consecutiveFailures >= 3) {
+          offlineInterrupted = true;
+          break;
+        }
+        continue;
+      }
+      consecutiveFailures = 0;
+      done++;
+      if (!fallbackPauseRequested && !fallbackCancelRequested) {
+        setSharedOfflineProgress({
+          status: 'downloading',
+          mode: 'full',
+          done,
+          total,
+          ...computeMbProgress(done, total, false),
+        });
+      }
+    }
+  };
+
+  try {
+    await Promise.all(
+      Array.from({length: Math.min(4, Math.max(1, pending.length))}, () =>
+        worker(),
+      ),
+    );
+
+    if (fallbackCancelRequested) {
+      setSharedOfflineProgress({
+        status: 'idle',
+        mode: 'full',
+        done: 0,
+        total: 0,
+        percent: 0,
+        downloadedMb: 0,
+        remainingMb: TOTAL_PACKAGE_MB,
+        totalMb: TOTAL_PACKAGE_MB,
+      });
+      return;
+    }
+
+    if (fallbackPauseRequested) {
+      setSharedOfflineProgress({
+        status: 'paused',
+        pauseReason: 'user',
+        mode: 'full',
+        done,
+        total,
+        ...computeMbProgress(done, total, false),
+      });
+      return;
+    }
+
+    if (offlineInterrupted || done < total) {
+      setSharedOfflineProgress({
+        status: 'paused',
+        pauseReason: 'offline',
+        mode: 'full',
+        done,
+        total,
+        ...computeMbProgress(done, total, false),
+      });
+      return;
+    }
+
+    setSharedOfflineProgress({
+      status: 'completed',
+      mode: 'full',
+      done: total,
+      total,
+      percent: 100,
+      downloadedMb: TOTAL_PACKAGE_MB,
+      remainingMb: 0,
+      totalMb: TOTAL_PACKAGE_MB,
+    });
+  } finally {
+    fallbackRunning = false;
+  }
+}
+
 export async function startFullOfflineBackgroundDownload(
   preferredReciter: ReciterId,
-  onProgress?: (state: BackgroundOfflineProgress) => void,
 ): Promise<void> {
   if (typeof window === 'undefined') return;
+  initSwProgressBridge();
 
   if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
     try {
@@ -538,18 +891,13 @@ export async function startFullOfflineBackgroundDownload(
     }
   }
 
-  // Ensure JSONs are in IndexedDB right away
-  void Promise.allSettled([
-    loadOfflineJson('/data/quran.json'),
-    loadOfflineJson('/data/tafsir.json'),
-  ]);
-
   const allUrls = buildFullOfflineDownloadList(preferredReciter);
-  onProgress?.({
+  setSharedOfflineProgress({
     status: 'downloading',
-    percent: 0,
+    mode: 'full',
     done: 0,
     total: allUrls.length,
+    ...computeMbProgress(0, allUrls.length, false),
   });
 
   if ('serviceWorker' in navigator) {
@@ -566,57 +914,123 @@ export async function startFullOfflineBackgroundDownload(
         return;
       }
     } catch {
-      // fall through to foreground download
+      // fall through
     }
   }
 
-  // Fallback if Service Worker is unavailable
-  await cacheBatchUrls(allUrls, (done, total) => {
-    const percent = total > 0 ? Math.round((done / total) * 100) : 100;
-    onProgress?.({
-      status: percent >= 100 ? 'completed' : 'downloading',
-      percent,
-      done,
-      total,
-    });
-  });
-
-  try {
-    window.localStorage.setItem(OFFLINE_READY_KEY, '1');
-  } catch {
-    // ignore
-  }
-
-  onProgress?.({
-    status: 'completed',
-    percent: 100,
-    done: allUrls.length,
-    total: allUrls.length,
-  });
+  await runFallbackOfflineDownload(allUrls);
 }
 
 export async function pauseFullOfflineBackgroundDownload(): Promise<void> {
+  fallbackPauseRequested = true;
+  if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      const targetSw = reg.active || navigator.serviceWorker.controller;
+      if (targetSw) {
+        targetSw.postMessage({type: 'PAUSE_FULL_OFFLINE_DOWNLOAD'});
+        return;
+      }
+    } catch {
+      // fall through
+    }
+  }
+  if (!fallbackRunning && sharedOfflineProgress.status === 'downloading') {
+    setSharedOfflineProgress({
+      ...sharedOfflineProgress,
+      status: 'paused',
+      pauseReason: 'user',
+    });
+  }
+}
+
+export async function resumeFullOfflineBackgroundDownload(
+  preferredReciter?: ReciterId,
+): Promise<void> {
+  if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      const targetSw = reg.active || navigator.serviceWorker.controller;
+      if (targetSw) {
+        targetSw.postMessage({type: 'RESUME_FULL_OFFLINE_DOWNLOAD'});
+        void registerBackgroundOfflineSync(reg);
+        return;
+      }
+    } catch {
+      // fall through
+    }
+  }
+  if (fallbackUrls.length > 0) {
+    await runFallbackOfflineDownload(fallbackUrls);
+  } else if (preferredReciter) {
+    await startFullOfflineBackgroundDownload(preferredReciter);
+  }
+}
+
+export async function cancelFullOfflineBackgroundDownload(): Promise<void> {
+  fallbackCancelRequested = true;
+  fallbackUrls = [];
+  if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      const targetSw = reg.active || navigator.serviceWorker.controller;
+      if (targetSw) {
+        targetSw.postMessage({type: 'CANCEL_FULL_OFFLINE_DOWNLOAD'});
+        return;
+      }
+    } catch {
+      // fall through
+    }
+  }
+  setSharedOfflineProgress({
+    status: 'idle',
+    mode: 'full',
+    done: 0,
+    total: 0,
+    percent: 0,
+    downloadedMb: 0,
+    remainingMb: TOTAL_PACKAGE_MB,
+    totalMb: TOTAL_PACKAGE_MB,
+  });
+}
+
+export async function notifyNetworkOfflineToSw(): Promise<void> {
+  if (fallbackRunning) {
+    setSharedOfflineProgress({
+      ...sharedOfflineProgress,
+      status: 'paused',
+      pauseReason: 'offline',
+    });
+  }
   if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) {
     return;
   }
   try {
     const reg = await navigator.serviceWorker.ready;
     const targetSw = reg.active || navigator.serviceWorker.controller;
-    targetSw?.postMessage({type: 'PAUSE_FULL_OFFLINE_DOWNLOAD'});
+    targetSw?.postMessage({type: 'NETWORK_OFFLINE_INTERRUPTED'});
   } catch {
     // ignore
   }
 }
 
-export async function resumeFullOfflineBackgroundDownload(): Promise<void> {
+export async function notifyNetworkOnlineAutoResumeToSw(): Promise<void> {
+  if (
+    !fallbackRunning &&
+    sharedOfflineProgress.status === 'paused' &&
+    sharedOfflineProgress.pauseReason === 'offline' &&
+    fallbackUrls.length > 0
+  ) {
+    void runFallbackOfflineDownload(fallbackUrls);
+  }
   if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) {
     return;
   }
   try {
     const reg = await navigator.serviceWorker.ready;
-    const targetSw = reg.active || navigator.serviceWorker.controller;
-    targetSw?.postMessage({type: 'RESUME_FULL_OFFLINE_DOWNLOAD'});
     void registerBackgroundOfflineSync(reg);
+    const targetSw = reg.active || navigator.serviceWorker.controller;
+    targetSw?.postMessage({type: 'NETWORK_RESTORED_AUTO_RESUME'});
   } catch {
     // ignore
   }

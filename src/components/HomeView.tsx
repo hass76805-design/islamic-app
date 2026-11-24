@@ -22,7 +22,6 @@ import {
   Moon,
   MoonStar,
   Navigation,
-  Pause,
   Play,
   ScrollText,
   Search,
@@ -55,10 +54,10 @@ import {
 } from '../utils/prayerTimes';
 import {
   BackgroundOfflineProgress,
-  OFFLINE_READY_KEY,
-  pauseFullOfflineBackgroundDownload,
+  getCurrentOfflineProgress,
   resumeFullOfflineBackgroundDownload,
   startFullOfflineBackgroundDownload,
+  subscribeOfflineDownloadState,
 } from '../utils/offlineAudioCache';
 
 interface HomeViewProps {
@@ -109,18 +108,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
   const [shareCopied, setShareCopied] = useState(false);
   const [offlineConfirmOpen, setOfflineConfirmOpen] = useState(false);
   const [offlineDownloadState, setOfflineDownloadState] =
-    useState<BackgroundOfflineProgress>(() => {
-      const doneAlready =
-        typeof window !== 'undefined' &&
-        window.localStorage.getItem(OFFLINE_READY_KEY) === '1' &&
-        window.localStorage.getItem('alzahabi_full_850_dl_done_v1') === '1';
-      return {
-        status: doneAlready ? 'completed' : 'idle',
-        percent: doneAlready ? 100 : 0,
-        done: 0,
-        total: 0,
-      };
-    });
+    useState<BackgroundOfflineProgress>(() => getCurrentOfflineProgress());
   const [timeFormat, setTimeFormat] = useState<'12' | '24'>(() => {
     if (typeof window !== 'undefined') {
       const saved = window.localStorage.getItem('alzahabi_time_format');
@@ -134,113 +122,12 @@ export const HomeView: React.FC<HomeViewProps> = ({
   useHardwareBack(offlineConfirmOpen, () => setOfflineConfirmOpen(false));
 
   useEffect(() => {
-    if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) {
-      return;
-    }
-    const handleSwMessage = (event: MessageEvent) => {
-      const data = event.data as
-        | {
-            type?: string;
-            status?: 'idle' | 'downloading' | 'paused' | 'completed';
-            percent?: number;
-            done?: number;
-            total?: number;
-            state?: {
-              status?: 'idle' | 'downloading' | 'paused' | 'completed';
-              percent?: number;
-              done?: number;
-              total?: number;
-            } | null;
-          }
-        | undefined;
-      if (!data) return;
-
-      if (data.type === 'OFFLINE_DOWNLOAD_PROGRESS') {
-        setOfflineDownloadState({
-          status: 'downloading',
-          percent: data.percent ?? 0,
-          done: data.done ?? 0,
-          total: data.total ?? 0,
-        });
-      } else if (data.type === 'OFFLINE_DOWNLOAD_PAUSED') {
-        setOfflineDownloadState({
-          status: 'paused',
-          percent: data.percent ?? 0,
-          done: data.done ?? 0,
-          total: data.total ?? 0,
-        });
-      } else if (
-        data.type === 'OFFLINE_DOWNLOAD_COMPLETE' ||
-        data.type === 'OFFLINE_AUTO_UPDATE_APPLIED'
-      ) {
-        try {
-          window.localStorage.setItem(OFFLINE_READY_KEY, '1');
-          window.localStorage.setItem('alzahabi_full_850_dl_done_v1', '1');
-        } catch {
-          // ignore
-        }
-        setOfflineDownloadState((prev) => ({
-          status: 'completed',
-          percent: 100,
-          done: data.done ?? prev.done,
-          total: data.total ?? prev.total,
-        }));
-      } else if (data.type === 'OFFLINE_DOWNLOAD_STATE_SNAPSHOT' && data.state) {
-        const st = data.state;
-        if (st.status === 'downloading') {
-          setOfflineDownloadState({
-            status: 'downloading',
-            percent: st.percent ?? 0,
-            done: st.done ?? 0,
-            total: st.total ?? 0,
-          });
-        } else if (st.status === 'paused') {
-          setOfflineDownloadState({
-            status: 'paused',
-            percent: st.percent ?? 0,
-            done: st.done ?? 0,
-            total: st.total ?? 0,
-          });
-        } else if (st.status === 'completed') {
-          setOfflineDownloadState({
-            status: 'completed',
-            percent: 100,
-            done: st.done ?? 0,
-            total: st.total ?? 0,
-          });
-        }
-      }
-    };
-
-    navigator.serviceWorker.addEventListener('message', handleSwMessage);
-    navigator.serviceWorker.ready
-      .then((reg) => {
-        const target = reg.active || navigator.serviceWorker.controller;
-        target?.postMessage({type: 'GET_OFFLINE_DOWNLOAD_STATE'});
-      })
-      .catch(() => {});
-
-    return () => {
-      navigator.serviceWorker.removeEventListener('message', handleSwMessage);
-    };
+    return subscribeOfflineDownloadState(setOfflineDownloadState);
   }, []);
 
   const handleConfirmStartFullDownload = () => {
     setOfflineConfirmOpen(false);
-    void startFullOfflineBackgroundDownload(
-      settings.preferredReciter,
-      (progress) => {
-        setOfflineDownloadState(progress);
-        if (progress.status === 'completed') {
-          try {
-            window.localStorage.setItem(OFFLINE_READY_KEY, '1');
-            window.localStorage.setItem('alzahabi_full_850_dl_done_v1', '1');
-          } catch {
-            // ignore
-          }
-        }
-      },
-    );
+    void startFullOfflineBackgroundDownload(settings.preferredReciter);
   };
 
   const toggleTimeFormat = () => {
@@ -644,7 +531,9 @@ export const HomeView: React.FC<HomeViewProps> = ({
           type="button"
           onClick={() => {
             if (offlineDownloadState.status === 'paused') {
-              void resumeFullOfflineBackgroundDownload();
+              void resumeFullOfflineBackgroundDownload(
+                settings.preferredReciter,
+              );
             } else if (offlineDownloadState.status !== 'downloading') {
               setOfflineConfirmOpen(true);
             }
@@ -661,12 +550,12 @@ export const HomeView: React.FC<HomeViewProps> = ({
           <div className="min-w-0 flex-1 space-y-0.5">
             <p className="text-sm font-extrabold leading-snug">
               {offlineDownloadState.status === 'downloading'
-                ? `جاري تحميل محتوي التطبيق... ${offlineDownloadState.percent}%`
+                ? `جاري تحميل محتوى التطبيق... ${offlineDownloadState.percent}%`
                 : offlineDownloadState.status === 'paused'
-                  ? `استكمال تحميل محتوي التطبيق (${offlineDownloadState.percent}%)`
+                  ? `التحميل متوقف — باقي ${offlineDownloadState.remainingMb} ميجا`
                   : offlineDownloadState.status === 'completed'
-                    ? 'تم تحميل محتوي التطبيق كلو ✓'
-                    : 'تحميل محتوي التطبيق كلو'}
+                    ? 'تم تحميل محتوى التطبيق بالكامل للعمل بدون انترنت ✓'
+                    : 'تحميل محتوى التطبيق بالكامل للعمل بدون انترنت'}
             </p>
             <p
               className={`text-[11px] font-semibold ${
@@ -678,12 +567,14 @@ export const HomeView: React.FC<HomeViewProps> = ({
               }`}
             >
               {offlineDownloadState.status === 'downloading'
-                ? 'يستمر التحميل في الخلفية مع إشعار علوي حتى لو أغلقت التطبيق'
+                ? `تم تحميل ${offlineDownloadState.downloadedMb} ميجا من 850 ميجا — باقي ${offlineDownloadState.remainingMb} ميجا`
                 : offlineDownloadState.status === 'paused'
-                  ? `تم حفظ ${offlineDownloadState.done} من ${offlineDownloadState.total} ملف — اضغط لاستكمال التحميل`
+                  ? offlineDownloadState.pauseReason === 'offline'
+                    ? `تم تحميل ${offlineDownloadState.downloadedMb} من 850 ميجا — سيكمل تلقائيًا عند عودة النت`
+                    : `تم تحميل ${offlineDownloadState.downloadedMb} من 850 ميجا — اضغط لاستئناف التحميل`
                   : offlineDownloadState.status === 'completed'
-                    ? 'يعمل بدون نت 100% — وأي تحديث جديد ينزل تلقائيًا في الخلفية'
-                    : 'المصحف · التفسير · القصص · الـ 30 شيخًا · الأذان والإقامة والتواشيح والدعاء والتكبيرات'}
+                    ? 'تم تحميل 850 من 850 ميجا (100%) — يعمل بدون نت ويتحدث تلقائيًا'
+                    : 'المصحف · التفسير · القصص · الأذكار · الأذان والتلاوات (حوالي 850 ميجا)'}
             </p>
           </div>
           <span
@@ -706,46 +597,6 @@ export const HomeView: React.FC<HomeViewProps> = ({
             )}
           </span>
         </button>
-
-        {(offlineDownloadState.status === 'downloading' ||
-          offlineDownloadState.status === 'paused') && (
-          <div className="mt-2.5 space-y-2">
-            <div className="h-2.5 w-full overflow-hidden rounded-full border border-[#C9A227]/40 bg-black">
-              <div
-                className="h-full bg-gradient-to-l from-[#FCE38A] to-[#C9A227] transition-all duration-300"
-                style={{width: `${Math.max(4, offlineDownloadState.percent)}%`}}
-              />
-            </div>
-            <div className="flex items-center justify-between gap-2 text-[11px] font-bold text-[#C9A227]">
-              <span>
-                {offlineDownloadState.done} / {offlineDownloadState.total} ملف (
-                <span className="font-mono-num">
-                  {offlineDownloadState.percent}%
-                </span>
-                )
-              </span>
-              {offlineDownloadState.status === 'downloading' ? (
-                <button
-                  type="button"
-                  onClick={() => void pauseFullOfflineBackgroundDownload()}
-                  className="inline-flex min-h-[32px] items-center gap-1 rounded-xl border border-[#C9A227] bg-black px-3 text-[11px] font-extrabold text-[#FCE38A]"
-                >
-                  <Pause className="h-3.5 w-3.5" />
-                  <span>إيقاف التحميل مؤقتًا</span>
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => void resumeFullOfflineBackgroundDownload()}
-                  className="inline-flex min-h-[32px] items-center gap-1 rounded-xl bg-[#C9A227] px-3 text-[11px] font-extrabold text-black"
-                >
-                  <Play className="h-3.5 w-3.5 fill-current" />
-                  <span>استكمال الآن</span>
-                </button>
-              )}
-            </div>
-          </div>
-        )}
       </section>
 
       {/* Primary Hero Row (Single Column Mobile Stack) */}
@@ -1069,7 +920,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
               <div className="flex items-center gap-2">
                 <Download className="h-5 w-5 text-[#FCE38A]" />
                 <h3 className="text-base font-extrabold text-[#FCE38A]">
-                  تحميل محتوى التطبيق كامل
+                  تحميل محتوى التطبيق بالكامل
                 </h3>
               </div>
               <button
@@ -1084,18 +935,12 @@ export const HomeView: React.FC<HomeViewProps> = ({
 
             <div className="rounded-2xl border border-[#C9A227]/45 bg-[#120E04] p-3.5 text-sm leading-relaxed text-[#FCE38A]">
               <p className="font-extrabold">
-                المحتوى كله حجمه تقريبًا 850 ميجابايت — هل تريد التحميل؟
+                التطبيق هياخد تقريبًا 850 ميجا — هل تريد التحميل؟
               </p>
               <p className="mt-1.5 text-xs text-zinc-300">
-                سيستمر التحميل في الخلفية مع إشعار علوي يوضح نسبة التحميل حتى لو أغلقت التطبيق، وبعد الانتهاء يعمل كل المحتوى بدون نت:
+                سيظهر إشعار علوي وشريط تحميل واحد يوضح الميجات المحمّلة والمتبقية، مع إمكانية الإيقاف المؤقت والاستئناف أو الإلغاء في أي وقت، وبعد الانتهاء يعمل التطبيق بالكامل بدون إنترنت.
               </p>
             </div>
-
-            <ul className="space-y-1 text-xs text-zinc-200">
-              <li>• المصحف الشريف كاملًا بالتشكيل والتفسير الميسر</li>
-              <li>• جميع القصص والسيرة النبوية وصحيح البخاري والأذكار</li>
-              <li>• أصوات الـ 30 شيخًا والأذان والإقامة والتواشيح والدعاء وتكبيرات العيد</li>
-            </ul>
 
             <div className="grid grid-cols-2 gap-2.5 pt-1">
               <button
@@ -1103,7 +948,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                 onClick={handleConfirmStartFullDownload}
                 className="min-h-[46px] rounded-2xl bg-gradient-to-l from-[#FCE38A] via-[#C9A227] to-[#9A7415] text-sm font-extrabold text-black"
               >
-                نعم، ابدأ التحميل
+                تحميل
               </button>
               <button
                 type="button"
