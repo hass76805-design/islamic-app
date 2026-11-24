@@ -1,0 +1,32 @@
+{
+  "contentVersion": "2026.11.24.1",
+  "assets": [
+    "/data/quran.json",
+    "/data/tafsir.json",
+    "/offline.html",
+    "/audio/adhan-makkah.mp3",
+    "/audio/adhan-madinah.mp3",
+    "/audio/adhan-alafasy.mp3",
+    "/audio/iqamah-makkah.mp3",
+    "/audio/iqamah-madinah.mp3",
+    "/audio/iqamah-haram.mp3",
+    "/audio/pre-chime.mp3",
+    "/audio/pre-istighfar.mp3",
+    "/audio/pre-takbeer.mp3",
+    "/audio/post-adhan-dua.mp3",
+    "/audio/tawasih-naqshabandi-1.mp3",
+    "/audio/tawasih-naqshabandi-2.mp3",
+    "/audio/tawasih-naqshabandi-3.mp3",
+    "/audio/salawat-1.mp3",
+    "/audio/salawat-2.mp3",
+    "/audio/salawat-3.mp3",
+    "/audio/salawat-4.mp3",
+    "/audio/eid-makkah-1.mp3",
+    "/audio/eid-makkah-2.mp3",
+    "/audio/eid-jamaa.mp3",
+    "/audio/kahf-abdulbasit.mp3",
+    "/audio/kahf-alafasy.mp3",
+    "/audio/kahf-muaiqly.mp3",
+    "/audio/sheikh-start-reading.mp3"
+  ]
+}

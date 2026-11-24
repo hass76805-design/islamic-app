@@ -9,6 +9,7 @@ import {
   POST_ADHAN_DUA,
   POST_PRAYER_AZKAR_AUDIO_URLS,
   PRE_ADHAN_VOICES_3,
+  RECITERS_30,
   SALAWAT_AUDIO_TRACKS,
   TAWASIH_NAQSHABANDI,
 } from '../data/reciters';
@@ -347,32 +348,48 @@ export function isOfflinePackageDownloaded(): boolean {
 }
 
 /**
- * Downloads the complete essential offline pack once ("تحميل الكل للجهاز"):
- * - Full Quran & Tafsir JSONs (IndexedDB + CacheStorage)
- * - All local + 30 Muezzins Adhan, Iqamah, Pre-Adhan, Naqshabandi Tawasih, Eid & Kahf
- * - Post-prayer Azkar audio clips
- * - All 30 Rafiqi word ayahs for the preferred reciter
- * - Core short surahs (Al-Fatihah + Juz Amma highlights) for instant offline recitation
+ * Builds the complete all-in-one offline download list:
+ * - Full Quran & Tafsir JSONs + 30-day prayer cache
+ * - All 24 local audio assets (Adhan, Iqamah, Tawasih, Dua, Eid, Kahf, Salawat)
+ * - All 30 Adhan Muezzins + all Azkar audio clips
+ * - All 30 Rafiqi ayahs
+ * - Core Surahs for ALL 30 Sheikhs + full 114 Surahs for preferred reciter
  */
-export async function downloadAllOfflinePackage(
+export function buildFullOfflineDownloadList(
   preferredReciter: ReciterId,
-  onProgress?: (done: number, total: number, stageLabel: string) => void,
-): Promise<{success: number; total: number}> {
-  if (typeof navigator !== 'undefined' && navigator.storage?.persist) {
-    try {
-      await navigator.storage.persist();
-    } catch {
-      // ignore storage persist permission failures
-    }
-  }
-
-  // Persist JSONs directly into IndexedDB as well as CacheStorage
-  await Promise.allSettled([
-    loadOfflineJson('/data/quran.json'),
-    loadOfflineJson('/data/tafsir.json'),
-  ]);
-
+): string[] {
   const coreDataUrls = ['/data/quran.json', '/data/tafsir.json'];
+
+  const localAudioAssets = [
+    '/audio/adhan-makkah.mp3',
+    '/audio/adhan-madinah.mp3',
+    '/audio/adhan-alafasy.mp3',
+    '/audio/iqamah-makkah.mp3',
+    '/audio/iqamah-madinah.mp3',
+    '/audio/iqamah-haram.mp3',
+    '/audio/pre-chime.mp3',
+    '/audio/pre-istighfar.mp3',
+    '/audio/pre-takbeer.mp3',
+    '/audio/post-adhan-dua.mp3',
+    '/audio/tawasih-naqshabandi-1.mp3',
+    '/audio/tawasih-naqshabandi-2.mp3',
+    '/audio/tawasih-naqshabandi-3.mp3',
+    '/audio/salawat-1.mp3',
+    '/audio/salawat-2.mp3',
+    '/audio/salawat-3.mp3',
+    '/audio/salawat-4.mp3',
+    '/audio/eid-makkah-1.mp3',
+    '/audio/eid-makkah-2.mp3',
+    '/audio/eid-jamaa.mp3',
+    '/audio/kahf-abdulbasit.mp3',
+    '/audio/kahf-alafasy.mp3',
+    '/audio/kahf-muaiqly.mp3',
+    '/audio/sheikh-start-reading.mp3',
+  ];
+
+  const azkarUrls = AZKAR_CATEGORIES.flatMap((cat) =>
+    cat.items.map((item) => item.audioUrl).filter((u): u is string => Boolean(u)),
+  );
 
   const muezzinUrls = [
     ...ADHAN_VOICES_30.map((a) => a.url),
@@ -384,6 +401,7 @@ export async function downloadAllOfflinePackage(
     ...EID_TAKBEERAT_VOICES_3.map((e) => e.url),
     ...FRIDAY_KAHF_VOICES_3.map((k) => k.url),
     ...POST_PRAYER_AZKAR_AUDIO_URLS,
+    ...azkarUrls,
   ];
 
   const rafiqiUrls = RAFIQI_WORDS_30.map((w) =>
@@ -394,31 +412,59 @@ export async function downloadAllOfflinePackage(
     getAyahAudioUrl(preferredReciter, 1, a),
   );
 
-  const coreShortSurahs = [1, 18, 36, 55, 56, 67, 93, 94, 97, 108, 112, 113, 114].map(
-    (sNum) => getSurahAudioUrl(preferredReciter, sNum),
+  // Preferred Sheikh full 114 surahs
+  const full114Preferred = Array.from({length: 114}, (_, i) =>
+    getSurahAudioUrl(preferredReciter, i + 1),
   );
 
-  const allUrls = Array.from(
+  // Core popular Surahs across ALL 30 Sheikhs
+  const sharedSheikhSurahs = [1, 18, 36, 55, 56, 67, 87, 97, 108, 112, 113, 114];
+  const all30SheikhsCore = RECITERS_30.flatMap((reciter) =>
+    sharedSheikhSurahs.map((sNum) => getSurahAudioUrl(reciter.id, sNum)),
+  );
+
+  return Array.from(
     new Set([
       ...coreDataUrls,
+      ...localAudioAssets,
       ...muezzinUrls,
       ...rafiqiUrls,
       ...quranFatihaAyahs,
-      ...coreShortSurahs,
+      ...full114Preferred,
+      ...all30SheikhsCore,
     ]),
   );
+}
 
-  const stageForIndex = (done: number): string => {
-    if (done <= coreDataUrls.length) return 'تجهيز المصحف والتفسير بدون نت...';
-    if (done <= coreDataUrls.length + muezzinUrls.length)
-      return 'تحميل المؤذنين والتواشيح والإقامة...';
-    if (done <= coreDataUrls.length + muezzinUrls.length + rafiqiUrls.length)
-      return 'تحميل آيات رفيقي الـ 30...';
-    return 'تحميل السور المختارة بصوت الشيخ...';
-  };
+export async function downloadAllOfflinePackage(
+  preferredReciter: ReciterId,
+  onProgress?: (done: number, total: number, stageLabel: string) => void,
+): Promise<{success: number; total: number}> {
+  if (typeof navigator !== 'undefined' && navigator.storage?.persist) {
+    try {
+      await navigator.storage.persist();
+    } catch {
+      // ignore
+    }
+  }
 
+  await Promise.allSettled([
+    loadOfflineJson('/data/quran.json'),
+    loadOfflineJson('/data/tafsir.json'),
+  ]);
+
+  const allUrls = buildFullOfflineDownloadList(preferredReciter);
   const success = await cacheBatchUrls(allUrls, (done, total) => {
-    onProgress?.(done, total, stageForIndex(done));
+    const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+    onProgress?.(
+      done,
+      total,
+      pct < 15
+        ? 'تجهيز المصحف والتفسير والقصص...'
+        : pct < 45
+          ? 'تحميل الأذان والإقامة والتواشيح والدعاء والتكبيرات...'
+          : 'تحميل أصوات الـ 30 شيخًا والسور الكاملة...',
+    );
   });
 
   try {
@@ -429,3 +475,177 @@ export async function downloadAllOfflinePackage(
 
   return {success, total: allUrls.length};
 }
+
+export const CONTENT_PACK_VERSION = '2026.11.24.1';
+
+export interface BackgroundOfflineProgress {
+  status: 'idle' | 'downloading' | 'paused' | 'completed';
+  percent: number;
+  done: number;
+  total: number;
+}
+
+async function registerBackgroundOfflineSync(reg: ServiceWorkerRegistration) {
+  const regWithSync = reg as ServiceWorkerRegistration & {
+    sync?: {register: (tag: string) => Promise<void>};
+    periodicSync?: {
+      register: (tag: string, opts: {minInterval: number}) => Promise<void>;
+    };
+  };
+  try {
+    await regWithSync.sync?.register('offline-pack-download');
+  } catch {
+    // ignore unsupported sync
+  }
+  try {
+    await regWithSync.sync?.register('offline-auto-update-check');
+  } catch {
+    // ignore unsupported sync
+  }
+  try {
+    await regWithSync.periodicSync?.register('offline-auto-update-check', {
+      minInterval: 6 * 60 * 60 * 1000,
+    });
+  } catch {
+    // ignore unsupported periodicSync
+  }
+}
+
+/**
+ * Starts the unified full-content download inside the Service Worker so it continues
+ * downloading in the background with top OS percentage notifications even if the app closes,
+ * and enables automatic background updates when new content is added.
+ */
+export async function startFullOfflineBackgroundDownload(
+  preferredReciter: ReciterId,
+  onProgress?: (state: BackgroundOfflineProgress) => void,
+): Promise<void> {
+  if (typeof window === 'undefined') return;
+
+  if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
+    try {
+      await Notification.requestPermission();
+    } catch {
+      // continue even if notification prompt dismissed
+    }
+  }
+
+  if (typeof navigator !== 'undefined' && navigator.storage?.persist) {
+    try {
+      await navigator.storage.persist();
+    } catch {
+      // ignore
+    }
+  }
+
+  // Ensure JSONs are in IndexedDB right away
+  void Promise.allSettled([
+    loadOfflineJson('/data/quran.json'),
+    loadOfflineJson('/data/tafsir.json'),
+  ]);
+
+  const allUrls = buildFullOfflineDownloadList(preferredReciter);
+  onProgress?.({
+    status: 'downloading',
+    percent: 0,
+    done: 0,
+    total: allUrls.length,
+  });
+
+  if ('serviceWorker' in navigator) {
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      const targetSw = reg.active || navigator.serviceWorker.controller;
+      if (targetSw) {
+        targetSw.postMessage({
+          type: 'START_FULL_OFFLINE_DOWNLOAD',
+          urls: allUrls,
+          contentVersion: CONTENT_PACK_VERSION,
+        });
+        void registerBackgroundOfflineSync(reg);
+        return;
+      }
+    } catch {
+      // fall through to foreground download
+    }
+  }
+
+  // Fallback if Service Worker is unavailable
+  await cacheBatchUrls(allUrls, (done, total) => {
+    const percent = total > 0 ? Math.round((done / total) * 100) : 100;
+    onProgress?.({
+      status: percent >= 100 ? 'completed' : 'downloading',
+      percent,
+      done,
+      total,
+    });
+  });
+
+  try {
+    window.localStorage.setItem(OFFLINE_READY_KEY, '1');
+  } catch {
+    // ignore
+  }
+
+  onProgress?.({
+    status: 'completed',
+    percent: 100,
+    done: allUrls.length,
+    total: allUrls.length,
+  });
+}
+
+export async function pauseFullOfflineBackgroundDownload(): Promise<void> {
+  if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) {
+    return;
+  }
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    const targetSw = reg.active || navigator.serviceWorker.controller;
+    targetSw?.postMessage({type: 'PAUSE_FULL_OFFLINE_DOWNLOAD'});
+  } catch {
+    // ignore
+  }
+}
+
+export async function resumeFullOfflineBackgroundDownload(): Promise<void> {
+  if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) {
+    return;
+  }
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    const targetSw = reg.active || navigator.serviceWorker.controller;
+    targetSw?.postMessage({type: 'RESUME_FULL_OFFLINE_DOWNLOAD'});
+    void registerBackgroundOfflineSync(reg);
+  } catch {
+    // ignore
+  }
+}
+
+/**
+ * Syncs manifest + contentVersion with Service Worker so newly published app updates
+ * automatically download in the background even when the app is closed or on mobile data.
+ */
+export async function syncOfflineContentUpdatesInBackground(
+  preferredReciter: ReciterId,
+): Promise<void> {
+  if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) {
+    return;
+  }
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    void registerBackgroundOfflineSync(reg);
+    if (!navigator.onLine) return;
+    const targetSw = reg.active || navigator.serviceWorker.controller;
+    if (targetSw) {
+      targetSw.postMessage({
+        type: 'SYNC_FULL_OFFLINE_MANIFEST',
+        urls: buildFullOfflineDownloadList(preferredReciter),
+        contentVersion: CONTENT_PACK_VERSION,
+      });
+    }
+  } catch {
+    // ignore
+  }
+}
+

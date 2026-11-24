@@ -59,6 +59,7 @@ import {getDateKey, getHijriParts} from './utils/hijri';
 import {
   cacheBatchUrls,
   prewarmCoreOfflineTextData,
+  syncOfflineContentUpdatesInBackground,
 } from './utils/offlineAudioCache';
 import {
   computeDailyPrayerData,
@@ -489,6 +490,7 @@ function AppContent({
     corePrewarmedRef.current = true;
     const t = window.setTimeout(() => {
       void prewarmCoreOfflineTextData(settings.preferredReciter);
+      void syncOfflineContentUpdatesInBackground(settings.preferredReciter);
     }, 450);
     return () => window.clearTimeout(t);
   }, [settings.preferredReciter]);
