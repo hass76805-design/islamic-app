@@ -2,8 +2,10 @@ import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {
   Award,
   BookOpen,
+  Check,
   CheckCircle2,
   Download,
+  History,
   Loader2,
   Mic,
   Pause,
@@ -11,8 +13,10 @@ import {
   RotateCcw,
   Sparkles,
   Square,
+  Trash2,
   UserCheck,
   Volume2,
+  X,
 } from 'lucide-react';
 import {
   getAyahAudioUrl,
@@ -20,13 +24,26 @@ import {
   RECITERS_30,
 } from '../data/reciters';
 import {CompactAyah, CompactSurah, ReciterId} from '../types';
-import {loadOfflineJson} from '../utils/offlineAudioCache';
+import {
+  loadOfflineJson,
+  resolveOfflinePlayableUrl,
+} from '../utils/offlineAudioCache';
+import {
+  deleteVoiceHistoryRecord,
+  listVoiceHistoryRecords,
+  saveVoiceHistoryRecord,
+  VoiceHistoryRecord,
+} from '../utils/offlineDb';
 import {
   AyahWordToken,
   compareArabicWords,
   normalizeQuranWord,
   tokenizeArabicAyah,
 } from '../utils/recitationMatcher';
+import {
+  playSheikhSingleWord,
+  stopSheikhWordPlayback,
+} from '../utils/sheikhWordAudio';
 
 interface VoiceTestViewProps {
   preferredReciter: ReciterId;
@@ -666,6 +683,10 @@ export const VoiceTestView: React.FC<VoiceTestViewProps> = ({
   const [outcome, setOutcome] = useState<DetectionOutcome | null>(null);
   const [lastRecognizedText, setLastRecognizedText] = useState('');
   const [manualSurahNum, setManualSurahNum] = useState(1);
+  const [savedHistory, setSavedHistory] = useState<VoiceHistoryRecord[]>([]);
+  const [activeRecordId, setActiveRecordId] = useState<string | null>(null);
+  const [activeAudioBlob, setActiveAudioBlob] = useState<Blob | null>(null);
+  const [playingWordKey, setPlayingWordKey] = useState<string | null>(null);
 
   const isRecordingRef = useRef(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -689,6 +710,11 @@ export const VoiceTestView: React.FC<VoiceTestViewProps> = ({
       .catch(() => {
         if (active) setLoadingQuran(false);
       });
+    listVoiceHistoryRecords()
+      .then((items) => {
+        if (active) setSavedHistory(items);
+      })
+      .catch(() => {});
     return () => {
       active = false;
     };
@@ -720,6 +746,7 @@ export const VoiceTestView: React.FC<VoiceTestViewProps> = ({
       }
       streamRef.current?.getTracks().forEach((t) => t.stop());
       teardownAudioNodes();
+      stopSheikhWordPlayback();
       userAudioRef.current?.pause();
       sheikhAudioRef.current?.pause();
       if (recordedAudioUrl) {
@@ -901,6 +928,7 @@ export const VoiceTestView: React.FC<VoiceTestViewProps> = ({
       }
     });
 
+    setActiveAudioBlob(recordedBlob);
     if (recordedBlob && recordedBlob.size > 0) {
       const url = URL.createObjectURL(recordedBlob);
       setRecordedAudioUrl(url);
@@ -909,6 +937,15 @@ export const VoiceTestView: React.FC<VoiceTestViewProps> = ({
     let finalText = '';
 
     if (
+      recordedBlob &&
+      recordedBlob.size > 300 &&
+      typeof navigator !== 'undefined' &&
+      !navigator.onLine
+    ) {
+      setMicNote(
+        'يرجى الاتصال بالإنترنت للتحليل التلقائي لتلاوتك — تم حفظ تسجيلك محليًا ويمكنك اختيار السورة يدويًا',
+      );
+    } else if (
       recordedBlob &&
       recordedBlob.size > 300 &&
       typeof navigator !== 'undefined' &&
@@ -936,19 +973,74 @@ export const VoiceTestView: React.FC<VoiceTestViewProps> = ({
           }
         }
       } catch {
-        // Proceed smoothly to manual Surah view if offline
+        // Proceed smoothly to local offline Surah evaluation
       }
     }
 
     setLastRecognizedText(finalText);
     setAttemptNum((c) => c + 1);
 
-    if (surahs && surahs.length > 0 && finalText) {
-      const detected = detectSurahAndEvaluate(surahs, finalText);
-      setOutcome(detected);
-    } else {
-      setOutcome(null);
+    let resolvedOutcome: DetectionOutcome | null = null;
+    if (surahs && surahs.length > 0) {
+      if (finalText) {
+        resolvedOutcome = detectSurahAndEvaluate(surahs, finalText);
+      }
+      // Guarantee written ayahs ALWAYS render (never just bare recorded voice offline)
+      if (!resolvedOutcome) {
+        const fallbackSurah =
+          surahs.find((s) => s.n === manualSurahNum) || surahs[0];
+        if (fallbackSurah) {
+          const endIdx = Math.min(fallbackSurah.ayahs.length - 1, 6);
+          const rawTokens = finalText
+            .trim()
+            .split(/\s+/)
+            .map((w) => {
+              const norm = normalizeQuranWord(w);
+              return {raw: w, norm, phon: phoneticArabicKey(w)};
+            })
+            .filter((w) => w.norm.length > 0);
+          resolvedOutcome = buildOutcomeForAyahList(
+            fallbackSurah,
+            fallbackSurah.ayahs.slice(0, endIdx + 1),
+            rawTokens,
+          );
+        }
+      }
     }
+
+    setOutcome(resolvedOutcome);
+    if (resolvedOutcome) {
+      setManualSurahNum(resolvedOutcome.surah.n);
+      const recordId = `vh_${Date.now()}`;
+      setActiveRecordId(recordId);
+      const record: VoiceHistoryRecord = {
+        id: recordId,
+        createdAt: Date.now(),
+        surahNumber: resolvedOutcome.surah.n,
+        surahName: resolvedOutcome.surah.name,
+        pageLabel: resolvedOutcome.pageLabel,
+        accuracyPercent: resolvedOutcome.accuracyPercent,
+        totalCorrectWords: resolvedOutcome.totalCorrectWords,
+        totalWrongWords: resolvedOutcome.totalWrongWords,
+        selectedReciter,
+        recognizedText: finalText,
+        audioBlob: recordedBlob,
+        evaluatedAyahs: resolvedOutcome.evaluatedAyahs.map((ea) => ({
+          ayahId: ea.ayah.id,
+          ayahNumber: ea.ayah.n,
+          ayahText: ea.ayah.t,
+          page: ea.ayah.p,
+          wordResults: ea.wordResults,
+          correctCount: ea.correctCount,
+          wrongCount: ea.wrongCount,
+          isAyahCorrect: ea.isAyahCorrect,
+        })),
+      };
+      await saveVoiceHistoryRecord(record);
+      const latestList = await listVoiceHistoryRecords();
+      setSavedHistory(latestList);
+    }
+
     setPhase('result');
   };
 
@@ -967,22 +1059,168 @@ export const VoiceTestView: React.FC<VoiceTestViewProps> = ({
         return {raw: w, norm, phon: phoneticArabicKey(w)};
       })
       .filter((w) => w.norm.length > 0);
-    setOutcome(
-      buildOutcomeForAyahList(surah, surah.ayahs.slice(0, endIdx + 1), rawTokens),
+    const nextOutcome = buildOutcomeForAyahList(
+      surah,
+      surah.ayahs.slice(0, endIdx + 1),
+      rawTokens,
     );
+    setOutcome(nextOutcome);
+
+    if (activeRecordId) {
+      const updatedRecord: VoiceHistoryRecord = {
+        id: activeRecordId,
+        createdAt: Date.now(),
+        surahNumber: nextOutcome.surah.n,
+        surahName: nextOutcome.surah.name,
+        pageLabel: nextOutcome.pageLabel,
+        accuracyPercent: nextOutcome.accuracyPercent,
+        totalCorrectWords: nextOutcome.totalCorrectWords,
+        totalWrongWords: nextOutcome.totalWrongWords,
+        selectedReciter,
+        recognizedText: lastRecognizedText,
+        audioBlob: activeAudioBlob,
+        evaluatedAyahs: nextOutcome.evaluatedAyahs.map((ea) => ({
+          ayahId: ea.ayah.id,
+          ayahNumber: ea.ayah.n,
+          ayahText: ea.ayah.t,
+          page: ea.ayah.p,
+          wordResults: ea.wordResults,
+          correctCount: ea.correctCount,
+          wrongCount: ea.wrongCount,
+          isAyahCorrect: ea.isAyahCorrect,
+        })),
+      };
+      void saveVoiceHistoryRecord(updatedRecord).then(() =>
+        listVoiceHistoryRecords().then(setSavedHistory),
+      );
+    }
+  };
+
+  const openSavedHistoryRecord = (record: VoiceHistoryRecord) => {
+    stopSheikhWordPlayback();
+    userAudioRef.current?.pause();
+    sheikhAudioRef.current?.pause();
+    setIsPlayingUserClip(false);
+    setPlayingSheikhAyahId(null);
+    setPlayingWordKey(null);
+
+    if (recordedAudioUrl) {
+      URL.revokeObjectURL(recordedAudioUrl);
+      setRecordedAudioUrl(null);
+    }
+    setActiveAudioBlob(record.audioBlob || null);
+    if (record.audioBlob && record.audioBlob.size > 0) {
+      setRecordedAudioUrl(URL.createObjectURL(record.audioBlob));
+    }
+
+    const matchedSurah: CompactSurah =
+      surahs?.find((s) => s.n === record.surahNumber) || {
+        n: record.surahNumber,
+        name: record.surahName,
+        en: '',
+        type: 'Meccan',
+        ayahs: record.evaluatedAyahs.map((ea) => ({
+          id: ea.ayahId,
+          n: ea.ayahNumber,
+          t: ea.ayahText,
+          p: ea.page,
+          j: 1,
+          h: 1,
+          s: 0,
+        })),
+      };
+
+    const evaluatedAyahs: EvaluatedAyahResult[] = record.evaluatedAyahs.map(
+      (ea) => ({
+        ayah: {
+          id: ea.ayahId,
+          n: ea.ayahNumber,
+          t: ea.ayahText,
+          p: ea.page,
+          j: 1,
+          h: 1,
+          s: 0,
+        },
+        wordResults: ea.wordResults,
+        correctCount: ea.correctCount,
+        wrongCount: ea.wrongCount,
+        isAyahCorrect: ea.isAyahCorrect,
+      }),
+    );
+
+    const correctAyahsCount = evaluatedAyahs.filter(
+      (a) => a.isAyahCorrect,
+    ).length;
+
+    setSelectedReciter(record.selectedReciter as ReciterId);
+    setManualSurahNum(record.surahNumber);
+    setLastRecognizedText(record.recognizedText || '');
+    setActiveRecordId(record.id);
+    setOutcome({
+      surah: matchedSurah,
+      evaluatedAyahs,
+      totalCorrectWords: record.totalCorrectWords,
+      totalWrongWords: record.totalWrongWords,
+      correctAyahsCount,
+      wrongAyahsCount: Math.max(0, evaluatedAyahs.length - correctAyahsCount),
+      accuracyPercent: record.accuracyPercent,
+      pageLabel: record.pageLabel,
+    });
+    setPhase('result');
+  };
+
+  const handleDeleteHistoryRecord = async (id: string) => {
+    await deleteVoiceHistoryRecord(id);
+    const items = await listVoiceHistoryRecords();
+    setSavedHistory(items);
   };
 
   const handleReset = () => {
     isRecordingRef.current = false;
     teardownAudioNodes();
+    stopSheikhWordPlayback();
     userAudioRef.current?.pause();
     sheikhAudioRef.current?.pause();
     setIsPlayingUserClip(false);
     setPlayingSheikhAyahId(null);
+    setPlayingWordKey(null);
+    setActiveRecordId(null);
+    setActiveAudioBlob(null);
     setPhase('ready');
     setOutcome(null);
     setLastRecognizedText('');
     setElapsedSec(0);
+  };
+
+  const handlePlaySingleWordInSheikhVoice = (
+    wordKey: string,
+    surahNum: number,
+    ayahNum: number,
+    ayahTokens: string[],
+    targetWordIdx: number,
+  ) => {
+    userAudioRef.current?.pause();
+    sheikhAudioRef.current?.pause();
+    setIsPlayingUserClip(false);
+    setPlayingSheikhAyahId(null);
+    setPlayingWordKey(wordKey);
+
+    void playSheikhSingleWord({
+      reciterId: selectedReciter,
+      surahNumber: surahNum,
+      ayahNumber: ayahNum,
+      ayahTokens,
+      targetWordIdx,
+      onEnd: () => setPlayingWordKey(null),
+      onError: () => {
+        setPlayingWordKey(null);
+        if (typeof navigator !== 'undefined' && !navigator.onLine) {
+          setMicNote(
+            'يرجى الاتصال بالإنترنت لسماع نطق الشيخ (أو حمّل قسم اختبر صوتك للعمل بدون نت)',
+          );
+        }
+      },
+    });
   };
 
   const togglePlaySheikhAyah = (
@@ -991,6 +1229,8 @@ export const VoiceTestView: React.FC<VoiceTestViewProps> = ({
     ayahId: number,
     forcePlay = false,
   ) => {
+    stopSheikhWordPlayback();
+    setPlayingWordKey(null);
     if (!sheikhAudioRef.current) {
       sheikhAudioRef.current = new Audio();
     }
@@ -1005,11 +1245,21 @@ export const VoiceTestView: React.FC<VoiceTestViewProps> = ({
 
     audio.pause();
     audio.currentTime = 0;
-    audio.src = getAyahAudioUrl(selectedReciter, surahNum, ayahNum);
+    const rawUrl = getAyahAudioUrl(selectedReciter, surahNum, ayahNum);
     setPlayingSheikhAyahId(ayahId);
-    audio.onended = () => setPlayingSheikhAyahId(null);
-    audio.onerror = () => setPlayingSheikhAyahId(null);
-    audio.play().catch(() => setPlayingSheikhAyahId(null));
+    void resolveOfflinePlayableUrl(rawUrl).then((playableUrl) => {
+      audio.src = playableUrl;
+      audio.onended = () => setPlayingSheikhAyahId(null);
+      audio.onerror = () => {
+        setPlayingSheikhAyahId(null);
+        if (typeof navigator !== 'undefined' && !navigator.onLine) {
+          setMicNote(
+            'يرجى الاتصال بالإنترنت لسماع صوت الشيخ (أو حمّل قسم اختبر صوتك للعمل بدون نت)',
+          );
+        }
+      };
+      audio.play().catch(() => setPlayingSheikhAyahId(null));
+    });
   };
 
   const toggleUserRecording = () => {
@@ -1023,8 +1273,10 @@ export const VoiceTestView: React.FC<VoiceTestViewProps> = ({
       setIsPlayingUserClip(false);
       return;
     }
+    stopSheikhWordPlayback();
     sheikhAudioRef.current?.pause();
     setPlayingSheikhAyahId(null);
+    setPlayingWordKey(null);
     audio.src = recordedAudioUrl;
     setIsPlayingUserClip(true);
     audio.onended = () => setIsPlayingUserClip(false);
@@ -1099,25 +1351,103 @@ export const VoiceTestView: React.FC<VoiceTestViewProps> = ({
           </p>
         </div>
       ) : phase === 'ready' ? (
-        <section className="flex flex-col items-center rounded-3xl border-2 border-[#C9A227] bg-[#040301] p-6 text-center text-white">
-          <button
-            type="button"
-            onClick={() => void startRecording()}
-            className="flex h-44 w-44 flex-col items-center justify-center gap-2 rounded-full border-4 border-[#FCE38A] bg-gradient-to-b from-[#FCE38A] via-[#C9A227] to-[#9A7415] text-black shadow-[0_0_40px_rgba(201,162,39,0.45)] active:scale-95"
-          >
-            <Mic className="h-12 w-12 stroke-[2.4]" />
-            <span className="text-xl font-extrabold leading-tight">
-              ابدأ التسجيل
-            </span>
-            <span className="text-[11px] font-bold text-black/80">
-              اقرأ بأي نبرة صوت
-            </span>
-          </button>
+        <div className="space-y-4">
+          <section className="flex flex-col items-center rounded-3xl border-2 border-[#C9A227] bg-[#040301] p-6 text-center text-white">
+            {surahs && (
+              <div className="mb-4 w-full text-right">
+                <label
+                  htmlFor="voice-pre-surah"
+                  className="mb-1 block text-[11px] font-bold text-[#FCE38A]"
+                >
+                  السورة التي ستقرأها (تعمل تلقائيًا أو اخترها للعرض بدون نت):
+                </label>
+                <select
+                  id="voice-pre-surah"
+                  value={manualSurahNum}
+                  onChange={(e) => setManualSurahNum(Number(e.target.value))}
+                  className="min-h-[38px] w-full rounded-xl border border-[#C9A227]/60 bg-black px-2.5 text-xs font-bold text-white outline-none"
+                >
+                  {surahs.map((s) => (
+                    <option key={s.n} value={s.n}>
+                      {s.n}. {s.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
 
-          <p className="mt-4 text-xs leading-relaxed text-zinc-300">
-            حساسية الميكروفون مضبوطة على أقصى درجة لالتقاط الصوت الواطي والهامس — اقرأ ما تحفظ ثم اضغط «إنهاء».
-          </p>
-        </section>
+            <button
+              type="button"
+              onClick={() => void startRecording()}
+              className="flex h-44 w-44 flex-col items-center justify-center gap-2 rounded-full border-4 border-[#FCE38A] bg-gradient-to-b from-[#FCE38A] via-[#C9A227] to-[#9A7415] text-black shadow-[0_0_40px_rgba(201,162,39,0.45)] active:scale-95"
+            >
+              <Mic className="h-12 w-12 stroke-[2.4]" />
+              <span className="text-xl font-extrabold leading-tight">
+                ابدأ التسجيل
+              </span>
+              <span className="text-[11px] font-bold text-black/80">
+                اقرأ بأي نبرة صوت
+              </span>
+            </button>
+
+            <p className="mt-4 text-xs leading-relaxed text-zinc-300">
+              حساسية الميكروفون مضبوطة على أقصى درجة لالتقاط الصوت الواطي والهامس — بعد «إنهاء» تظهر الآيات مكتوبة مع علامة صح وخاطئ وسماع كل كلمة بصوت الشيخ.
+            </p>
+          </section>
+
+          {savedHistory.length > 0 && (
+            <section className="space-y-2.5 rounded-3xl border-2 border-[#C9A227]/75 bg-[#050505] p-4 text-white">
+              <div className="flex items-center justify-between border-b border-[#C9A227]/25 pb-2">
+                <div className="flex items-center gap-2 text-xs font-extrabold text-[#FCE38A]">
+                  <History className="h-4 w-4 text-[#C9A227]" />
+                  <span>سجل تلاواتي المحفوظة محليًا (يعمل بدون نت)</span>
+                </div>
+                <span className="font-mono-num text-[11px] font-bold text-[#C9A227]">
+                  {toArabicDigits(savedHistory.length)}
+                </span>
+              </div>
+
+              <div className="space-y-2">
+                {savedHistory.slice(0, 10).map((rec) => (
+                  <div
+                    key={rec.id}
+                    className="flex items-center justify-between gap-2 rounded-2xl border border-[#C9A227]/40 bg-[#0A0904] px-3 py-2.5"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => openSavedHistoryRecord(rec)}
+                      className="min-w-0 flex-1 text-right"
+                    >
+                      <p className="font-quran truncate text-sm font-bold text-[#FCE38A]">
+                        {rec.surahName} — الدقة {toArabicDigits(rec.accuracyPercent)}٪
+                      </p>
+                      <p className="mt-0.5 text-[10px] text-zinc-400">
+                        {new Date(rec.createdAt).toLocaleDateString('ar-EG')} · صح{' '}
+                        {toArabicDigits(rec.totalCorrectWords)} · غلط{' '}
+                        {toArabicDigits(rec.totalWrongWords)}
+                      </p>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => openSavedHistoryRecord(rec)}
+                      className="rounded-xl bg-[#C9A227] px-2.5 py-1.5 text-[11px] font-extrabold text-black"
+                    >
+                      عرض
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleDeleteHistoryRecord(rec.id)}
+                      aria-label="حذف التسجيل"
+                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-rose-500/40 text-rose-400"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+        </div>
       ) : phase === 'recording' ? (
         <section className="flex flex-col items-center space-y-4 rounded-3xl border-2 border-[#C9A227] bg-[#040301] p-5 text-center text-white">
           <div className="flex items-center gap-2 rounded-full border border-emerald-500/60 bg-emerald-950/40 px-4 py-1.5 text-xs font-bold text-emerald-300">
@@ -1220,6 +1550,12 @@ export const VoiceTestView: React.FC<VoiceTestViewProps> = ({
               </p>
             )}
           </section>
+
+          {micNote && (
+            <div className="rounded-2xl border border-[#C9A227]/70 bg-[#141004] px-3.5 py-2.5 text-center text-xs font-bold text-[#FCE38A]">
+              {micNote}
+            </div>
+          )}
 
           {outcome ? (
             <>
@@ -1330,34 +1666,71 @@ export const VoiceTestView: React.FC<VoiceTestViewProps> = ({
                           </button>
                         </div>
 
-                        {/* Ayah Text in Full Uthmani Tashkeel with Red Wrong Words */}
+                        {/* Ayah Text in Full Uthmani Tashkeel with Green Checkmark (✓) on Correct Words & Red Cross (✗) + Single-Word Sheikh Audio Button on Wrong Words */}
                         <div
                           dir="rtl"
-                          className="font-quran bg-[#020202] px-4 py-3.5 text-right text-xl leading-[2.35]"
+                          className="font-quran flex flex-wrap items-center gap-x-2 gap-y-2 bg-[#020202] px-4 py-3.5 text-right text-xl leading-[2.2]"
                         >
-                          {item.wordResults.map((w, wIdx) =>
-                            w.isMatch ? (
+                          {item.wordResults.map((w, wIdx) => {
+                            const wKey = `${item.ayah.id}-${wIdx}`;
+                            const isPlayingWord = playingWordKey === wKey;
+                            const ayahRawTokens = item.wordResults.map(
+                              (wr) => wr.raw,
+                            );
+                            if (w.isMatch) {
+                              return (
+                                <span
+                                  key={wKey}
+                                  className="inline-flex items-center gap-1 rounded-lg bg-emerald-950/30 px-1.5 py-0.5 text-emerald-200"
+                                >
+                                  <span>{w.raw}</span>
+                                  <Check
+                                    aria-label="كلمة صحيحة"
+                                    className="h-3.5 w-3.5 shrink-0 text-emerald-400 stroke-[3]"
+                                  />
+                                </span>
+                              );
+                            }
+                            return (
                               <span
-                                key={`${item.ayah.id}-${wIdx}`}
-                                className="text-emerald-100"
+                                key={wKey}
+                                className="inline-flex items-center gap-1 rounded-lg border border-rose-500/70 bg-rose-600/25 px-1.5 py-0.5 font-bold text-rose-200"
                               >
-                                {w.raw}{' '}
+                                <span>{w.raw}</span>
+                                <X
+                                  aria-label="كلمة خطأ"
+                                  className="h-3.5 w-3.5 shrink-0 text-rose-400 stroke-[3]"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    handlePlaySingleWordInSheikhVoice(
+                                      wKey,
+                                      outcome.surah.n,
+                                      item.ayah.n,
+                                      ayahRawTokens,
+                                      wIdx,
+                                    )
+                                  }
+                                  title="استماع لنطق الكلمة الصح بصوت الشيخ"
+                                  aria-label={`استماع لكلمة ${w.raw} بصوت الشيخ`}
+                                  className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border ${
+                                    isPlayingWord
+                                      ? 'border-black bg-[#FCE38A] text-black'
+                                      : 'border-[#FCE38A] bg-black text-[#FCE38A]'
+                                  }`}
+                                >
+                                  <Volume2 className="h-3.5 w-3.5" />
+                                </button>
                               </span>
-                            ) : (
-                              <span
-                                key={`${item.ayah.id}-${wIdx}`}
-                                className="mx-0.5 inline-block rounded-md border-b-2 border-rose-500 bg-rose-600/25 px-1 font-bold text-rose-300"
-                              >
-                                {w.raw}{' '}
-                              </span>
-                            ),
-                          )}
+                            );
+                          })}
                           <span className="mr-1 inline-flex h-6 w-6 items-center justify-center rounded-full border border-[#C9A227] bg-[#141004] text-[11px] font-extrabold text-[#FCE38A]">
                             {toArabicDigits(item.ayah.n)}
                           </span>
                         </div>
 
-                        {/* Directly Underneath This Ayah: Exact Mistakes ("أنا قلت كذا والصح كذا") or All Correct */}
+                        {/* Directly Underneath This Ayah: Exact Mistakes + Single-Word Sheikh Sound Button */}
                         <div className="border-t border-[#C9A227]/25 bg-[#080603] px-4 py-3">
                           {ayahMistakes.length === 0 ? (
                             <div className="flex items-center gap-2 text-xs font-bold text-emerald-300">
@@ -1369,53 +1742,77 @@ export const VoiceTestView: React.FC<VoiceTestViewProps> = ({
                           ) : (
                             <div className="space-y-1.5">
                               <p className="text-[11px] font-extrabold text-rose-300">
-                                أخطائي في هذه الآية:
+                                أخطائي في هذه الآية (اضغط أيقونة الصوت لسماع الكلمة الصح بصوت الشيخ):
                               </p>
-                              {ayahMistakes.map((m, mIdx) => (
-                                <div
-                                  key={`${item.ayah.id}-err-${mIdx}`}
-                                  className="rounded-xl border border-rose-500/40 bg-[#140507] px-3 py-2 text-xs leading-relaxed"
-                                >
-                                  <div className="flex flex-wrap items-center gap-1.5 font-bold">
-                                    {m.spokenWord ? (
-                                      <>
-                                        <span className="text-zinc-300">
-                                          أنا قلت:
-                                        </span>
-                                        <span className="rounded bg-rose-600/30 px-1.5 py-0.5 font-extrabold text-rose-300 underline decoration-rose-400">
-                                          «{m.spokenWord}»
-                                        </span>
-                                        <span className="text-[#C9A227]">
-                                          ← الصح:
-                                        </span>
-                                        <span className="font-quran text-sm font-extrabold text-[#FCE38A]">
-                                          «{m.raw}»
-                                        </span>
-                                      </>
-                                    ) : (
-                                      <>
-                                        <span className="text-rose-300">
-                                          كلمة لم تُقرأ بوضوح:
-                                        </span>
-                                        <span className="font-quran rounded bg-rose-600/30 px-1.5 py-0.5 text-sm font-extrabold text-rose-200">
-                                          «{m.raw}»
-                                        </span>
-                                        <span className="text-[#C9A227]">
-                                          ← الصح:
-                                        </span>
-                                        <span className="font-quran text-sm font-extrabold text-[#FCE38A]">
-                                          «{m.raw}»
-                                        </span>
-                                      </>
-                                    )}
+                              {item.wordResults.map((m, origWordIdx) => {
+                                if (m.isMatch) return null;
+                                const errKey = `${item.ayah.id}-err-${origWordIdx}`;
+                                const isPlayingWord =
+                                  playingWordKey === errKey;
+                                const ayahRawTokens = item.wordResults.map(
+                                  (wr) => wr.raw,
+                                );
+                                return (
+                                  <div
+                                    key={errKey}
+                                    className="flex items-center justify-between gap-2 rounded-xl border border-rose-500/40 bg-[#140507] px-3 py-2 text-xs leading-relaxed"
+                                  >
+                                    <div className="min-w-0 flex-1">
+                                      <div className="flex flex-wrap items-center gap-1.5 font-bold">
+                                        {m.spokenWord ? (
+                                          <>
+                                            <span className="text-zinc-300">
+                                              أنا قلت:
+                                            </span>
+                                            <span className="rounded bg-rose-600/30 px-1.5 py-0.5 font-extrabold text-rose-300 underline decoration-rose-400">
+                                              «{m.spokenWord}»
+                                            </span>
+                                            <span className="text-[#C9A227]">
+                                              ← الصح:
+                                            </span>
+                                            <span className="font-quran text-sm font-extrabold text-[#FCE38A]">
+                                              «{m.raw}»
+                                            </span>
+                                          </>
+                                        ) : (
+                                          <>
+                                            <X className="h-3.5 w-3.5 text-rose-400" />
+                                            <span className="font-quran text-sm font-extrabold text-[#FCE38A]">
+                                              «{m.raw}»
+                                            </span>
+                                          </>
+                                        )}
+                                      </div>
+                                      {m.hint && (
+                                        <p className="mt-0.5 text-[10px] text-zinc-400">
+                                          {m.hint}
+                                        </p>
+                                      )}
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        handlePlaySingleWordInSheikhVoice(
+                                          errKey,
+                                          outcome.surah.n,
+                                          item.ayah.n,
+                                          ayahRawTokens,
+                                          origWordIdx,
+                                        )
+                                      }
+                                      title="نطق الكلمة الصح بصوت الشيخ"
+                                      aria-label={`نطق كلمة ${m.raw} بصوت الشيخ`}
+                                      className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border ${
+                                        isPlayingWord
+                                          ? 'border-black bg-[#FCE38A] text-black'
+                                          : 'border-[#C9A227] bg-black text-[#FCE38A]'
+                                      }`}
+                                    >
+                                      <Volume2 className="h-4 w-4" />
+                                    </button>
                                   </div>
-                                  {m.hint && (
-                                    <p className="mt-0.5 text-[10px] text-zinc-400">
-                                      {m.hint}
-                                    </p>
-                                  )}
-                                </div>
-                              ))}
+                                );
+                              })}
                             </div>
                           )}
                         </div>
@@ -1423,6 +1820,31 @@ export const VoiceTestView: React.FC<VoiceTestViewProps> = ({
                     );
                   })}
                 </div>
+
+                {/* Change Surah switcher right inside results so offline user can switch surah anytime */}
+                {surahs && (
+                  <div className="rounded-2xl border border-[#C9A227]/45 bg-[#0A0904] p-3">
+                    <p className="mb-1.5 text-[11px] font-bold text-[#FCE38A]">
+                      تغيير السورة للمقارنة (محفوظ تلقائيًا في IndexedDB):
+                    </p>
+                    <div className="flex gap-2">
+                      <select
+                        aria-label="تغيير السورة"
+                        value={manualSurahNum}
+                        onChange={(e) =>
+                          evaluateManualSurahChoice(Number(e.target.value))
+                        }
+                        className="min-h-[38px] flex-1 rounded-xl border border-[#C9A227]/60 bg-black px-2.5 text-xs font-bold text-white outline-none"
+                      >
+                        {surahs.map((s) => (
+                          <option key={s.n} value={s.n}>
+                            {s.n}. {s.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                )}
               </section>
 
               {/* 4. AT THE END: DIFFERENT ENCOURAGING MESSAGE EVERY TIME */}

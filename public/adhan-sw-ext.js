@@ -8,33 +8,89 @@ const OFFLINE_DL_NOTIF_TAG = 'alzahabi-full-offline-download';
 const OFFLINE_AUTO_UPDATE_NOTIF_TAG = 'alzahabi-offline-auto-update';
 const TOTAL_PACKAGE_MB = 850;
 
+const OFFLINE_IDB_NAME = 'alzahabi-offline-json-db';
+const OFFLINE_IDB_VERSION = 2;
+
 let offlineDownloadRunning = false;
 let offlineDownloadPauseRequested = false;
 let offlineDownloadCancelRequested = false;
 let offlineNetworkInterrupted = false;
 let lastAutoUpdateCheckTs = 0;
 
-function computeMbStats(done, total, completedAll) {
+function openOfflineIdbInSw() {
+  if (typeof indexedDB === 'undefined') return Promise.resolve(null);
+  return new Promise((resolve) => {
+    try {
+      const req = indexedDB.open(OFFLINE_IDB_NAME, OFFLINE_IDB_VERSION);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains('json_cache')) {
+          db.createObjectStore('json_cache');
+        }
+        if (!db.objectStoreNames.contains('audio_blobs')) {
+          db.createObjectStore('audio_blobs');
+        }
+        if (!db.objectStoreNames.contains('voice_history')) {
+          db.createObjectStore('voice_history', {keyPath: 'id'});
+        }
+        if (!db.objectStoreNames.contains('offline_meta')) {
+          db.createObjectStore('offline_meta');
+        }
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => resolve(null);
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
+async function saveSwAudioBlobToIdb(url, blob) {
+  if (!url || !blob || blob.size === 0) return;
+  const db = await openOfflineIdbInSw();
+  if (!db) return;
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction('audio_blobs', 'readwrite');
+      tx.objectStore('audio_blobs').put(blob, url);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+    } catch {
+      resolve();
+    }
+  });
+}
+
+function computeMbStats(
+  done,
+  total,
+  completedAll,
+  targetTotalMb = TOTAL_PACKAGE_MB,
+) {
+  const safeTotalMb =
+    typeof targetTotalMb === 'number' && targetTotalMb > 0
+      ? targetTotalMb
+      : TOTAL_PACKAGE_MB;
   if (completedAll && total > 0 && done >= total) {
     return {
       percent: 100,
-      downloadedMb: TOTAL_PACKAGE_MB,
+      downloadedMb: safeTotalMb,
       remainingMb: 0,
-      totalMb: TOTAL_PACKAGE_MB,
+      totalMb: safeTotalMb,
     };
   }
   const ratio = total > 0 ? Math.min(0.999, Math.max(0, done / total)) : 0;
   const downloadedMb = Math.min(
-    TOTAL_PACKAGE_MB - 1,
-    Math.max(0, Math.round(ratio * TOTAL_PACKAGE_MB)),
+    Math.max(0, safeTotalMb - 1),
+    Math.max(0, Math.round(ratio * safeTotalMb)),
   );
-  const remainingMb = Math.max(1, TOTAL_PACKAGE_MB - downloadedMb);
+  const remainingMb = Math.max(1, safeTotalMb - downloadedMb);
   const percent = Math.min(99, Math.max(0, Math.round(ratio * 100)));
   return {
     percent,
     downloadedMb,
     remainingMb,
-    totalMb: TOTAL_PACKAGE_MB,
+    totalMb: safeTotalMb,
   };
 }
 
@@ -172,6 +228,13 @@ async function cacheOneOfflineUrl(url, forceRefresh = false) {
         cache: forceRefresh ? 'no-store' : 'default',
       });
       if (res.ok) {
+        if (bucket === OFFLINE_AUDIO_BUCKET) {
+          res
+            .clone()
+            .blob()
+            .then((b) => saveSwAudioBlobToIdb(url, b))
+            .catch(() => {});
+        }
         await cache.put(url, res);
         return {ok: true, fromCache: false};
       }
@@ -184,6 +247,13 @@ async function cacheOneOfflineUrl(url, forceRefresh = false) {
         cache: forceRefresh ? 'no-store' : 'default',
       });
       if (corsRes.ok) {
+        if (bucket === OFFLINE_AUDIO_BUCKET) {
+          corsRes
+            .clone()
+            .blob()
+            .then((b) => saveSwAudioBlobToIdb(url, b))
+            .catch(() => {});
+        }
         await cache.put(url, corsRes);
         return {ok: true, fromCache: false};
       }
@@ -220,6 +290,8 @@ async function runFullOfflineDownload(
   urls,
   contentVersion = '',
   mode = 'full',
+  targetTotalMb = TOTAL_PACKAGE_MB,
+  sections = null,
 ) {
   if (offlineDownloadRunning) return;
   const cleanUrls = Array.isArray(urls)
@@ -227,6 +299,10 @@ async function runFullOfflineDownload(
     : [];
   const total = cleanUrls.length;
   if (total === 0) return;
+  const safeTotalMb =
+    typeof targetTotalMb === 'number' && targetTotalMb > 0
+      ? targetTotalMb
+      : TOTAL_PACKAGE_MB;
 
   offlineDownloadRunning = true;
   offlineDownloadPauseRequested = false;
@@ -236,6 +312,11 @@ async function runFullOfflineDownload(
   const prevState = await readOfflineDlState();
   const effectiveVersion =
     contentVersion || (prevState && prevState.contentVersion) || '';
+  const effectiveSections = Array.isArray(sections)
+    ? sections
+    : prevState && Array.isArray(prevState.sections)
+      ? prevState.sections
+      : [];
 
   // Scan what is already cached so resume ALWAYS continues from exact stopped position
   let alreadyCachedCount = 0;
@@ -261,10 +342,11 @@ async function runFullOfflineDownload(
 
   // If 100% of items are already verified cached, complete cleanly right away
   if (pendingUrls.length === 0) {
-    const doneStats = computeMbStats(total, total, true);
+    const doneStats = computeMbStats(total, total, true, safeTotalMb);
     await saveOfflineDlState({
       status: 'completed',
       mode,
+      sections: effectiveSections,
       urls: cleanUrls,
       done: total,
       total,
@@ -280,14 +362,15 @@ async function runFullOfflineDownload(
           : 'OFFLINE_DOWNLOAD_COMPLETE',
       status: 'completed',
       mode,
+      sections: effectiveSections,
       done: total,
       total,
       ...doneStats,
       contentVersion: effectiveVersion,
     });
     await showOfflineDownloadNotification(
-      'تم تحميل محتوى التطبيق بالكامل ✓ (100%)',
-      `تم تحميل ${TOTAL_PACKAGE_MB} من ${TOTAL_PACKAGE_MB} ميجا — التطبيق يعمل الآن بدون إنترنت بالكامل`,
+      'تم تحميل المحتوى بالكامل ✓ (100%)',
+      `تم تحميل ${safeTotalMb} من ${safeTotalMb} ميجا — يعمل الآن بدون إنترنت بالكامل`,
       true,
       'completed',
     );
@@ -295,10 +378,11 @@ async function runFullOfflineDownload(
     return;
   }
 
-  const initStats = computeMbStats(completed, total, false);
+  const initStats = computeMbStats(completed, total, false, safeTotalMb);
   await saveOfflineDlState({
     status: 'downloading',
     mode,
+    sections: effectiveSections,
     urls: cleanUrls,
     done: completed,
     total,
@@ -311,14 +395,15 @@ async function runFullOfflineDownload(
   const initTitle =
     mode === 'updating'
       ? `جاري تحديث محتوى التطبيق (${initStats.percent}%)`
-      : `جاري تحميل محتوى التطبيق (${initStats.percent}%)`;
-  const initBody = `تم تحميل ${initStats.downloadedMb} ميجا من ${TOTAL_PACKAGE_MB} ميجا — باقي ${initStats.remainingMb} ميجا`;
+      : `جاري تحميل المحتوى (${initStats.percent}%)`;
+  const initBody = `تم تحميل ${initStats.downloadedMb} ميجا من ${safeTotalMb} ميجا — باقي ${initStats.remainingMb} ميجا`;
 
   await showOfflineDownloadNotification(initTitle, initBody, false, mode);
   await broadcastOfflineDownload({
     type: 'OFFLINE_DOWNLOAD_PROGRESS',
     status: 'downloading',
     mode,
+    sections: effectiveSections,
     done: completed,
     total,
     ...initStats,
@@ -379,7 +464,7 @@ async function runFullOfflineDownload(
         break;
       }
 
-      const stats = computeMbStats(completed, total, false);
+      const stats = computeMbStats(completed, total, false, safeTotalMb);
       const shouldNotify =
         stats.percent !== lastNotifiedPercent &&
         (stats.percent % 2 === 0 || completed === 1);
@@ -389,6 +474,7 @@ async function runFullOfflineDownload(
         await saveOfflineDlState({
           status: 'downloading',
           mode,
+          sections: effectiveSections,
           urls: cleanUrls,
           done: completed,
           total,
@@ -401,6 +487,7 @@ async function runFullOfflineDownload(
           type: 'OFFLINE_DOWNLOAD_PROGRESS',
           status: 'downloading',
           mode,
+          sections: effectiveSections,
           done: completed,
           total,
           ...stats,
@@ -408,8 +495,8 @@ async function runFullOfflineDownload(
         await showOfflineDownloadNotification(
           mode === 'updating'
             ? `جاري تحديث محتوى التطبيق (${stats.percent}%)`
-            : `جاري تحميل محتوى التطبيق (${stats.percent}%)`,
-          `تم تحميل ${stats.downloadedMb} ميجا من ${TOTAL_PACKAGE_MB} ميجا — باقي ${stats.remainingMb} ميجا`,
+            : `جاري تحميل المحتوى (${stats.percent}%)`,
+          `تم تحميل ${stats.downloadedMb} ميجا من ${safeTotalMb} ميجا — باقي ${stats.remainingMb} ميجا`,
           false,
           mode,
         );
@@ -428,12 +515,13 @@ async function runFullOfflineDownload(
     if (offlineDownloadCancelRequested) {
       await saveOfflineDlState({
         status: 'idle',
+        sections: effectiveSections,
         done: 0,
         total: 0,
         percent: 0,
         downloadedMb: 0,
-        remainingMb: TOTAL_PACKAGE_MB,
-        totalMb: TOTAL_PACKAGE_MB,
+        remainingMb: safeTotalMb,
+        totalMb: safeTotalMb,
         contentVersion: effectiveVersion,
         autoUpdateEnabled: false,
         updatedAt: Date.now(),
@@ -442,22 +530,24 @@ async function runFullOfflineDownload(
       await broadcastOfflineDownload({
         type: 'OFFLINE_DOWNLOAD_CANCELLED',
         status: 'idle',
+        sections: effectiveSections,
         done: 0,
         total: 0,
         percent: 0,
         downloadedMb: 0,
-        remainingMb: TOTAL_PACKAGE_MB,
-        totalMb: TOTAL_PACKAGE_MB,
+        remainingMb: safeTotalMb,
+        totalMb: safeTotalMb,
       });
       return;
     }
 
     if (offlineDownloadPauseRequested) {
-      const pauseStats = computeMbStats(completed, total, false);
+      const pauseStats = computeMbStats(completed, total, false, safeTotalMb);
       await saveOfflineDlState({
         status: 'paused',
         pauseReason: 'user',
         mode,
+        sections: effectiveSections,
         urls: cleanUrls,
         done: completed,
         total,
@@ -471,26 +561,27 @@ async function runFullOfflineDownload(
         status: 'paused',
         pauseReason: 'user',
         mode,
+        sections: effectiveSections,
         done: completed,
         total,
         ...pauseStats,
       });
       await showOfflineDownloadNotification(
         `التحميل متوقف مؤقتًا — باقي ${pauseStats.remainingMb} ميجا`,
-        `تم تحميل ${pauseStats.downloadedMb} ميجا من ${TOTAL_PACKAGE_MB} ميجا (${pauseStats.percent}%) — اضغط استئناف للمتابعة`,
+        `تم تحميل ${pauseStats.downloadedMb} ميجا من ${safeTotalMb} ميجا (${pauseStats.percent}%) — اضغط استئناف للمتابعة`,
         false,
         'paused',
       );
       return;
     }
 
-    // NEVER mark completed unless ALL files truly cached without offline interruption!
     if (offlineNetworkInterrupted || completed < total) {
-      const offStats = computeMbStats(completed, total, false);
+      const offStats = computeMbStats(completed, total, false, safeTotalMb);
       await saveOfflineDlState({
         status: 'paused',
         pauseReason: 'offline',
         mode,
+        sections: effectiveSections,
         urls: cleanUrls,
         done: completed,
         total,
@@ -504,24 +595,25 @@ async function runFullOfflineDownload(
         status: 'paused',
         pauseReason: 'offline',
         mode,
+        sections: effectiveSections,
         done: completed,
         total,
         ...offStats,
       });
       await showOfflineDownloadNotification(
         `التحميل متوقف — باقي ${offStats.remainingMb} ميجا`,
-        `تم تحميل ${offStats.downloadedMb} من ${TOTAL_PACKAGE_MB} ميجا — سيكمل التحميل تلقائيًا فور عودة الإنترنت`,
+        `تم تحميل ${offStats.downloadedMb} من ${safeTotalMb} ميجا — سيكمل التحميل تلقائيًا فور عودة الإنترنت`,
         false,
         'offline_paused',
       );
       return;
     }
 
-    // 100% genuine completion!
-    const doneStats = computeMbStats(total, total, true);
+    const doneStats = computeMbStats(total, total, true, safeTotalMb);
     await saveOfflineDlState({
       status: 'completed',
       mode: 'full',
+      sections: effectiveSections,
       urls: cleanUrls,
       done: total,
       total,
@@ -537,6 +629,7 @@ async function runFullOfflineDownload(
           : 'OFFLINE_DOWNLOAD_COMPLETE',
       status: 'completed',
       mode: 'full',
+      sections: effectiveSections,
       done: total,
       total,
       ...doneStats,
@@ -545,8 +638,8 @@ async function runFullOfflineDownload(
     await showOfflineDownloadNotification(
       mode === 'updating'
         ? 'تم تحديث محتوى التطبيق تلقائيًا ✓ (100%)'
-        : 'تم تحميل محتوى التطبيق بالكامل ✓ (100%)',
-      `تم تحميل ${TOTAL_PACKAGE_MB} ميجا من ${TOTAL_PACKAGE_MB} ميجا — التطبيق يعمل الآن بدون إنترنت بالكامل`,
+        : 'تم تحميل المحتوى بالكامل ✓ (100%)',
+      `تم تحميل ${safeTotalMb} ميجا من ${safeTotalMb} ميجا — يعمل الآن بدون إنترنت بالكامل`,
       true,
       'completed',
     );
@@ -567,7 +660,11 @@ async function pauseActiveOfflineDownload() {
   if (state && (state.status === 'downloading' || state.status === 'paused')) {
     const done = typeof state.done === 'number' ? state.done : 0;
     const total = typeof state.total === 'number' ? state.total : 0;
-    const stats = computeMbStats(done, total, false);
+    const targetMb =
+      typeof state.totalMb === 'number' && state.totalMb > 0
+        ? state.totalMb
+        : TOTAL_PACKAGE_MB;
+    const stats = computeMbStats(done, total, false, targetMb);
     await saveOfflineDlState({
       ...state,
       status: 'paused',
@@ -580,13 +677,14 @@ async function pauseActiveOfflineDownload() {
       status: 'paused',
       pauseReason: 'user',
       mode: state.mode || 'full',
+      sections: state.sections || [],
       done,
       total,
       ...stats,
     });
     await showOfflineDownloadNotification(
       `التحميل متوقف مؤقتًا — باقي ${stats.remainingMb} ميجا`,
-      `تم تحميل ${stats.downloadedMb} ميجا من ${TOTAL_PACKAGE_MB} ميجا (${stats.percent}%) — اضغط استئناف للمتابعة`,
+      `تم تحميل ${stats.downloadedMb} ميجا من ${targetMb} ميجا (${stats.percent}%) — اضغط استئناف للمتابعة`,
       false,
       'paused',
     );
@@ -599,14 +697,19 @@ async function cancelActiveOfflineDownload() {
     return;
   }
   const prevState = await readOfflineDlState();
+  const targetMb =
+    prevState && typeof prevState.totalMb === 'number' && prevState.totalMb > 0
+      ? prevState.totalMb
+      : TOTAL_PACKAGE_MB;
   await saveOfflineDlState({
     status: 'idle',
     done: 0,
     total: 0,
     percent: 0,
     downloadedMb: 0,
-    remainingMb: TOTAL_PACKAGE_MB,
-    totalMb: TOTAL_PACKAGE_MB,
+    remainingMb: targetMb,
+    totalMb: targetMb,
+    sections: (prevState && prevState.sections) || [],
     contentVersion: (prevState && prevState.contentVersion) || '',
     autoUpdateEnabled: false,
     updatedAt: Date.now(),
@@ -619,8 +722,8 @@ async function cancelActiveOfflineDownload() {
     total: 0,
     percent: 0,
     downloadedMb: 0,
-    remainingMb: TOTAL_PACKAGE_MB,
-    totalMb: TOTAL_PACKAGE_MB,
+    remainingMb: targetMb,
+    totalMb: targetMb,
   });
 }
 
@@ -631,7 +734,6 @@ async function resumeSavedOfflineDownload(autoFromNetwork = false) {
   const state = await readOfflineDlState();
   if (!state || !Array.isArray(state.urls) || state.urls.length === 0) return;
 
-  // If manually paused by user, only resume when user explicitly clicks Resume
   if (
     autoFromNetwork &&
     state.status === 'paused' &&
@@ -645,6 +747,8 @@ async function resumeSavedOfflineDownload(autoFromNetwork = false) {
       state.urls,
       state.contentVersion || '',
       state.mode || 'full',
+      state.totalMb || TOTAL_PACKAGE_MB,
+      state.sections || null,
     );
   }
 }
@@ -658,7 +762,11 @@ async function handleNetworkOfflineInSw() {
   if (state && state.status === 'downloading') {
     const done = typeof state.done === 'number' ? state.done : 0;
     const total = typeof state.total === 'number' ? state.total : 0;
-    const stats = computeMbStats(done, total, false);
+    const targetMb =
+      typeof state.totalMb === 'number' && state.totalMb > 0
+        ? state.totalMb
+        : TOTAL_PACKAGE_MB;
+    const stats = computeMbStats(done, total, false, targetMb);
     await saveOfflineDlState({
       ...state,
       status: 'paused',
@@ -671,13 +779,14 @@ async function handleNetworkOfflineInSw() {
       status: 'paused',
       pauseReason: 'offline',
       mode: state.mode || 'full',
+      sections: state.sections || [],
       done,
       total,
       ...stats,
     });
     await showOfflineDownloadNotification(
       `التحميل متوقف — باقي ${stats.remainingMb} ميجا`,
-      `تم تحميل ${stats.downloadedMb} من ${TOTAL_PACKAGE_MB} ميجا — سيكمل التحميل تلقائيًا فور عودة الإنترنت`,
+      `تم تحميل ${stats.downloadedMb} من ${targetMb} ميجا — سيكمل التحميل تلقائيًا فور عودة الإنترنت`,
       false,
       'offline_paused',
     );
@@ -1090,15 +1199,122 @@ async function checkAndFireDueAlerts() {
 
   if (firedAny) {
     await saveFiredTags(firedTags);
+    await syncNativeTimestampTriggers(remaining);
   }
   await saveScheduledAlerts(remaining);
 }
 
+async function syncNativeTimestampTriggers(alerts) {
+  if (typeof self.TimestampTrigger !== 'function') return;
+  try {
+    const existing = await self.registration.getNotifications({
+      includeTriggered: true,
+    });
+    for (const n of existing) {
+      if (
+        n.tag &&
+        (n.tag.startsWith('adhan-') ||
+          n.tag.startsWith('preadhan-') ||
+          n.tag.startsWith('iqamah-') ||
+          n.tag.startsWith('dua-') ||
+          n.tag.startsWith('prayconfirm-') ||
+          n.tag.startsWith('qiyam-') ||
+          n.tag.startsWith('tawasih-') ||
+          n.tag.startsWith('azkar-') ||
+          n.tag.startsWith('kahf-') ||
+          n.tag.startsWith('eid-') ||
+          n.tag.startsWith('salawat-'))
+      ) {
+        n.close();
+      }
+    }
+    const firedTags = await readFiredTags();
+    const dismissedPrayers = await readDismissedPrayers();
+    const now = Date.now();
+    const upcomingSorted = (Array.isArray(alerts) ? alerts : [])
+      .filter(
+        (item) =>
+          item &&
+          typeof item.timestamp === 'number' &&
+          item.timestamp > now + 2000 &&
+          !firedTags[item.tag] &&
+          !(
+            item.type === 'prayconfirm' &&
+            item.dateKey &&
+            item.prayerKey &&
+            dismissedPrayers[`${item.dateKey}-${item.prayerKey}`]
+          ),
+      )
+      .sort((a, b) => a.timestamp - b.timestamp)
+      .slice(0, 80);
+
+    for (const item of upcomingSorted) {
+      await self.registration.showNotification(
+        item.title || 'البرنامج الإسلامي الذهبي',
+        {
+          ...buildNotificationOptions(item),
+          showTrigger: new self.TimestampTrigger(item.timestamp),
+        },
+      );
+    }
+  } catch {
+    // TimestampTrigger not active on this browser build; periodicSync + sync remain active
+  }
+}
+
+async function prewarmEssentialOfflineShellInSw() {
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+  const shellUrls = ['/', '/index.html', '/offline.html'];
+  const coreUrls = ['/data/quran.json', '/data/tafsir.json'];
+  const essentialAudioUrls = [
+    '/audio/adhan-makkah.mp3',
+    '/audio/adhan-madinah.mp3',
+    '/audio/adhan-alafasy.mp3',
+    '/audio/iqamah-makkah.mp3',
+    '/audio/iqamah-madinah.mp3',
+    '/audio/iqamah-haram.mp3',
+    '/audio/pre-chime.mp3',
+    '/audio/pre-istighfar.mp3',
+    '/audio/pre-takbeer.mp3',
+    '/audio/post-adhan-dua.mp3',
+    '/audio/tawasih-naqshabandi-1.mp3',
+    '/audio/salawat-1.mp3',
+  ];
+  try {
+    const shellCache = await caches.open('alzahabi-app-shell-v1');
+    for (const u of shellUrls) {
+      try {
+        const hit = await shellCache.match(u);
+        if (!hit) {
+          const res = await fetch(u);
+          if (res.ok) await shellCache.put(u, res);
+        }
+      } catch {
+        // ignore single asset error
+      }
+    }
+  } catch {
+    // ignore
+  }
+  for (const u of [...coreUrls, ...essentialAudioUrls]) {
+    try {
+      await cacheOneOfflineUrl(u, false);
+    } catch {
+      // ignore
+    }
+  }
+}
+
 let lastWakeupCheckTs = 0;
+
+self.addEventListener('install', (event) => {
+  event.waitUntil(prewarmEssentialOfflineShellInSw());
+});
 
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     Promise.all([
+      prewarmEssentialOfflineShellInSw(),
       checkAndFireDueAlerts(),
       resumePendingOfflineDownloadIfNeeded(),
       checkForAppContentUpdatesInBackground(),
@@ -1158,7 +1374,20 @@ self.addEventListener('message', (event) => {
     const urls = Array.isArray(payload.urls) ? payload.urls : [];
     const contentVersion =
       typeof payload.contentVersion === 'string' ? payload.contentVersion : '';
-    event.waitUntil(runFullOfflineDownload(urls, contentVersion, 'full'));
+    const targetTotalMb =
+      typeof payload.totalMb === 'number' && payload.totalMb > 0
+        ? payload.totalMb
+        : TOTAL_PACKAGE_MB;
+    const sections = Array.isArray(payload.sections) ? payload.sections : null;
+    event.waitUntil(
+      runFullOfflineDownload(
+        urls,
+        contentVersion,
+        'full',
+        targetTotalMb,
+        sections,
+      ),
+    );
     return;
   }
 
@@ -1233,48 +1462,7 @@ self.addEventListener('message', (event) => {
       );
       await saveScheduledAlerts(alerts);
       await checkAndFireDueAlerts();
-
-      // Schedule native TimestampTrigger notifications when browser/installed PWA supports Notification Triggers
-      if (typeof self.TimestampTrigger === 'function') {
-        try {
-          const existing = await self.registration.getNotifications({
-            includeTriggered: true,
-          });
-          for (const n of existing) {
-            if (
-              n.tag &&
-              (n.tag.startsWith('adhan-') ||
-                n.tag.startsWith('preadhan-') ||
-                n.tag.startsWith('iqamah-') ||
-                n.tag.startsWith('dua-') ||
-                n.tag.startsWith('prayconfirm-') ||
-                n.tag.startsWith('qiyam-') ||
-                n.tag.startsWith('tawasih-') ||
-                n.tag.startsWith('azkar-') ||
-                n.tag.startsWith('kahf-') ||
-                n.tag.startsWith('eid-') ||
-                n.tag.startsWith('salawat-'))
-            ) {
-              n.close();
-            }
-          }
-          const firedTags = await readFiredTags();
-          const now = Date.now();
-          for (const item of alerts) {
-            if (item.timestamp > now + 2000 && !firedTags[item.tag]) {
-              await self.registration.showNotification(
-                item.title || 'البرنامج الإسلامي الذهبي',
-                {
-                  ...buildNotificationOptions(item),
-                  showTrigger: new self.TimestampTrigger(item.timestamp),
-                },
-              );
-            }
-          }
-        } catch {
-          // TimestampTrigger not active on this browser build; periodicSync + sync remain active
-        }
-      }
+      await syncNativeTimestampTriggers(alerts);
     })(),
   );
 });

@@ -4,80 +4,166 @@ import {
   EID_TAKBEERAT_VOICES_3,
   FRIDAY_KAHF_VOICES_3,
   getAyahAudioUrl,
-  getSurahAudioUrl,
   IQAMAH_VOICES_3,
   POST_ADHAN_DUA,
   POST_PRAYER_AZKAR_AUDIO_URLS,
   PRE_ADHAN_VOICES_3,
-  RECITERS_30,
   SALAWAT_AUDIO_TRACKS,
   TAWASIH_NAQSHABANDI,
 } from '../data/reciters';
 import {AZKAR_CATEGORIES} from '../data/azkar';
 import {RAFIQI_WORDS_30} from '../data/rafiqiData';
+import {
+  CORE_LOCAL_AUDIO_ASSETS,
+  getAllAppSections,
+  normalizeLegacySectionId,
+  OfflineSectionId,
+} from '../data/appSections';
+import {
+  prewarmRafiqiSheikhVoicesOffline,
+  prewarmStartupDuaVoiceOffline,
+} from './rafiqiVoice';
+import {
+  idbRead,
+  idbWrite,
+  readAudioBlobFromIdb,
+  saveAudioBlobToIdb,
+  STORE_JSON_CACHE,
+  STORE_OFFLINE_META,
+} from './offlineDb';
+
+export type {OfflineSectionId};
 
 export const AUDIO_CACHE_NAME = 'alzahabi-offline-audio-v1';
 export const IMAGE_CACHE_NAME = 'alzahabi-offline-images-v1';
 export const CORE_DATA_CACHE_NAME = 'alzahabi-core-data-v1';
 export const OFFLINE_READY_KEY = 'alzahabi_all_offline_ready_v1';
+export const DOWNLOADED_SECTIONS_KEY = 'alzahabi_downloaded_sections_v1';
 
-const IDB_NAME = 'alzahabi-offline-json-db';
-const IDB_STORE = 'json_cache';
+export interface OfflineSectionOption {
+  id: OfflineSectionId;
+  labelAr: string;
+  descAr: string;
+  estimatedMb: number;
+  estimatedMinutes: number;
+}
+
+export function getAvailableOfflineSections(): OfflineSectionOption[] {
+  return getAllAppSections().map((sec) => ({
+    id: sec.id,
+    labelAr: sec.labelAr,
+    descAr: sec.descAr,
+    estimatedMb: sec.estimatedMb,
+    estimatedMinutes: sec.estimatedMinutes,
+  }));
+}
+
+export function getAllOfflineSectionIds(): OfflineSectionId[] {
+  return getAllAppSections().map((sec) => sec.id);
+}
+
+export const OFFLINE_SECTION_OPTIONS: OfflineSectionOption[] =
+  getAvailableOfflineSections();
+
 const memoryJsonCache = new Map<string, unknown>();
 const inflightJsonLoads = new Map<string, Promise<unknown>>();
+const objectUrlCache = new Map<string, string>();
 let prewarmStarted = false;
 
-function openJsonDb(): Promise<IDBDatabase | null> {
-  if (typeof indexedDB === 'undefined') return Promise.resolve(null);
-  return new Promise((resolve) => {
+export function estimateOfflineSelection(sections: OfflineSectionId[]): {
+  totalMb: number;
+  estimatedMinutes: number;
+  selectedOptions: OfflineSectionOption[];
+} {
+  const unique = Array.from(new Set(sections));
+  const available = getAvailableOfflineSections();
+  const selectedOptions = available.filter((opt) => unique.includes(opt.id));
+  const totalMb = selectedOptions.reduce((sum, o) => sum + o.estimatedMb, 0);
+  const estimatedMinutes = selectedOptions.reduce(
+    (sum, o) => sum + o.estimatedMinutes,
+    0,
+  );
+  return {totalMb, estimatedMinutes, selectedOptions};
+}
+
+export function getDownloadedOfflineSections(): OfflineSectionId[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = window.localStorage.getItem(DOWNLOADED_SECTIONS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as unknown;
+      if (Array.isArray(parsed)) {
+        const normalized = parsed
+          .map((id) =>
+            typeof id === 'string' ? normalizeLegacySectionId(id) : null,
+          )
+          .filter((id): id is OfflineSectionId => id !== null);
+        return Array.from(new Set(normalized));
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return [];
+}
+
+export async function saveDownloadedOfflineSections(
+  sections: OfflineSectionId[],
+): Promise<void> {
+  const clean = Array.from(new Set(sections));
+  if (typeof window !== 'undefined') {
     try {
-      const req = indexedDB.open(IDB_NAME, 1);
-      req.onupgradeneeded = () => {
-        const db = req.result;
-        if (!db.objectStoreNames.contains(IDB_STORE)) {
-          db.createObjectStore(IDB_STORE);
+      window.localStorage.setItem(
+        DOWNLOADED_SECTIONS_KEY,
+        JSON.stringify(clean),
+      );
+    } catch {
+      // ignore
+    }
+  }
+  await idbWrite(STORE_OFFLINE_META, 'downloaded_sections', clean);
+}
+
+/**
+ * Resolves any audio URL to a local IndexedDB Blob ObjectURL when cached,
+ * or checks CacheStorage, falling back seamlessly to original URL.
+ */
+export async function resolveOfflinePlayableUrl(url: string): Promise<string> {
+  if (!url) return url;
+  if (objectUrlCache.has(url)) {
+    return objectUrlCache.get(url)!;
+  }
+
+  try {
+    const idbBlob = await readAudioBlobFromIdb(url);
+    if (idbBlob && idbBlob.size > 0) {
+      const objUrl = URL.createObjectURL(idbBlob);
+      objectUrlCache.set(url, objUrl);
+      return objUrl;
+    }
+  } catch {
+    // continue to CacheStorage
+  }
+
+  if (typeof caches !== 'undefined') {
+    try {
+      const audioCache = await caches.open(AUDIO_CACHE_NAME);
+      const cached = (await audioCache.match(url)) || (await caches.match(url));
+      if (cached && cached.type !== 'opaque' && cached.ok) {
+        const blob = await cached.clone().blob();
+        if (blob && blob.size > 0) {
+          void saveAudioBlobToIdb(url, blob);
+          const objUrl = URL.createObjectURL(blob);
+          objectUrlCache.set(url, objUrl);
+          return objUrl;
         }
-      };
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () => resolve(null);
+      }
     } catch {
-      resolve(null);
+      // ignore CacheStorage error
     }
-  });
-}
+  }
 
-async function readJsonFromIdb<T>(key: string): Promise<T | null> {
-  const db = await openJsonDb();
-  if (!db) return null;
-  return new Promise((resolve) => {
-    try {
-      const tx = db.transaction(IDB_STORE, 'readonly');
-      const store = tx.objectStore(IDB_STORE);
-      const req = store.get(key);
-      req.onsuccess = () => {
-        resolve((req.result as T | undefined) ?? null);
-      };
-      req.onerror = () => resolve(null);
-    } catch {
-      resolve(null);
-    }
-  });
-}
-
-async function writeJsonToIdb<T>(key: string, data: T): Promise<void> {
-  const db = await openJsonDb();
-  if (!db) return;
-  return new Promise((resolve) => {
-    try {
-      const tx = db.transaction(IDB_STORE, 'readwrite');
-      const store = tx.objectStore(IDB_STORE);
-      store.put(data, key);
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => resolve();
-    } catch {
-      resolve();
-    }
-  });
+  return url;
 }
 
 /**
@@ -99,7 +185,7 @@ export async function loadOfflineJson<T>(url: string): Promise<T> {
 
   const task = (async (): Promise<T> => {
     // 1. Check IndexedDB first (fastest reliable persistent storage across restarts)
-    const idbData = await readJsonFromIdb<T>(url);
+    const idbData = await idbRead<T>(STORE_JSON_CACHE, url);
     if (idbData !== null) {
       memoryJsonCache.set(url, idbData);
       return idbData;
@@ -112,7 +198,7 @@ export async function loadOfflineJson<T>(url: string): Promise<T> {
         if (directMatch && directMatch.ok) {
           const parsed = (await directMatch.json()) as T;
           memoryJsonCache.set(url, parsed);
-          void writeJsonToIdb(url, parsed);
+          void idbWrite(STORE_JSON_CACHE, url, parsed);
           return parsed;
         }
       } catch {
@@ -128,7 +214,7 @@ export async function loadOfflineJson<T>(url: string): Promise<T> {
     const clone = res.clone();
     const data = (await res.json()) as T;
     memoryJsonCache.set(url, data);
-    void writeJsonToIdb(url, data);
+    void idbWrite(STORE_JSON_CACHE, url, data);
     if (typeof caches !== 'undefined') {
       caches
         .open(CORE_DATA_CACHE_NAME)
@@ -146,9 +232,10 @@ export async function loadOfflineJson<T>(url: string): Promise<T> {
   }
 }
 
+
+
 /**
- * Automatically pre-warms all core written Quran/Tafsir data + all local MP3s
- * + 30 Muezzins + Azkar + Rafiqi ayahs silently on startup when online.
+ * Automatically pre-warms all core written Quran/Tafsir data + local MP3s silently when online.
  */
 export async function prewarmCoreOfflineTextData(
   preferredReciter: ReciterId = 'alafasy',
@@ -170,62 +257,55 @@ export async function prewarmCoreOfflineTextData(
     }
   }
 
-  // 1. Immediately cache full Quran & Tafsir JSONs in IndexedDB + CacheStorage
   await Promise.allSettled([
     loadOfflineJson('/data/quran.json'),
     loadOfflineJson('/data/tafsir.json'),
+    cacheAssetInBucket('alzahabi-app-shell-v1', '/'),
+    cacheAssetInBucket('alzahabi-app-shell-v1', '/index.html'),
+    cacheAssetInBucket('alzahabi-app-shell-v1', '/offline.html'),
+    cacheAssetInBucket('alzahabi-app-shell-v1', '/manifest.webmanifest'),
+    cacheAssetInBucket(IMAGE_CACHE_NAME, '/pwa-192x192.png'),
+    cacheAssetInBucket(IMAGE_CACHE_NAME, '/pwa-512x512.png'),
+    cacheAssetInBucket(
+      IMAGE_CACHE_NAME,
+      '/assets/aistudio/IMG-20261120-WA4940_5880b328.jpg',
+    ),
+    prewarmStartupDuaVoiceOffline(),
   ]);
 
-  // 2. Immediately cache all 24 bundled local MP3s (Adhan, Iqamah, Dua, Eid, Kahf, Tawasih, Salawat, Sheikh prompt)
-  const localAudioAssets = [
-    '/audio/adhan-makkah.mp3',
-    '/audio/adhan-madinah.mp3',
-    '/audio/adhan-alafasy.mp3',
-    '/audio/iqamah-makkah.mp3',
-    '/audio/iqamah-madinah.mp3',
-    '/audio/iqamah-haram.mp3',
-    '/audio/pre-chime.mp3',
-    '/audio/pre-istighfar.mp3',
-    '/audio/pre-takbeer.mp3',
-    '/audio/post-adhan-dua.mp3',
-    '/audio/tawasih-naqshabandi-1.mp3',
-    '/audio/tawasih-naqshabandi-2.mp3',
-    '/audio/tawasih-naqshabandi-3.mp3',
-    '/audio/salawat-1.mp3',
-    '/audio/salawat-2.mp3',
-    '/audio/salawat-3.mp3',
-    '/audio/salawat-4.mp3',
-    '/audio/eid-makkah-1.mp3',
-    '/audio/eid-makkah-2.mp3',
-    '/audio/eid-jamaa.mp3',
-    '/audio/kahf-abdulbasit.mp3',
-    '/audio/kahf-alafasy.mp3',
-    '/audio/kahf-muaiqly.mp3',
-    '/audio/sheikh-start-reading.mp3',
-  ];
-  await cacheBatchUrls(localAudioAssets, undefined, 4);
+  await cacheBatchUrls(CORE_LOCAL_AUDIO_ASSETS, undefined, 4);
 
-  // 3. Quietly background-cache external Muezzins (all 30), Azkar audio, Rafiqi 30 ayahs & core Surahs
   const azkarUrls = AZKAR_CATEGORIES.flatMap((cat) =>
     cat.items.map((item) => item.audioUrl).filter((u): u is string => Boolean(u)),
   );
   const externalMuezzinsAndAzkar = [
     ...ADHAN_VOICES_30.map((a) => a.url),
+    ...IQAMAH_VOICES_3.map((i) => i.url),
+    ...PRE_ADHAN_VOICES_3.map((p) => p.url),
+    POST_ADHAN_DUA.audioUrl,
+    ...TAWASIH_NAQSHABANDI.map((t) => t.url),
+    ...EID_TAKBEERAT_VOICES_3.map((e) => e.url),
+    ...FRIDAY_KAHF_VOICES_3.map((k) => k.url),
+    ...SALAWAT_AUDIO_TRACKS.map((s) => s.url),
     ...POST_PRAYER_AZKAR_AUDIO_URLS,
     ...azkarUrls,
     ...RAFIQI_WORDS_30.map((w) =>
       getAyahAudioUrl(preferredReciter, w.surahNumber, w.ayahNumber),
     ),
     ...[1, 2, 3, 4, 5, 6, 7].map((a) => getAyahAudioUrl(preferredReciter, 1, a)),
-    ...[1, 18, 36, 55, 56, 67, 112, 113, 114].map((s) =>
-      getSurahAudioUrl(preferredReciter, s),
-    ),
   ];
   await cacheBatchUrls(externalMuezzinsAndAzkar, undefined, 3);
 }
 
 export async function isAudioCached(url: string): Promise<boolean> {
-  if (typeof caches === 'undefined' || !url) return false;
+  if (!url) return false;
+  try {
+    const idbBlob = await readAudioBlobFromIdb(url);
+    if (idbBlob && idbBlob.size > 0) return true;
+  } catch {
+    // check CacheStorage
+  }
+  if (typeof caches === 'undefined') return false;
   try {
     const cache = await caches.open(AUDIO_CACHE_NAME);
     const match = await cache.match(url);
@@ -245,7 +325,20 @@ export async function cacheAssetInBucket(
   try {
     const cache = await caches.open(bucketName);
     const existing = await cache.match(url);
-    if (existing) return true;
+    if (existing) {
+      if (bucketName === AUDIO_CACHE_NAME && existing.type !== 'opaque') {
+        try {
+          const existingBlob = await readAudioBlobFromIdb(url);
+          if (!existingBlob) {
+            const blob = await existing.clone().blob();
+            if (blob.size > 0) void saveAudioBlobToIdb(url, blob);
+          }
+        } catch {
+          // ignore
+        }
+      }
+      return true;
+    }
 
     if (typeof navigator !== 'undefined' && navigator.onLine === false) {
       return false;
@@ -258,6 +351,14 @@ export async function cacheAssetInBucket(
     if (isSameOrigin) {
       const res = await fetch(url);
       if (res.ok) {
+        if (bucketName === AUDIO_CACHE_NAME) {
+          try {
+            const blob = await res.clone().blob();
+            if (blob.size > 0) void saveAudioBlobToIdb(url, blob);
+          } catch {
+            // ignore
+          }
+        }
         await cache.put(url, res);
         return true;
       }
@@ -267,6 +368,14 @@ export async function cacheAssetInBucket(
     try {
       const corsRes = await fetch(url, {mode: 'cors'});
       if (corsRes.ok) {
+        if (bucketName === AUDIO_CACHE_NAME) {
+          try {
+            const blob = await corsRes.clone().blob();
+            if (blob.size > 0) void saveAudioBlobToIdb(url, blob);
+          } catch {
+            // ignore
+          }
+        }
         await cache.put(url, corsRes);
         return true;
       }
@@ -370,93 +479,48 @@ export function isOfflinePackageDownloaded(): boolean {
   }
 }
 
+export function buildOfflineUrlsForSections(
+  sections: OfflineSectionId[],
+  preferredReciter: ReciterId,
+): string[] {
+  const active = new Set(sections);
+  const urls: string[] = [
+    '/data/quran.json',
+    '/data/tafsir.json',
+    '/offline.html',
+    ...CORE_LOCAL_AUDIO_ASSETS,
+  ];
+
+  for (const sec of getAllAppSections()) {
+    if (active.has(sec.id) && sec.getOfflineUrls) {
+      urls.push(...sec.getOfflineUrls(preferredReciter));
+    }
+  }
+
+  return Array.from(new Set(urls.filter(Boolean)));
+}
+
 export function buildFullOfflineDownloadList(
   preferredReciter: ReciterId,
 ): string[] {
-  const coreDataUrls = ['/data/quran.json', '/data/tafsir.json', '/offline.html'];
-
-  const localAudioAssets = [
-    '/audio/adhan-makkah.mp3',
-    '/audio/adhan-madinah.mp3',
-    '/audio/adhan-alafasy.mp3',
-    '/audio/iqamah-makkah.mp3',
-    '/audio/iqamah-madinah.mp3',
-    '/audio/iqamah-haram.mp3',
-    '/audio/pre-chime.mp3',
-    '/audio/pre-istighfar.mp3',
-    '/audio/pre-takbeer.mp3',
-    '/audio/post-adhan-dua.mp3',
-    '/audio/tawasih-naqshabandi-1.mp3',
-    '/audio/tawasih-naqshabandi-2.mp3',
-    '/audio/tawasih-naqshabandi-3.mp3',
-    '/audio/salawat-1.mp3',
-    '/audio/salawat-2.mp3',
-    '/audio/salawat-3.mp3',
-    '/audio/salawat-4.mp3',
-    '/audio/eid-makkah-1.mp3',
-    '/audio/eid-makkah-2.mp3',
-    '/audio/eid-jamaa.mp3',
-    '/audio/kahf-abdulbasit.mp3',
-    '/audio/kahf-alafasy.mp3',
-    '/audio/kahf-muaiqly.mp3',
-    '/audio/sheikh-start-reading.mp3',
-  ];
-
-  const azkarUrls = AZKAR_CATEGORIES.flatMap((cat) =>
-    cat.items.map((item) => item.audioUrl).filter((u): u is string => Boolean(u)),
-  );
-
-  const muezzinUrls = [
-    ...ADHAN_VOICES_30.map((a) => a.url),
-    ...IQAMAH_VOICES_3.map((i) => i.url),
-    ...PRE_ADHAN_VOICES_3.map((p) => p.url),
-    POST_ADHAN_DUA.audioUrl,
-    ...TAWASIH_NAQSHABANDI.map((t) => t.url),
-    ...SALAWAT_AUDIO_TRACKS.map((s) => s.url),
-    ...EID_TAKBEERAT_VOICES_3.map((e) => e.url),
-    ...FRIDAY_KAHF_VOICES_3.map((k) => k.url),
-    ...POST_PRAYER_AZKAR_AUDIO_URLS,
-    ...azkarUrls,
-  ];
-
-  const rafiqiUrls = RAFIQI_WORDS_30.map((w) =>
-    getAyahAudioUrl(preferredReciter, w.surahNumber, w.ayahNumber),
-  );
-
-  const quranFatihaAyahs = [1, 2, 3, 4, 5, 6, 7].map((a) =>
-    getAyahAudioUrl(preferredReciter, 1, a),
-  );
-
-  const full114Preferred = Array.from({length: 114}, (_, i) =>
-    getSurahAudioUrl(preferredReciter, i + 1),
-  );
-
-  const sharedSheikhSurahs = [1, 18, 36, 55, 56, 67, 87, 97, 108, 112, 113, 114];
-  const all30SheikhsCore = RECITERS_30.flatMap((reciter) =>
-    sharedSheikhSurahs.map((sNum) => getSurahAudioUrl(reciter.id, sNum)),
-  );
-
-  return Array.from(
-    new Set([
-      ...coreDataUrls,
-      ...localAudioAssets,
-      ...muezzinUrls,
-      ...rafiqiUrls,
-      ...quranFatihaAyahs,
-      ...full114Preferred,
-      ...all30SheikhsCore,
-    ]),
+  return buildOfflineUrlsForSections(
+    getAllOfflineSectionIds(),
+    preferredReciter,
   );
 }
 
-export const CONTENT_PACK_VERSION = '2026.11.24.1';
-export const TOTAL_PACKAGE_MB = 850;
+export const CONTENT_PACK_VERSION = '2026.11.25.2';
+export const TOTAL_PACKAGE_MB = getAllAppSections().reduce(
+  (sum, sec) => sum + sec.estimatedMb,
+  0,
+);
 export const FULL_850_DONE_KEY = 'alzahabi_full_850_dl_done_v1';
 
 export interface BackgroundOfflineProgress {
   status: 'idle' | 'downloading' | 'paused' | 'completed';
   pauseReason?: 'user' | 'offline';
   mode?: 'full' | 'updating';
+  sections?: OfflineSectionId[];
   percent: number;
   done: number;
   total: number;
@@ -469,30 +533,32 @@ export function computeMbProgress(
   done: number,
   total: number,
   completedAll: boolean,
+  targetTotalMb = TOTAL_PACKAGE_MB,
 ): Pick<
   BackgroundOfflineProgress,
   'percent' | 'downloadedMb' | 'remainingMb' | 'totalMb'
 > {
+  const safeTotalMb = Math.max(1, targetTotalMb || TOTAL_PACKAGE_MB);
   if (completedAll && total > 0 && done >= total) {
     return {
       percent: 100,
-      downloadedMb: TOTAL_PACKAGE_MB,
+      downloadedMb: safeTotalMb,
       remainingMb: 0,
-      totalMb: TOTAL_PACKAGE_MB,
+      totalMb: safeTotalMb,
     };
   }
   const ratio = total > 0 ? Math.min(0.999, Math.max(0, done / total)) : 0;
   const downloadedMb = Math.min(
-    TOTAL_PACKAGE_MB - 1,
-    Math.max(0, Math.round(ratio * TOTAL_PACKAGE_MB)),
+    Math.max(0, safeTotalMb - 1),
+    Math.max(0, Math.round(ratio * safeTotalMb)),
   );
-  const remainingMb = Math.max(1, TOTAL_PACKAGE_MB - downloadedMb);
+  const remainingMb = Math.max(1, safeTotalMb - downloadedMb);
   const percent = Math.min(99, Math.max(0, Math.round(ratio * 100)));
   return {
     percent,
     downloadedMb,
     remainingMb,
-    totalMb: TOTAL_PACKAGE_MB,
+    totalMb: safeTotalMb,
   };
 }
 
@@ -501,26 +567,33 @@ let sharedOfflineProgress: BackgroundOfflineProgress = (() => {
     typeof window !== 'undefined' &&
     window.localStorage.getItem(OFFLINE_READY_KEY) === '1' &&
     window.localStorage.getItem(FULL_850_DONE_KEY) === '1';
+  const savedSections = getDownloadedOfflineSections();
+  const savedMb =
+    savedSections.length > 0
+      ? estimateOfflineSelection(savedSections).totalMb
+      : TOTAL_PACKAGE_MB;
   return doneAlready
     ? {
         status: 'completed',
         mode: 'full',
+        sections: savedSections,
         percent: 100,
         done: 1,
         total: 1,
-        downloadedMb: TOTAL_PACKAGE_MB,
+        downloadedMb: savedMb,
         remainingMb: 0,
-        totalMb: TOTAL_PACKAGE_MB,
+        totalMb: savedMb,
       }
     : {
         status: 'idle',
         mode: 'full',
+        sections: savedSections,
         percent: 0,
         done: 0,
         total: 0,
         downloadedMb: 0,
-        remainingMb: TOTAL_PACKAGE_MB,
-        totalMb: TOTAL_PACKAGE_MB,
+        remainingMb: savedMb,
+        totalMb: savedMb,
       };
 })();
 
@@ -534,13 +607,24 @@ let fallbackRunning = false;
 let fallbackPauseRequested = false;
 let fallbackCancelRequested = false;
 let fallbackUrls: string[] = [];
+let fallbackTotalMb = TOTAL_PACKAGE_MB;
+let fallbackSections: OfflineSectionId[] = getAllOfflineSectionIds();
 
-function persistCompletedFlag(isCompleted: boolean) {
+function persistCompletedFlag(
+  isCompleted: boolean,
+  sections?: OfflineSectionId[],
+) {
   if (typeof window === 'undefined') return;
   try {
     if (isCompleted) {
       window.localStorage.setItem(OFFLINE_READY_KEY, '1');
       window.localStorage.setItem(FULL_850_DONE_KEY, '1');
+      if (sections && sections.length > 0) {
+        const merged = Array.from(
+          new Set([...getDownloadedOfflineSections(), ...sections]),
+        );
+        void saveDownloadedOfflineSections(merged);
+      }
     } else {
       window.localStorage.removeItem(OFFLINE_READY_KEY);
       window.localStorage.removeItem(FULL_850_DONE_KEY);
@@ -553,7 +637,7 @@ function persistCompletedFlag(isCompleted: boolean) {
 function setSharedOfflineProgress(next: BackgroundOfflineProgress) {
   sharedOfflineProgress = next;
   if (next.status === 'completed' && next.percent === 100) {
-    persistCompletedFlag(true);
+    persistCompletedFlag(true, next.sections);
   } else if (
     next.status === 'idle' ||
     next.status === 'paused' ||
@@ -576,6 +660,7 @@ function normalizeSwPayloadToProgress(data: {
   status?: string;
   pauseReason?: 'user' | 'offline';
   mode?: 'full' | 'updating';
+  sections?: OfflineSectionId[];
   done?: number;
   total?: number;
   percent?: number;
@@ -591,12 +676,19 @@ function normalizeSwPayloadToProgress(data: {
       : 'idle';
   const done = typeof data.done === 'number' ? data.done : 0;
   const total = typeof data.total === 'number' ? data.total : 0;
+  const targetTotalMb =
+    typeof data.totalMb === 'number' && data.totalMb > 0
+      ? data.totalMb
+      : TOTAL_PACKAGE_MB;
   const isCompleted = status === 'completed';
-  const computed = computeMbProgress(done, total, isCompleted);
+  const computed = computeMbProgress(done, total, isCompleted, targetTotalMb);
   return {
     status,
     pauseReason: data.pauseReason,
     mode: data.mode || 'full',
+    sections: Array.isArray(data.sections)
+      ? data.sections
+      : sharedOfflineProgress.sections,
     done,
     total,
     percent:
@@ -609,7 +701,7 @@ function normalizeSwPayloadToProgress(data: {
       typeof data.remainingMb === 'number'
         ? data.remainingMb
         : computed.remainingMb,
-    totalMb: TOTAL_PACKAGE_MB,
+    totalMb: targetTotalMb,
   };
 }
 
@@ -625,6 +717,7 @@ function initSwProgressBridge() {
             status?: string;
             pauseReason?: 'user' | 'offline';
             mode?: 'full' | 'updating';
+            sections?: OfflineSectionId[];
             done?: number;
             total?: number;
             percent?: number;
@@ -635,6 +728,7 @@ function initSwProgressBridge() {
               status?: string;
               pauseReason?: 'user' | 'offline';
               mode?: 'full' | 'updating';
+              sections?: OfflineSectionId[];
               done?: number;
               total?: number;
               percent?: number;
@@ -720,7 +814,14 @@ async function registerBackgroundOfflineSync(reg: ServiceWorkerRegistration) {
 }
 
 async function isUrlCachedLocally(url: string): Promise<boolean> {
-  if (typeof caches === 'undefined' || !url) return false;
+  if (!url) return false;
+  try {
+    const idbBlob = await readAudioBlobFromIdb(url);
+    if (idbBlob && idbBlob.size > 0) return true;
+  } catch {
+    // ignore
+  }
+  if (typeof caches === 'undefined') return false;
   try {
     const bucket =
       url.endsWith('.json') || url.endsWith('.html')
@@ -734,11 +835,17 @@ async function isUrlCachedLocally(url: string): Promise<boolean> {
   }
 }
 
-async function runFallbackOfflineDownload(urls: string[]) {
+async function runFallbackOfflineDownload(
+  urls: string[],
+  targetTotalMb = TOTAL_PACKAGE_MB,
+  sections: OfflineSectionId[] = getAllOfflineSectionIds(),
+) {
   if (fallbackRunning) return;
   fallbackRunning = true;
   fallbackPauseRequested = false;
   fallbackCancelRequested = false;
+  fallbackTotalMb = targetTotalMb;
+  fallbackSections = sections;
   fallbackUrls = Array.from(new Set(urls.filter(Boolean)));
   const total = fallbackUrls.length;
   if (total === 0) {
@@ -764,9 +871,10 @@ async function runFallbackOfflineDownload(urls: string[]) {
   setSharedOfflineProgress({
     status: 'downloading',
     mode: 'full',
+    sections,
     done,
     total,
-    ...computeMbProgress(done, total, false),
+    ...computeMbProgress(done, total, false, targetTotalMb),
   });
 
   const worker = async () => {
@@ -801,9 +909,10 @@ async function runFallbackOfflineDownload(urls: string[]) {
         setSharedOfflineProgress({
           status: 'downloading',
           mode: 'full',
+          sections,
           done,
           total,
-          ...computeMbProgress(done, total, false),
+          ...computeMbProgress(done, total, false, targetTotalMb),
         });
       }
     }
@@ -820,12 +929,13 @@ async function runFallbackOfflineDownload(urls: string[]) {
       setSharedOfflineProgress({
         status: 'idle',
         mode: 'full',
+        sections,
         done: 0,
         total: 0,
         percent: 0,
         downloadedMb: 0,
-        remainingMb: TOTAL_PACKAGE_MB,
-        totalMb: TOTAL_PACKAGE_MB,
+        remainingMb: targetTotalMb,
+        totalMb: targetTotalMb,
       });
       return;
     }
@@ -835,9 +945,10 @@ async function runFallbackOfflineDownload(urls: string[]) {
         status: 'paused',
         pauseReason: 'user',
         mode: 'full',
+        sections,
         done,
         total,
-        ...computeMbProgress(done, total, false),
+        ...computeMbProgress(done, total, false, targetTotalMb),
       });
       return;
     }
@@ -847,22 +958,30 @@ async function runFallbackOfflineDownload(urls: string[]) {
         status: 'paused',
         pauseReason: 'offline',
         mode: 'full',
+        sections,
         done,
         total,
-        ...computeMbProgress(done, total, false),
+        ...computeMbProgress(done, total, false, targetTotalMb),
       });
       return;
     }
 
+    // Ensure JSON files are indexed in IndexedDB json_cache too
+    await Promise.allSettled([
+      loadOfflineJson('/data/quran.json'),
+      loadOfflineJson('/data/tafsir.json'),
+    ]);
+
     setSharedOfflineProgress({
       status: 'completed',
       mode: 'full',
+      sections,
       done: total,
       total,
       percent: 100,
-      downloadedMb: TOTAL_PACKAGE_MB,
+      downloadedMb: targetTotalMb,
       remainingMb: 0,
-      totalMb: TOTAL_PACKAGE_MB,
+      totalMb: targetTotalMb,
     });
   } finally {
     fallbackRunning = false;
@@ -871,6 +990,7 @@ async function runFallbackOfflineDownload(urls: string[]) {
 
 export async function startFullOfflineBackgroundDownload(
   preferredReciter: ReciterId,
+  sections: OfflineSectionId[] = getAllOfflineSectionIds(),
 ): Promise<void> {
   if (typeof window === 'undefined') return;
   initSwProgressBridge();
@@ -891,13 +1011,27 @@ export async function startFullOfflineBackgroundDownload(
     }
   }
 
-  const allUrls = buildFullOfflineDownloadList(preferredReciter);
+  const activeSections: OfflineSectionId[] =
+    sections.length > 0 ? sections : getAllOfflineSectionIds();
+  const {totalMb} = estimateOfflineSelection(activeSections);
+  const allUrls = buildOfflineUrlsForSections(activeSections, preferredReciter);
+
+  // Immediately hydrate JSONs into IndexedDB while online
+  void Promise.allSettled([
+    loadOfflineJson('/data/quran.json'),
+    loadOfflineJson('/data/tafsir.json'),
+  ]);
+  if (activeSections.includes('rafiqi')) {
+    void prewarmRafiqiSheikhVoicesOffline();
+  }
+
   setSharedOfflineProgress({
     status: 'downloading',
     mode: 'full',
+    sections: activeSections,
     done: 0,
     total: allUrls.length,
-    ...computeMbProgress(0, allUrls.length, false),
+    ...computeMbProgress(0, allUrls.length, false, totalMb),
   });
 
   if ('serviceWorker' in navigator) {
@@ -908,6 +1042,8 @@ export async function startFullOfflineBackgroundDownload(
         targetSw.postMessage({
           type: 'START_FULL_OFFLINE_DOWNLOAD',
           urls: allUrls,
+          sections: activeSections,
+          totalMb,
           contentVersion: CONTENT_PACK_VERSION,
         });
         void registerBackgroundOfflineSync(reg);
@@ -918,7 +1054,7 @@ export async function startFullOfflineBackgroundDownload(
     }
   }
 
-  await runFallbackOfflineDownload(allUrls);
+  await runFallbackOfflineDownload(allUrls, totalMb, activeSections);
 }
 
 export async function pauseFullOfflineBackgroundDownload(): Promise<void> {
@@ -961,9 +1097,13 @@ export async function resumeFullOfflineBackgroundDownload(
     }
   }
   if (fallbackUrls.length > 0) {
-    await runFallbackOfflineDownload(fallbackUrls);
+    await runFallbackOfflineDownload(
+      fallbackUrls,
+      fallbackTotalMb,
+      fallbackSections,
+    );
   } else if (preferredReciter) {
-    await startFullOfflineBackgroundDownload(preferredReciter);
+    await startFullOfflineBackgroundDownload(preferredReciter, fallbackSections);
   }
 }
 
@@ -989,8 +1129,8 @@ export async function cancelFullOfflineBackgroundDownload(): Promise<void> {
     total: 0,
     percent: 0,
     downloadedMb: 0,
-    remainingMb: TOTAL_PACKAGE_MB,
-    totalMb: TOTAL_PACKAGE_MB,
+    remainingMb: fallbackTotalMb,
+    totalMb: fallbackTotalMb,
   });
 }
 
@@ -1021,7 +1161,11 @@ export async function notifyNetworkOnlineAutoResumeToSw(): Promise<void> {
     sharedOfflineProgress.pauseReason === 'offline' &&
     fallbackUrls.length > 0
   ) {
-    void runFallbackOfflineDownload(fallbackUrls);
+    void runFallbackOfflineDownload(
+      fallbackUrls,
+      fallbackTotalMb,
+      fallbackSections,
+    );
   }
   if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) {
     return;
@@ -1036,10 +1180,6 @@ export async function notifyNetworkOnlineAutoResumeToSw(): Promise<void> {
   }
 }
 
-/**
- * Syncs manifest + contentVersion with Service Worker so newly published app updates
- * automatically download in the background even when the app is closed or on mobile data.
- */
 export async function syncOfflineContentUpdatesInBackground(
   preferredReciter: ReciterId,
 ): Promise<void> {
@@ -1051,10 +1191,16 @@ export async function syncOfflineContentUpdatesInBackground(
     void registerBackgroundOfflineSync(reg);
     if (!navigator.onLine) return;
     const targetSw = reg.active || navigator.serviceWorker.controller;
+    const activeSections = getDownloadedOfflineSections();
+    const urls =
+      activeSections.length > 0
+        ? buildOfflineUrlsForSections(activeSections, preferredReciter)
+        : buildFullOfflineDownloadList(preferredReciter);
     if (targetSw) {
       targetSw.postMessage({
         type: 'SYNC_FULL_OFFLINE_MANIFEST',
-        urls: buildFullOfflineDownloadList(preferredReciter),
+        urls,
+        sections: activeSections,
         contentVersion: CONTENT_PACK_VERSION,
       });
     }
@@ -1062,4 +1208,3 @@ export async function syncOfflineContentUpdatesInBackground(
     // ignore
   }
 }
-

@@ -23,6 +23,7 @@ import {
   SeerahChapter,
 } from '../data/seerahData';
 import {useLocalStorage} from '../hooks/useLocalStorage';
+import {resolveOfflinePlayableUrl} from '../utils/offlineAudioCache';
 
 type SeerahPhaseFilter =
   | 'الكل'
@@ -189,15 +190,25 @@ export const SeerahView: React.FC = () => {
       setIsBuffering(false);
       setIsPaused(false);
       setPlayingTrackId(null);
-      setAudioError('تعذر تشغيل صوت الشيخ حاليًا');
+      setAudioError(
+        typeof navigator !== 'undefined' && !navigator.onLine
+          ? 'يرجى الاتصال بالإنترنت لتشغيل الصوت (قراءة السيرة متاحة كاملة بدون نت)'
+          : 'تعذر تشغيل صوت الشيخ حاليًا',
+      );
     };
 
-    audio.src = url;
-    audio.playbackRate = rateOverride;
-    audio.load();
-    audio.play().catch(() => {
-      setIsBuffering(false);
-      setAudioError('اضغط تشغيل مرة أخرى لبدء الاستماع لصوت الشيخ');
+    void resolveOfflinePlayableUrl(url).then((playableUrl) => {
+      audio.src = playableUrl;
+      audio.playbackRate = rateOverride;
+      audio.load();
+      audio.play().catch(() => {
+        setIsBuffering(false);
+        setAudioError(
+          typeof navigator !== 'undefined' && !navigator.onLine
+            ? 'يرجى الاتصال بالإنترنت لتشغيل الصوت (قراءة السيرة متاحة كاملة بدون نت)'
+            : 'اضغط تشغيل مرة أخرى لبدء الاستماع لصوت الشيخ',
+        );
+      });
     });
   };
 

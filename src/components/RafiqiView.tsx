@@ -1,6 +1,7 @@
 import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {
   HeartHandshake,
+  Loader2,
   Mic,
   MicOff,
   Pause,
@@ -22,6 +23,11 @@ import {
   RECITERS_30,
 } from '../data/reciters';
 import {ReciterId} from '../types';
+import {resolveOfflinePlayableUrl} from '../utils/offlineAudioCache';
+import {
+  generatePersonalizedSheikhReply,
+  resolveSheikhHumanVoiceUrl,
+} from '../utils/rafiqiVoice';
 
 interface RafiqiViewProps {
   preferredReciter: ReciterId;
@@ -53,110 +59,254 @@ export const RafiqiView: React.FC<RafiqiViewProps> = ({preferredReciter}) => {
   const [activeWord, setActiveWord] = useState<RafiqiWordEntry>(
     RAFIQI_WORDS_30[0],
   );
+  const [activeReplyText, setActiveReplyText] = useState<string>(
+    RAFIQI_WORDS_30[0].replyAr,
+  );
   const [userMessage, setUserMessage] = useState('');
   const [heardSpeech, setHeardSpeech] = useState('');
   const [listening, setListening] = useState(false);
   const [voiceReplyEnabled, setVoiceReplyEnabled] = useState(true);
   const [isPlayingAyah, setIsPlayingAyah] = useState(false);
+  const [isPlayingSheikhReply, setIsPlayingSheikhReply] = useState(false);
+  const [isPreparingSheikhVoice, setIsPreparingSheikhVoice] = useState(false);
   const [audioNote, setAudioNote] = useState<string | null>(null);
 
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const ayahAudioRef = useRef<HTMLAudioElement | null>(null);
+  const sheikhAudioRef = useRef<HTMLAudioElement | null>(null);
   const recRef = useRef<SpeechRecLike | null>(null);
+  const playbackTokenRef = useRef<number>(0);
 
   const activeSheikh = useMemo(
     () => getReciterById(selectedReciter),
     [selectedReciter],
   );
 
+  const stopAllRafiqiAudio = () => {
+    playbackTokenRef.current += 1;
+    if (ayahAudioRef.current) {
+      ayahAudioRef.current.onended = null;
+      ayahAudioRef.current.onerror = null;
+      ayahAudioRef.current.pause();
+      ayahAudioRef.current.currentTime = 0;
+    }
+    if (sheikhAudioRef.current) {
+      sheikhAudioRef.current.onended = null;
+      sheikhAudioRef.current.onerror = null;
+      sheikhAudioRef.current.pause();
+      sheikhAudioRef.current.currentTime = 0;
+    }
+    setIsPlayingAyah(false);
+    setIsPlayingSheikhReply(false);
+    setIsPreparingSheikhVoice(false);
+  };
+
   useEffect(() => {
     return () => {
-      audioRef.current?.pause();
+      stopAllRafiqiAudio();
       try {
         recRef.current?.stop();
       } catch {
         // ignore
       }
-      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-        window.speechSynthesis.cancel();
-      }
     };
   }, []);
 
-  const speakFriendlyReply = (text: string) => {
-    if (
-      !voiceReplyEnabled ||
-      typeof window === 'undefined' ||
-      !('speechSynthesis' in window)
-    ) {
-      return;
-    }
-    try {
-      window.speechSynthesis.cancel();
-      const utter = new SpeechSynthesisUtterance(text);
-      utter.lang = 'ar-SA';
-      utter.rate = 0.96;
-      const voices = window.speechSynthesis.getVoices();
-      const arVoice = voices.find((v) => v.lang.startsWith('ar'));
-      if (arVoice) utter.voice = arVoice;
-      window.speechSynthesis.speak(utter);
-    } catch {
-      // ignore speechSynthesis failure on unsupported devices
-    }
-  };
-
-  const playAyahForEntry = (
+  const playAyahAndWait = async (
     entry: RafiqiWordEntry,
-    reciterId: ReciterId = selectedReciter,
-  ) => {
+    reciterId: ReciterId,
+    token: number,
+  ): Promise<boolean> => {
+    if (token !== playbackTokenRef.current) return false;
     setAudioNote(null);
-    if (!audioRef.current) {
-      audioRef.current = new Audio();
-    }
-    const audio = audioRef.current;
-    const url = getAyahAudioUrl(reciterId, entry.surahNumber, entry.ayahNumber);
 
+    if (sheikhAudioRef.current) {
+      sheikhAudioRef.current.onended = null;
+      sheikhAudioRef.current.onerror = null;
+      sheikhAudioRef.current.pause();
+    }
+    setIsPlayingSheikhReply(false);
+
+    if (!ayahAudioRef.current) {
+      ayahAudioRef.current = new Audio();
+    }
+    const audio = ayahAudioRef.current;
+    audio.onended = null;
+    audio.onerror = null;
     audio.pause();
-    audio.src = url;
-    setIsPlayingAyah(true);
-    audio.onended = () => setIsPlayingAyah(false);
-    audio.onerror = () => {
-      setIsPlayingAyah(false);
-      setAudioNote('تعذر تشغيل التلاوة حاليًا');
-    };
-    audio.play().catch(() => {
-      setIsPlayingAyah(false);
+
+    const rawUrl = getAyahAudioUrl(
+      reciterId,
+      entry.surahNumber,
+      entry.ayahNumber,
+    );
+    const playableUrl = await resolveOfflinePlayableUrl(rawUrl);
+    if (token !== playbackTokenRef.current) return false;
+
+    return new Promise<boolean>((resolve) => {
+      setIsPlayingAyah(true);
+      audio.src = playableUrl;
+      audio.onended = () => {
+        setIsPlayingAyah(false);
+        resolve(token === playbackTokenRef.current);
+      };
+      audio.onerror = () => {
+        setIsPlayingAyah(false);
+        setAudioNote(
+          typeof navigator !== 'undefined' && !navigator.onLine
+            ? 'يرجى الاتصال بالإنترنت لسماع التلاوة (أو حمّل قسم رفيقي للعمل بدون نت)'
+            : 'تعذر تشغيل التلاوة حاليًا',
+        );
+        resolve(false);
+      };
+      audio.play().catch(() => {
+        setIsPlayingAyah(false);
+        resolve(false);
+      });
     });
   };
 
-  const handleSelectWord = (entry: RafiqiWordEntry, withVoiceReply = false) => {
-    setActiveWord(entry);
-    setAudioNote(null);
-    if (withVoiceReply) {
-      speakFriendlyReply(entry.replyAr);
+  const playSheikhHumanVoiceAndWait = async (
+    textToSpeak: string,
+    token: number,
+    preloadedUrlPromise?: Promise<string | null>,
+  ): Promise<boolean> => {
+    if (!voiceReplyEnabled || token !== playbackTokenRef.current) return false;
+
+    if (ayahAudioRef.current) {
+      ayahAudioRef.current.onended = null;
+      ayahAudioRef.current.onerror = null;
+      ayahAudioRef.current.pause();
     }
-    playAyahForEntry(entry, selectedReciter);
+    setIsPlayingAyah(false);
+    setIsPreparingSheikhVoice(true);
+    setAudioNote(null);
+
+    const wavUrl = await (preloadedUrlPromise ||
+      resolveSheikhHumanVoiceUrl(textToSpeak));
+    setIsPreparingSheikhVoice(false);
+
+    if (token !== playbackTokenRef.current) return false;
+    if (!wavUrl) {
+      setAudioNote(
+        typeof navigator !== 'undefined' && !navigator.onLine
+          ? 'يرجى الاتصال بالإنترنت لسماع رد الشيخ الصوتي (أو حمّل قسم رفيقي للعمل بدون نت)'
+          : 'تعذر تشغيل صوت الشيخ حاليًا — تأكد من الاتصال أو تحميل قسم رفيقي للعمل بدون نت',
+      );
+      return false;
+    }
+
+    if (!sheikhAudioRef.current) {
+      sheikhAudioRef.current = new Audio();
+    }
+    const sheikhAudio = sheikhAudioRef.current;
+    sheikhAudio.onended = null;
+    sheikhAudio.onerror = null;
+    sheikhAudio.pause();
+
+    return new Promise<boolean>((resolve) => {
+      setIsPlayingSheikhReply(true);
+      sheikhAudio.src = wavUrl;
+      sheikhAudio.onended = () => {
+        setIsPlayingSheikhReply(false);
+        resolve(token === playbackTokenRef.current);
+      };
+      sheikhAudio.onerror = () => {
+        setIsPlayingSheikhReply(false);
+        setAudioNote('تعذر تشغيل صوت الشيخ حاليًا');
+        resolve(false);
+      };
+      sheikhAudio.play().catch(() => {
+        setIsPlayingSheikhReply(false);
+        resolve(false);
+      });
+    });
+  };
+
+  const playAyahOnly = (
+    entry: RafiqiWordEntry,
+    reciterId: ReciterId = selectedReciter,
+  ) => {
+    stopAllRafiqiAudio();
+    const token = playbackTokenRef.current;
+    void playAyahAndWait(entry, reciterId, token);
+  };
+
+  const playSheikhReplyOnly = (textToSpeak: string) => {
+    if (isPlayingSheikhReply) {
+      stopAllRafiqiAudio();
+      return;
+    }
+    stopAllRafiqiAudio();
+    const token = playbackTokenRef.current;
+    void playSheikhHumanVoiceAndWait(textToSpeak, token);
+  };
+
+  const handleSelectWord = (entry: RafiqiWordEntry) => {
+    setActiveWord(entry);
+    setActiveReplyText(entry.replyAr);
+    setAudioNote(null);
+    playAyahOnly(entry, selectedReciter);
   };
 
   const togglePlayPauseAyah = () => {
-    const audio = audioRef.current;
-    if (audio && isPlayingAyah) {
-      audio.pause();
-      setIsPlayingAyah(false);
+    if (isPlayingAyah) {
+      stopAllRafiqiAudio();
       return;
     }
-    playAyahForEntry(activeWord, selectedReciter);
+    playAyahOnly(activeWord, selectedReciter);
   };
 
-  const processUserDialogue = (spoken: string) => {
+  /**
+   * When the user speaks or writes to Rafiqi:
+   * 1) Stop any current audio cleanly (never overlap).
+   * 2) Play the matched Quran Ayah FIRST and wait for it to finish completely.
+   * 3) Meanwhile prepare the Sheikh's warm human response + WAV audio in the background.
+   * 4) After the Ayah finishes + a calm pause, play the real human Sheikh's voice reply.
+   */
+  const processUserDialogue = async (spoken: string) => {
     const trimmed = spoken.trim();
     if (!trimmed) return;
+
+    stopAllRafiqiAudio();
+    const token = playbackTokenRef.current;
+
     setHeardSpeech(trimmed);
     const matched = matchRafiqiWordFromSpeech(trimmed);
     setActiveWord(matched);
-    speakFriendlyReply(matched.replyAr);
-    window.setTimeout(() => {
-      playAyahForEntry(matched, selectedReciter);
-    }, 600);
+    setActiveReplyText(matched.replyAr);
+
+    const preparedSheikhPromise: Promise<{
+      replyText: string;
+      audioUrl: string | null;
+    }> = (async () => {
+      const replyText = await generatePersonalizedSheikhReply(trimmed, matched);
+      const audioUrl = voiceReplyEnabled
+        ? await resolveSheikhHumanVoiceUrl(replyText)
+        : null;
+      return {replyText, audioUrl};
+    })();
+
+    // Step 1: Recite the Quran Ayah FIRST (zero overlap with Sheikh voice)
+    await playAyahAndWait(matched, selectedReciter, token);
+    if (token !== playbackTokenRef.current) return;
+
+    // Brief calm breath pause between Quran recitation and Sheikh guidance
+    await new Promise<void>((r) => window.setTimeout(r, 350));
+    if (token !== playbackTokenRef.current) return;
+
+    const prepared = await preparedSheikhPromise;
+    if (token !== playbackTokenRef.current) return;
+
+    setActiveReplyText(prepared.replyText);
+
+    // Step 2: Speak the Sheikh's real human voice reply AFTER the Ayah ends
+    if (voiceReplyEnabled) {
+      await playSheikhHumanVoiceAndWait(
+        prepared.replyText,
+        token,
+        Promise.resolve(prepared.audioUrl),
+      );
+    }
   };
 
   const handleToggleMic = () => {
@@ -184,11 +334,7 @@ export const RafiqiView: React.FC<RafiqiViewProps> = ({preferredReciter}) => {
       return;
     }
 
-    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
-    }
-    audioRef.current?.pause();
-    setIsPlayingAyah(false);
+    stopAllRafiqiAudio();
 
     const rec = new SpeechRec();
     rec.lang = 'ar-SA';
@@ -204,13 +350,21 @@ export const RafiqiView: React.FC<RafiqiViewProps> = ({preferredReciter}) => {
       lastTranscript = full.trim();
       setHeardSpeech(lastTranscript);
     };
-    rec.onerror = () => {
+    rec.onerror = (err) => {
       setListening(false);
+      if (
+        err.error === 'network' ||
+        (typeof navigator !== 'undefined' && !navigator.onLine)
+      ) {
+        setAudioNote(
+          'يرجى الاتصال بالإنترنت للتعرف التلقائي على الصوت، ويمكنك كتابة كلمتك أدناه.',
+        );
+      }
     };
     rec.onend = () => {
       setListening(false);
       if (lastTranscript) {
-        processUserDialogue(lastTranscript);
+        void processUserDialogue(lastTranscript);
       }
     };
 
@@ -225,7 +379,7 @@ export const RafiqiView: React.FC<RafiqiViewProps> = ({preferredReciter}) => {
 
   return (
     <div className="space-y-4 pb-4">
-      {/* Companion Header + Human Voice Mic */}
+      {/* Companion Header + Human Sheikh Voice Mic */}
       <section className="rounded-3xl border-2 border-[#C9A227] bg-[#050505] p-4 text-white">
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2.5">
@@ -234,18 +388,23 @@ export const RafiqiView: React.FC<RafiqiViewProps> = ({preferredReciter}) => {
             </span>
             <div>
               <h2 className="text-base font-bold text-[#FCE38A]">
-                رفيقي — الرفيق الإيماني الناطق
+                رفيقي — بصوت الشيخ الحقيقي
               </h2>
               <p className="text-[11px] text-zinc-300">
-                تحدث معي أو اختر كلمة من 30 كلمة لتسمع آيتها بصوت شيخك
+                تحدث معي لأتلو لك الآية أولًا ثم أحدثك بصوت شيخ حقيقي بدون تداخل
               </p>
             </div>
           </div>
 
           <button
             type="button"
-            onClick={() => setVoiceReplyEnabled((v) => !v)}
-            aria-label={voiceReplyEnabled ? 'كتم الرد الصوتي' : 'تفعيل الرد الصوتي'}
+            onClick={() => {
+              if (voiceReplyEnabled) {
+                stopAllRafiqiAudio();
+              }
+              setVoiceReplyEnabled((v) => !v);
+            }}
+            aria-label={voiceReplyEnabled ? 'كتم صوت الشيخ' : 'تفعيل صوت الشيخ'}
             className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border ${
               voiceReplyEnabled
                 ? 'border-[#C9A227] bg-[#C9A227]/20 text-[#FCE38A]'
@@ -292,8 +451,9 @@ export const RafiqiView: React.FC<RafiqiViewProps> = ({preferredReciter}) => {
             onSubmit={(e) => {
               e.preventDefault();
               if (userMessage.trim()) {
-                processUserDialogue(userMessage);
+                const msg = userMessage;
                 setUserMessage('');
+                void processUserDialogue(msg);
               }
             }}
             className="mt-3 flex w-full items-center gap-2"
@@ -302,7 +462,7 @@ export const RafiqiView: React.FC<RafiqiViewProps> = ({preferredReciter}) => {
               type="text"
               value={userMessage}
               onChange={(e) => setUserMessage(e.target.value)}
-              placeholder="اكتب ما في قلبك (مثل: حزين، محتاج رزق، خايف)..."
+              placeholder="احكِ للشيخ ما في قلبك (مثل: حزين، محتاج رزق، خايف)..."
               className="min-h-[40px] flex-1 rounded-xl border border-[#C9A227]/50 bg-black px-3 text-xs text-white outline-none focus:border-[#C9A227]"
             />
             <button
@@ -315,7 +475,7 @@ export const RafiqiView: React.FC<RafiqiViewProps> = ({preferredReciter}) => {
           </form>
         </div>
 
-        {/* 30 Reciters Selector + Offline Pack */}
+        {/* 30 Reciters Selector */}
         <div className="mt-3 space-y-2 rounded-2xl border border-[#C9A227]/45 bg-[#0A0904] p-3">
           <div className="flex items-center gap-2">
             <UserCheck className="h-4 w-4 shrink-0 text-[#C9A227]" />
@@ -332,7 +492,7 @@ export const RafiqiView: React.FC<RafiqiViewProps> = ({preferredReciter}) => {
             onChange={(e) => {
               const nextReciter = e.target.value as ReciterId;
               setSelectedReciter(nextReciter);
-              playAyahForEntry(activeWord, nextReciter);
+              playAyahOnly(activeWord, nextReciter);
             }}
             className="min-h-[40px] w-full rounded-xl border border-[#C9A227]/60 bg-black px-3 text-xs font-bold text-white outline-none"
           >
@@ -357,13 +517,13 @@ export const RafiqiView: React.FC<RafiqiViewProps> = ({preferredReciter}) => {
           </span>
         </div>
 
-        <p className="rounded-2xl border border-[#C9A227]/35 bg-[#0D0A02] p-3 text-xs leading-relaxed text-zinc-100">
-          «{activeWord.replyAr}»
-        </p>
-
         <div className="rounded-2xl border-2 border-[#C9A227] bg-black p-4 text-center">
           <p className="font-quran text-xl leading-[2.2] font-bold text-[#FCE38A]">
             {activeWord.ayahTextAr}
+          </p>
+
+          <p className="mt-3 rounded-2xl border border-[#C9A227]/35 bg-[#0D0A02] p-3 text-xs leading-relaxed text-zinc-100">
+            «{activeReplyText}»
           </p>
 
           <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
@@ -386,11 +546,24 @@ export const RafiqiView: React.FC<RafiqiViewProps> = ({preferredReciter}) => {
 
             <button
               type="button"
-              onClick={() => speakFriendlyReply(activeWord.replyAr)}
-              className="inline-flex min-h-[40px] items-center gap-1.5 rounded-xl border border-[#C9A227] bg-[#120E04] px-3 text-xs font-bold text-[#FCE38A]"
+              onClick={() => playSheikhReplyOnly(activeReplyText)}
+              disabled={isPreparingSheikhVoice}
+              className="inline-flex min-h-[40px] items-center gap-1.5 rounded-xl border border-[#C9A227] bg-[#120E04] px-3 text-xs font-bold text-[#FCE38A] disabled:opacity-70"
             >
-              <Volume2 className="h-4 w-4" />
-              <span>اسمع رد رفيقي</span>
+              {isPreparingSheikhVoice ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : isPlayingSheikhReply ? (
+                <Pause className="h-4 w-4" />
+              ) : (
+                <Volume2 className="h-4 w-4" />
+              )}
+              <span>
+                {isPreparingSheikhVoice
+                  ? 'جاري تجهيز صوت الشيخ...'
+                  : isPlayingSheikhReply
+                    ? 'إيقاف صوت الشيخ'
+                    : 'اسمع رد الشيخ'}
+              </span>
             </button>
           </div>
 
@@ -420,7 +593,7 @@ export const RafiqiView: React.FC<RafiqiViewProps> = ({preferredReciter}) => {
               <button
                 key={entry.id}
                 type="button"
-                onClick={() => handleSelectWord(entry, false)}
+                onClick={() => handleSelectWord(entry)}
                 className={`flex min-h-[46px] flex-col items-center justify-center rounded-2xl border px-2 py-2 text-center transition-colors ${
                   isSelected
                     ? 'border-2 border-[#C9A227] bg-[#C9A227] text-black'

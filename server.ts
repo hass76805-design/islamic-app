@@ -151,6 +151,152 @@ async function startServer() {
     }
   });
 
+  app.post('/api/rafiqi-tts', async (req: Request, res: Response) => {
+    try {
+      const body = req.body as {text?: unknown} | null;
+      const rawText = typeof body?.text === 'string' ? body.text.trim() : '';
+      if (!rawText || rawText.length > 1500) {
+        res.status(400).json({
+          ok: false,
+          reason: 'invalid_text',
+        });
+        return;
+      }
+
+      const ai = getGeminiClient();
+      if (!ai) {
+        res.status(503).json({
+          ok: false,
+          reason: 'no_api_key',
+        });
+        return;
+      }
+
+      const sheikhStyle =
+        'Warm, calm, compassionate, dignified mature male Egyptian/Arabic Islamic Sheikh mentor speaking gently and naturally from the heart to comfort a friend, with authentic human breathing, clear Arabic articulation, and soothing warmth — never robotic.';
+
+      const ttsModels = ['gemini-3.8-flash-tts', 'gemini-3.8-flash-lite-tts'];
+      let audioBase64: string | undefined;
+
+      for (const model of ttsModels) {
+        try {
+          const response = await ai.models.generateContent({
+            model,
+            contents: [
+              {
+                role: 'user',
+                parts: [
+                  {
+                    text: rawText,
+                    speechMetadata: {
+                      style: sheikhStyle,
+                    },
+                  },
+                ],
+              },
+            ],
+            config: {
+              responseModalities: ['AUDIO'],
+              speechConfig: {
+                voiceConfig: {
+                  prebuiltVoiceConfig: {voiceName: 'Charon'},
+                },
+              },
+            },
+          });
+
+          const candidateData =
+            response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+          if (candidateData && candidateData.length > 64) {
+            audioBase64 = candidateData;
+            break;
+          }
+        } catch {
+          // Try next TTS model
+        }
+      }
+
+      if (!audioBase64) {
+        res.status(502).json({
+          ok: false,
+          reason: 'tts_generation_failed',
+        });
+        return;
+      }
+
+      res.json({
+        ok: true,
+        audioBase64,
+        mimeType: 'audio/wav',
+      });
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : 'Sheikh TTS request failed';
+      res.status(502).json({
+        ok: false,
+        reason: 'upstream_error',
+        error: message,
+      });
+    }
+  });
+
+  app.post('/api/rafiqi-sheikh-reply', async (req: Request, res: Response) => {
+    try {
+      const body = req.body as {
+        userMessage?: unknown;
+        matchedWordAr?: unknown;
+        matchedSurahNameAr?: unknown;
+        matchedAyahNumber?: unknown;
+        matchedAyahTextAr?: unknown;
+        fallbackReplyAr?: unknown;
+      } | null;
+
+      const userMessage =
+        typeof body?.userMessage === 'string' ? body.userMessage.trim() : '';
+      const fallbackReplyAr =
+        typeof body?.fallbackReplyAr === 'string'
+          ? body.fallbackReplyAr.trim()
+          : '';
+      const matchedSurahNameAr =
+        typeof body?.matchedSurahNameAr === 'string'
+          ? body.matchedSurahNameAr
+          : '';
+      const matchedAyahTextAr =
+        typeof body?.matchedAyahTextAr === 'string'
+          ? body.matchedAyahTextAr
+          : '';
+
+      if (!userMessage || userMessage.length > 1000) {
+        res.status(400).json({ok: false, replyText: fallbackReplyAr});
+        return;
+      }
+
+      const ai = getGeminiClient();
+      if (!ai) {
+        res.json({ok: false, reason: 'no_api_key', replyText: fallbackReplyAr});
+        return;
+      }
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-4-hydrogen',
+        contents: `المستخدم يقول: "${userMessage}".\nتم تشغيل هذه الآية الكريمة له أولًا: (${matchedSurahNameAr}: "${matchedAyahTextAr}").\nاكتب رد الشيخ البشري الحنون عليه بعد سماع الآية مباشرة في جملتين إلى ثلاث جمل قصيرة دافئة بالعربية الواضحة المطمئنة (بحد أقصى 45 كلمة)، يخاطب فيها قلبه وحاله مباشرة دون مقدمات طويلة أو رموز أو تشكيل معقد.`,
+        config: {
+          systemInstruction:
+            'أنت شيخ إسلامي مصري وقور رحيم ورفيق إيماني قريب من القلب، تخاطب السائل بمودة وأبوة وصدق إنساني بعد أن سمع الآية القرآنية، بكلمات قصيرة دافئة مريحة للنفس.',
+          thinkingConfig: {thinkingLevel: ThinkingLevel.LOW},
+        },
+      });
+
+      const replyText = (response.text ?? '').trim();
+      res.json({
+        ok: true,
+        replyText: replyText || fallbackReplyAr,
+      });
+    } catch {
+      res.json({ok: false, replyText: ''});
+    }
+  });
+
   if (isDev) {
     const {createServer} = await import('vite');
     const vite = await createServer({

@@ -54,7 +54,12 @@ import {
 } from '../utils/prayerTimes';
 import {
   BackgroundOfflineProgress,
+  estimateOfflineSelection,
+  getAllOfflineSectionIds,
+  getAvailableOfflineSections,
   getCurrentOfflineProgress,
+  getDownloadedOfflineSections,
+  OfflineSectionId,
   resumeFullOfflineBackgroundDownload,
   startFullOfflineBackgroundDownload,
   subscribeOfflineDownloadState,
@@ -106,7 +111,12 @@ export const HomeView: React.FC<HomeViewProps> = ({
   const [citySearch, setCitySearch] = useState('');
   const [shareModalOpen, setShareModalOpen] = useState(false);
   const [shareCopied, setShareCopied] = useState(false);
-  const [offlineConfirmOpen, setOfflineConfirmOpen] = useState(false);
+  const [offlineChecklistOpen, setOfflineChecklistOpen] = useState(false);
+  const [offlineSummaryOpen, setOfflineSummaryOpen] = useState(false);
+  const [selectedSections, setSelectedSections] = useState<OfflineSectionId[]>(
+    () => getDownloadedOfflineSections(),
+  );
+  const [selectionWarning, setSelectionWarning] = useState(false);
   const [offlineDownloadState, setOfflineDownloadState] =
     useState<BackgroundOfflineProgress>(() => getCurrentOfflineProgress());
   const [timeFormat, setTimeFormat] = useState<'12' | '24'>(() => {
@@ -119,15 +129,56 @@ export const HomeView: React.FC<HomeViewProps> = ({
 
   useHardwareBack(cityPickerOpen, () => setCityPickerOpen(false));
   useHardwareBack(shareModalOpen, () => setShareModalOpen(false));
-  useHardwareBack(offlineConfirmOpen, () => setOfflineConfirmOpen(false));
+  useHardwareBack(offlineChecklistOpen, () => setOfflineChecklistOpen(false));
+  useHardwareBack(offlineSummaryOpen, () => setOfflineSummaryOpen(false));
 
   useEffect(() => {
     return subscribeOfflineDownloadState(setOfflineDownloadState);
   }, []);
 
+  const availableSections = useMemo(() => getAvailableOfflineSections(), []);
+  const allSectionIds = useMemo(() => getAllOfflineSectionIds(), []);
+  const allSectionsEstimate = useMemo(
+    () => estimateOfflineSelection(allSectionIds),
+    [allSectionIds],
+  );
+  const isAllSelected =
+    allSectionIds.length > 0 &&
+    allSectionIds.every((id) => selectedSections.includes(id));
+  const selectionEstimate = useMemo(
+    () => estimateOfflineSelection(selectedSections),
+    [selectedSections],
+  );
+
+  const toggleSectionOption = (id: OfflineSectionId) => {
+    setSelectionWarning(false);
+    setSelectedSections((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id],
+    );
+  };
+
+  const toggleAllSections = () => {
+    setSelectionWarning(false);
+    setSelectedSections((prev) =>
+      allSectionIds.every((id) => prev.includes(id)) ? [] : [...allSectionIds],
+    );
+  };
+
+  const handleConfirmChecklist = () => {
+    if (selectedSections.length === 0) {
+      setSelectionWarning(true);
+      return;
+    }
+    setSelectionWarning(false);
+    setOfflineChecklistOpen(false);
+    setOfflineSummaryOpen(true);
+  };
+
   const handleConfirmStartFullDownload = () => {
-    setOfflineConfirmOpen(false);
-    void startFullOfflineBackgroundDownload(settings.preferredReciter);
+    const chosen =
+      selectedSections.length > 0 ? selectedSections : allSectionIds;
+    setOfflineSummaryOpen(false);
+    void startFullOfflineBackgroundDownload(settings.preferredReciter, chosen);
   };
 
   const toggleTimeFormat = () => {
@@ -525,7 +576,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
         </div>
       </section>
 
-      {/* Single Prominent Full Offline Content Download Button */}
+      {/* Single Prominent Offline Content Download Button */}
       <section className="rounded-3xl border-2 border-[#C9A227] bg-white p-4 dark:bg-[#050505]">
         <button
           type="button"
@@ -535,7 +586,8 @@ export const HomeView: React.FC<HomeViewProps> = ({
                 settings.preferredReciter,
               );
             } else if (offlineDownloadState.status !== 'downloading') {
-              setOfflineConfirmOpen(true);
+              setSelectionWarning(false);
+              setOfflineChecklistOpen(true);
             }
           }}
           disabled={offlineDownloadState.status === 'downloading'}
@@ -550,12 +602,12 @@ export const HomeView: React.FC<HomeViewProps> = ({
           <div className="min-w-0 flex-1 space-y-0.5">
             <p className="text-sm font-extrabold leading-snug">
               {offlineDownloadState.status === 'downloading'
-                ? `جاري تحميل محتوى التطبيق... ${offlineDownloadState.percent}%`
+                ? `جاري تحميل المحتوى... ${offlineDownloadState.percent}%`
                 : offlineDownloadState.status === 'paused'
                   ? `التحميل متوقف — باقي ${offlineDownloadState.remainingMb} ميجا`
                   : offlineDownloadState.status === 'completed'
-                    ? 'تم تحميل محتوى التطبيق بالكامل للعمل بدون انترنت ✓'
-                    : 'تحميل محتوى التطبيق بالكامل للعمل بدون انترنت'}
+                    ? 'تحميل المحتوى · جاهز بدون نت ✓'
+                    : 'تحميل المحتوى'}
             </p>
             <p
               className={`text-[11px] font-semibold ${
@@ -567,14 +619,14 @@ export const HomeView: React.FC<HomeViewProps> = ({
               }`}
             >
               {offlineDownloadState.status === 'downloading'
-                ? `تم تحميل ${offlineDownloadState.downloadedMb} ميجا من 850 ميجا — باقي ${offlineDownloadState.remainingMb} ميجا`
+                ? `تم تحميل ${offlineDownloadState.downloadedMb} ميجا من ${offlineDownloadState.totalMb} ميجا — باقي ${offlineDownloadState.remainingMb} ميجا`
                 : offlineDownloadState.status === 'paused'
                   ? offlineDownloadState.pauseReason === 'offline'
-                    ? `تم تحميل ${offlineDownloadState.downloadedMb} من 850 ميجا — سيكمل تلقائيًا عند عودة النت`
-                    : `تم تحميل ${offlineDownloadState.downloadedMb} من 850 ميجا — اضغط لاستئناف التحميل`
+                    ? `تم تحميل ${offlineDownloadState.downloadedMb} من ${offlineDownloadState.totalMb} ميجا — سيكمل تلقائيًا عند عودة النت`
+                    : `تم تحميل ${offlineDownloadState.downloadedMb} من ${offlineDownloadState.totalMb} ميجا — اضغط لاستئناف التحميل`
                   : offlineDownloadState.status === 'completed'
-                    ? 'تم تحميل 850 من 850 ميجا (100%) — يعمل بدون نت ويتحدث تلقائيًا'
-                    : 'المصحف · التفسير · القصص · الأذكار · الأذان والتلاوات (حوالي 850 ميجا)'}
+                    ? `تم الحفظ محليًا (${offlineDownloadState.totalMb} ميجا) — اضغط لتحديد أقسام أخرى`
+                    : 'اختر الأقسام التي تريد تشغيلها بدون إنترنت بالكامل'}
             </p>
           </div>
           <span
@@ -907,25 +959,30 @@ export const HomeView: React.FC<HomeViewProps> = ({
         </div>
       )}
 
-      {/* Confirmation Dialog Before Downloading Full Offline Pack (~850 MB) */}
-      {offlineConfirmOpen && (
+      {/* Step 1: Dynamic All-Sections Checklist Modal */}
+      {offlineChecklistOpen && (
         <div
           role="dialog"
           aria-modal="true"
-          aria-label="تأكيد تحميل محتوى التطبيق"
+          aria-label="اختيار أقسام التحميل بدون نت"
           className="fixed inset-y-0 left-1/2 z-50 flex w-full max-w-[400px] -translate-x-1/2 items-center justify-center bg-black/85 p-3"
         >
-          <div className="w-full space-y-3.5 rounded-3xl border-2 border-[#C9A227] bg-[#050505] p-5 text-white shadow-[0_0_40px_rgba(201,162,39,0.3)]">
-            <div className="flex items-center justify-between border-b border-[#C9A227]/30 pb-2.5">
+          <div className="flex max-h-[85vh] w-full flex-col space-y-3 rounded-3xl border-2 border-[#C9A227] bg-[#050505] p-5 text-white shadow-[0_0_40px_rgba(201,162,39,0.3)]">
+            <div className="flex shrink-0 items-center justify-between border-b border-[#C9A227]/30 pb-2.5">
               <div className="flex items-center gap-2">
                 <Download className="h-5 w-5 text-[#FCE38A]" />
-                <h3 className="text-base font-extrabold text-[#FCE38A]">
-                  تحميل محتوى التطبيق بالكامل
-                </h3>
+                <div>
+                  <h3 className="text-base font-extrabold text-[#FCE38A]">
+                    تحميل المحتوى للعمل بدون نت
+                  </h3>
+                  <p className="text-[10px] font-semibold text-[#C9A227]">
+                    جميع أقسام التطبيق ({availableSections.length} قسمًا)
+                  </p>
+                </div>
               </div>
               <button
                 type="button"
-                onClick={() => setOfflineConfirmOpen(false)}
+                onClick={() => setOfflineChecklistOpen(false)}
                 aria-label="إغلاق"
                 className="flex h-8 w-8 items-center justify-center rounded-xl border border-[#C9A227]/50 text-[#FCE38A]"
               >
@@ -933,13 +990,149 @@ export const HomeView: React.FC<HomeViewProps> = ({
               </button>
             </div>
 
-            <div className="rounded-2xl border border-[#C9A227]/45 bg-[#120E04] p-3.5 text-sm leading-relaxed text-[#FCE38A]">
-              <p className="font-extrabold">
-                التطبيق هياخد تقريبًا 850 ميجا — هل تريد التحميل؟
+            <button
+              type="button"
+              onClick={toggleAllSections}
+              className={`flex min-h-[48px] w-full shrink-0 items-center justify-between gap-2 rounded-2xl border-2 px-3.5 py-2 text-right transition ${
+                isAllSelected
+                  ? 'border-[#FCE38A] bg-[#C9A227]/20 text-[#FCE38A]'
+                  : 'border-[#C9A227]/55 bg-[#0A0904] text-white'
+              }`}
+            >
+              <div className="flex items-center gap-2.5">
+                <span
+                  className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border ${
+                    isAllSelected
+                      ? 'border-[#FCE38A] bg-[#C9A227] text-black'
+                      : 'border-[#C9A227]/70 bg-black text-transparent'
+                  }`}
+                >
+                  <Check className="h-3.5 w-3.5 stroke-[3]" />
+                </span>
+                <span className="text-sm font-extrabold">
+                  كل الأقسام ({availableSections.length})
+                </span>
+              </div>
+              <span className="font-mono-num text-[11px] font-bold text-[#FCE38A]">
+                {allSectionsEstimate.totalMb} ميجا
+              </span>
+            </button>
+
+            <div className="flex-1 space-y-2 overflow-y-auto pl-1">
+              {availableSections.map((opt) => {
+                const checked = selectedSections.includes(opt.id);
+                return (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => toggleSectionOption(opt.id)}
+                    className={`flex min-h-[50px] w-full items-center justify-between gap-2 rounded-2xl border px-3.5 py-2.5 text-right transition ${
+                      checked
+                        ? 'border-[#FCE38A] bg-[#141004] text-[#FCE38A]'
+                        : 'border-[#C9A227]/35 bg-black text-white'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <span
+                        className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border ${
+                          checked
+                            ? 'border-[#FCE38A] bg-[#C9A227] text-black'
+                            : 'border-[#C9A227]/60 bg-black text-transparent'
+                        }`}
+                      >
+                        <Check className="h-3.5 w-3.5 stroke-[3]" />
+                      </span>
+                      <div>
+                        <p className="text-sm font-extrabold">{opt.labelAr}</p>
+                        <p className="text-[10px] text-zinc-400">
+                          {opt.descAr}
+                        </p>
+                      </div>
+                    </div>
+                    <span className="font-mono-num shrink-0 text-[11px] font-bold text-[#C9A227]">
+                      {opt.estimatedMb} ميجا
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {selectionWarning && (
+              <p className="shrink-0 text-center text-xs font-bold text-rose-400">
+                اختر قسمًا واحدًا على الأقل للمتابعة
               </p>
-              <p className="mt-1.5 text-xs text-zinc-300">
-                سيظهر إشعار علوي وشريط تحميل واحد يوضح الميجات المحمّلة والمتبقية، مع إمكانية الإيقاف المؤقت والاستئناف أو الإلغاء في أي وقت، وبعد الانتهاء يعمل التطبيق بالكامل بدون إنترنت.
-              </p>
+            )}
+
+            <div className="grid shrink-0 grid-cols-2 gap-2.5 pt-1">
+              <button
+                type="button"
+                onClick={handleConfirmChecklist}
+                className="min-h-[46px] rounded-2xl bg-gradient-to-l from-[#FCE38A] via-[#C9A227] to-[#9A7415] text-sm font-extrabold text-black"
+              >
+                تم ({selectedSections.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setOfflineChecklistOpen(false)}
+                className="min-h-[46px] rounded-2xl border border-[#C9A227]/60 bg-black text-sm font-bold text-[#FCE38A]"
+              >
+                إلغاء
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Step 2: Size & Estimated Time Summary Dialog */}
+      {offlineSummaryOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="تفاصيل حجم ووقت التحميل"
+          className="fixed inset-y-0 left-1/2 z-50 flex w-full max-w-[400px] -translate-x-1/2 items-center justify-center bg-black/85 p-3"
+        >
+          <div className="w-full space-y-3.5 rounded-3xl border-2 border-[#C9A227] bg-[#050505] p-5 text-white shadow-[0_0_40px_rgba(201,162,39,0.3)]">
+            <div className="flex items-center justify-between border-b border-[#C9A227]/30 pb-2.5">
+              <div className="flex items-center gap-2">
+                <Download className="h-5 w-5 text-[#FCE38A]" />
+                <h3 className="text-base font-extrabold text-[#FCE38A]">
+                  ملخص التحميل بدون نت
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setOfflineSummaryOpen(false)}
+                aria-label="إغلاق"
+                className="flex h-8 w-8 items-center justify-center rounded-xl border border-[#C9A227]/50 text-[#FCE38A]"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="space-y-2.5 rounded-2xl border border-[#C9A227]/45 bg-[#120E04] p-4 text-sm text-[#FCE38A]">
+              <div className="flex items-center justify-between border-b border-[#C9A227]/25 pb-2">
+                <span className="text-xs text-zinc-300">المساحة المطلوبة:</span>
+                <span className="font-mono-num text-base font-extrabold text-[#FCE38A]">
+                  {selectionEstimate.totalMb} ميجا تقريبًا
+                </span>
+              </div>
+              <div className="flex items-center justify-between border-b border-[#C9A227]/25 pb-2">
+                <span className="text-xs text-zinc-300">الوقت المتوقع:</span>
+                <span className="font-mono-num text-sm font-extrabold text-[#FCE38A]">
+                  حوالي {selectionEstimate.estimatedMinutes} دقيقة
+                </span>
+              </div>
+              <div className="pt-0.5 text-xs text-zinc-300">
+                <p className="font-bold text-[#FCE38A]">الأقسام المختارة:</p>
+                <p className="mt-1 leading-relaxed text-zinc-200">
+                  {selectionEstimate.selectedOptions
+                    .map((o) => o.labelAr)
+                    .join(' · ')}
+                </p>
+                <p className="mt-2 text-[11px] text-emerald-300">
+                  سيتم حفظ كل الملفات محليًا (IndexedDB و Cache Storage) لتعمل بدون إنترنت تمامًا، مع أزرار إيقاف مؤقت واستئناف وإلغاء.
+                </p>
+              </div>
             </div>
 
             <div className="grid grid-cols-2 gap-2.5 pt-1">
@@ -948,14 +1141,17 @@ export const HomeView: React.FC<HomeViewProps> = ({
                 onClick={handleConfirmStartFullDownload}
                 className="min-h-[46px] rounded-2xl bg-gradient-to-l from-[#FCE38A] via-[#C9A227] to-[#9A7415] text-sm font-extrabold text-black"
               >
-                تحميل
+                بدء التحميل
               </button>
               <button
                 type="button"
-                onClick={() => setOfflineConfirmOpen(false)}
+                onClick={() => {
+                  setOfflineSummaryOpen(false);
+                  setOfflineChecklistOpen(true);
+                }}
                 className="min-h-[46px] rounded-2xl border border-[#C9A227]/60 bg-black text-sm font-bold text-[#FCE38A]"
               >
-                إلغاء
+                تعديل الاختيارات
               </button>
             </div>
           </div>

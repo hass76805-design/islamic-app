@@ -68,6 +68,7 @@ import {
   notifyNetworkOnlineAutoResumeToSw,
   pauseFullOfflineBackgroundDownload,
   prewarmCoreOfflineTextData,
+  resolveOfflinePlayableUrl,
   resumeFullOfflineBackgroundDownload,
   subscribeOfflineDownloadState,
   syncOfflineContentUpdatesInBackground,
@@ -78,8 +79,13 @@ import {
   DEFAULT_PRAYER_OFFSETS,
   precomputeMonthlyPrayerCache,
 } from './utils/prayerTimes';
+import {
+  resolveSheikhHumanVoiceUrl,
+  STARTUP_DUA_TEXT,
+} from './utils/rafiqiVoice';
 import {playRamadanCannonSound} from './utils/ramadanCannon';
 
+let splashPlayedThisLaunch = false;
 const FIRED_ALERTS_STORAGE_KEY = 'alzahabi_fired_alerts_v1';
 const SALAWAT_ANCHOR_STORAGE_KEY = 'alzahabi_salawat_anchor_v1';
 
@@ -262,8 +268,15 @@ function AppContent({
     deleteBookmarkFromCloud,
   } = useFirebase();
 
-  const [showSplash, setShowSplash] = useState(true);
-  const handleSplashComplete = useCallback(() => setShowSplash(false), []);
+  const [showSplash, setShowSplash] = useState<boolean>(() => {
+    if (splashPlayedThisLaunch) return false;
+    splashPlayedThisLaunch = true;
+    return true;
+  });
+  const handleSplashComplete = useCallback(() => {
+    splashPlayedThisLaunch = true;
+    setShowSplash(false);
+  }, []);
   const [activeTab, setActiveTab] = useState<TabId>('home');
   const [moreSubPage, setMoreSubPage] = useState<MoreSubPageId>('menu');
   const [storyCategory, setStoryCategory] =
@@ -548,6 +561,133 @@ function AppContent({
     };
   }, [settings.preferredReciter]);
 
+  // Automatically cache all selected Adhan / Iqamah / Tawasih / Eid / Salawat audio files locally for offline background playback
+  useEffect(() => {
+    if (typeof navigator !== 'undefined' && !navigator.onLine) return;
+    if (!settings.adhanEnabled && !settings.salawatReminderEnabled) return;
+
+    const selectedAdhanIds = new Set<string>([
+      settings.preferredAdhan,
+      settings.perPrayerAdhan.fajr,
+      settings.perPrayerAdhan.dhuhr,
+      settings.perPrayerAdhan.asr,
+      settings.perPrayerAdhan.maghrib,
+      settings.perPrayerAdhan.isha,
+    ]);
+    const adhanUrls = ADHAN_VOICES_30.filter((v) =>
+      selectedAdhanIds.has(v.id),
+    ).flatMap((v) => [v.url, ...(v.fallbackUrl ? [v.fallbackUrl] : [])]);
+
+    const iqamahUrls = IQAMAH_VOICES_3.map((i) => i.url);
+    const preUrls = PRE_ADHAN_VOICES_3.map((p) => p.url);
+    const tawasihUrls = TAWASIH_NAQSHABANDI.map((t) => t.url);
+    const eidUrls = EID_TAKBEERAT_VOICES_3.map((e) => e.url);
+    const kahfUrls = FRIDAY_KAHF_VOICES_3.map((k) => k.url);
+    const salawatUrls = SALAWAT_AUDIO_TRACKS.map((s) => s.url);
+
+    const allAdhanCoreUrls = Array.from(
+      new Set([
+        ...adhanUrls,
+        ...iqamahUrls,
+        ...preUrls,
+        POST_ADHAN_DUA.audioUrl,
+        ...tawasihUrls,
+        ...eidUrls,
+        ...kahfUrls,
+        ...salawatUrls,
+        ...POST_PRAYER_AZKAR_AUDIO_URLS,
+      ]),
+    );
+
+    const t = window.setTimeout(() => {
+      void cacheBatchUrls(allAdhanCoreUrls, undefined, 3);
+    }, 300);
+    return () => window.clearTimeout(t);
+  }, [
+    settings.adhanEnabled,
+    settings.salawatReminderEnabled,
+    settings.preferredAdhan,
+    settings.perPrayerAdhan,
+    settings.preferredIqamah,
+    settings.perPrayerIqamah,
+    settings.preferredPreAdhanSound,
+    settings.preferredTawasih,
+    settings.preferredEidTakbeer,
+    settings.preferredFridayKahf,
+  ]);
+
+  // Play sweet welcoming opening Dua voice once per launch (offline-ready + autoplay-safe)
+  const startupDuaTriggeredRef = useRef(false);
+  const startupDuaAudioRef = useRef<HTMLAudioElement | null>(null);
+  const liveAdhanActiveRef = useRef(false);
+  liveAdhanActiveRef.current = Boolean(liveAdhanModal);
+
+  useEffect(() => {
+    if (startupDuaTriggeredRef.current || typeof window === 'undefined') return;
+    startupDuaTriggeredRef.current = true;
+
+    let cancelled = false;
+    let cleanupGesture: (() => void) | null = null;
+
+    const prepareAndPlayStartupDua = async () => {
+      if (cancelled || liveAdhanActiveRef.current) return;
+
+      let duaSrc: string | null = await resolveSheikhHumanVoiceUrl(
+        STARTUP_DUA_TEXT,
+      );
+      if (!duaSrc) {
+        duaSrc = await resolveOfflinePlayableUrl(POST_ADHAN_DUA.audioUrl);
+      }
+      if (!duaSrc || cancelled || liveAdhanActiveRef.current) return;
+
+      if (!startupDuaAudioRef.current) {
+        startupDuaAudioRef.current = new Audio();
+      }
+      const audio = startupDuaAudioRef.current;
+      audio.src = duaSrc;
+      audio.volume = 0.92;
+      audio.preload = 'auto';
+
+      const tryPlayOnce = () => {
+        if (cancelled || liveAdhanActiveRef.current) return;
+        audio.play().catch(() => {
+          // If browser blocked autoplay before user gesture, play immediately on first interaction
+          if (cancelled || cleanupGesture) return;
+          const onFirstInteraction = () => {
+            cleanupGesture = null;
+            if (!cancelled && !liveAdhanActiveRef.current) {
+              audio.play().catch(() => {});
+            }
+          };
+          document.addEventListener('pointerdown', onFirstInteraction, {
+            once: true,
+            passive: true,
+          });
+          document.addEventListener('keydown', onFirstInteraction, {
+            once: true,
+          });
+          cleanupGesture = () => {
+            document.removeEventListener('pointerdown', onFirstInteraction);
+            document.removeEventListener('keydown', onFirstInteraction);
+          };
+        });
+      };
+
+      tryPlayOnce();
+    };
+
+    const t = window.setTimeout(() => {
+      void prepareAndPlayStartupDua();
+    }, 650);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(t);
+      cleanupGesture?.();
+      startupDuaAudioRef.current?.pause();
+    };
+  }, []);
+
   // Automatically pre-warm core offline Quran/Tafsir text + local audio silently when online
   const corePrewarmedRef = useRef(false);
   useEffect(() => {
@@ -688,6 +828,7 @@ function AppContent({
   );
 
   const playManagedAudio = useCallback((url: string) => {
+    startupDuaAudioRef.current?.pause();
     if (!adhanAudioRef.current) {
       adhanAudioRef.current = new Audio();
       adhanAudioRef.current.preload = 'auto';
@@ -696,13 +837,16 @@ function AppContent({
     el.pause();
     el.volume = 1;
     el.muted = false;
-    el.src = url;
     el.onended = null;
-    el.load();
-    el.play().catch(() => {});
+    void resolveOfflinePlayableUrl(url).then((playableUrl) => {
+      el.src = playableUrl;
+      el.load();
+      el.play().catch(() => {});
+    });
   }, []);
 
   const playPostPrayerAzkar = useCallback(() => {
+    startupDuaAudioRef.current?.pause();
     if (!adhanAudioRef.current) {
       adhanAudioRef.current = new Audio();
     }
@@ -710,12 +854,15 @@ function AppContent({
     let idx = 0;
     const playStep = () => {
       if (idx >= POST_PRAYER_AZKAR_AUDIO_URLS.length) return;
-      audio.src = POST_PRAYER_AZKAR_AUDIO_URLS[idx];
-      audio.onended = () => {
-        idx += 1;
-        playStep();
-      };
-      audio.play().catch(() => {});
+      const stepUrl = POST_PRAYER_AZKAR_AUDIO_URLS[idx];
+      void resolveOfflinePlayableUrl(stepUrl).then((playableUrl) => {
+        audio.src = playableUrl;
+        audio.onended = () => {
+          idx += 1;
+          playStep();
+        };
+        audio.play().catch(() => {});
+      });
     };
     playStep();
   }, []);
@@ -992,7 +1139,7 @@ function AppContent({
           settings.perPrayerAdhan[prayerKey] || settings.preferredAdhan;
         const voice =
           ADHAN_VOICES_30.find((a) => a.id === voiceId) || ADHAN_VOICES_30[0];
-        const resolvedAdhanUrl = voice.fallbackUrl || voice.url;
+        const resolvedAdhanUrl = voice.url || voice.fallbackUrl || '/audio/adhan-makkah.mp3';
         const ts = item.time.getTime();
         const isAlreadyPrayed =
           prayerLog[dayKey]?.[prayerKey] === 'ontime' ||
@@ -1770,6 +1917,23 @@ function AppContent({
 
   const handleActivateAllPermissions = useCallback(async () => {
     unlockAudioEngine();
+    if (typeof navigator !== 'undefined' && navigator.onLine) {
+      const coreAdhanUrls = Array.from(
+        new Set([
+          ...ADHAN_VOICES_30.slice(0, 6).flatMap((v) => [
+            v.url,
+            ...(v.fallbackUrl ? [v.fallbackUrl] : []),
+          ]),
+          ...IQAMAH_VOICES_3.map((i) => i.url),
+          ...PRE_ADHAN_VOICES_3.map((p) => p.url),
+          POST_ADHAN_DUA.audioUrl,
+          ...TAWASIH_NAQSHABANDI.map((t) => t.url),
+          ...EID_TAKBEERAT_VOICES_3.map((e) => e.url),
+          ...SALAWAT_AUDIO_TRACKS.map((s) => s.url),
+        ]),
+      );
+      void cacheBatchUrls(coreAdhanUrls, undefined, 4);
+    }
     if (typeof window !== 'undefined' && 'Notification' in window) {
       try {
         const perm = await Notification.requestPermission();
@@ -1777,11 +1941,17 @@ function AppContent({
         if (perm === 'granted' && 'serviceWorker' in navigator) {
           const reg = await navigator.serviceWorker.ready;
           const regWithSync = reg as ServiceWorkerRegistration & {
+            sync?: {register: (tag: string) => Promise<void>};
             periodicSync?: {
               register: (tag: string, opts: {minInterval: number}) => Promise<void>;
             };
           };
           reg.active?.postMessage({type: 'CHECK_DUE_ADHAN_ALERTS'});
+          if (regWithSync.sync) {
+            await regWithSync.sync
+              .register('adhan-background-check')
+              .catch(() => {});
+          }
           if (regWithSync.periodicSync) {
             await regWithSync.periodicSync
               .register('adhan-background-check', {
@@ -2243,20 +2413,20 @@ function AppContent({
                   <div className="min-w-0 space-y-0.5">
                     <p className="text-xs font-extrabold text-[#FCE38A]">
                       {offlineDl.status === 'completed'
-                        ? 'تم تحميل محتوى التطبيق بالكامل ✓'
+                        ? 'تم تحميل المحتوى بالكامل ✓'
                         : offlineDl.status === 'paused'
                           ? `التحميل متوقف — باقي ${offlineDl.remainingMb} ميجا`
                           : offlineDl.mode === 'updating'
                             ? 'جاري تحميل تحديث المحتوى تلقائيًا...'
-                            : 'جاري تحميل محتوى التطبيق بالكامل'}
+                            : 'جاري تحميل المحتوى المختار للعمل بدون نت'}
                     </p>
                     <p className="text-[11px] font-semibold text-zinc-300">
                       {offlineDl.status === 'completed'
-                        ? 'تم تحميل 850 ميجا من 850 ميجا — باقي 0 ميجا — 100%'
+                        ? `تم تحميل ${offlineDl.totalMb} ميجا من ${offlineDl.totalMb} ميجا — باقي 0 ميجا — 100%`
                         : offlineDl.status === 'paused' &&
                             offlineDl.pauseReason === 'offline'
-                          ? `تم تحميل ${offlineDl.downloadedMb} من 850 ميجا (${offlineDl.percent}%) — سيكمل تلقائيًا فور عودة النت`
-                          : `تم تحميل ${offlineDl.downloadedMb} ميجا من 850 ميجا — باقي ${offlineDl.remainingMb} ميجا — ${offlineDl.percent}%`}
+                          ? `تم تحميل ${offlineDl.downloadedMb} من ${offlineDl.totalMb} ميجا (${offlineDl.percent}%) — سيكمل تلقائيًا فور عودة النت`
+                          : `تم تحميل ${offlineDl.downloadedMb} ميجا من ${offlineDl.totalMb} ميجا — باقي ${offlineDl.remainingMb} ميجا — ${offlineDl.percent}%`}
                     </p>
                   </div>
                 </div>
@@ -2272,41 +2442,53 @@ function AppContent({
                 )}
               </div>
 
-              <div className="h-2.5 w-full overflow-hidden rounded-full border border-[#C9A227]/45 bg-black">
-                <div
-                  className="h-full bg-gradient-to-l from-[#FCE38A] to-[#C9A227] transition-all duration-300"
-                  style={{
-                    width: `${offlineDl.status === 'completed' ? 100 : Math.max(3, offlineDl.percent)}%`,
-                  }}
-                />
+              <div className="flex items-center gap-2">
+                <div className="h-2.5 flex-1 overflow-hidden rounded-full border border-[#C9A227]/45 bg-black">
+                  <div
+                    className="h-full bg-gradient-to-l from-[#FCE38A] to-[#C9A227] transition-all duration-300"
+                    style={{
+                      width: `${offlineDl.status === 'completed' ? 100 : Math.max(3, offlineDl.percent)}%`,
+                    }}
+                  />
+                </div>
+                <span className="font-mono-num shrink-0 text-[11px] font-extrabold text-[#FCE38A]">
+                  {offlineDl.status === 'completed' ? 100 : offlineDl.percent}%
+                </span>
               </div>
 
               {(offlineDl.status === 'downloading' ||
                 offlineDl.status === 'paused') && (
                 <div className="flex flex-wrap items-center justify-end gap-2">
-                  {offlineDl.status === 'downloading' ? (
-                    <button
-                      type="button"
-                      onClick={() => void pauseFullOfflineBackgroundDownload()}
-                      className="inline-flex min-h-[34px] items-center gap-1 rounded-xl border border-[#C9A227] bg-black px-3 text-[11px] font-extrabold text-[#FCE38A]"
-                    >
-                      <Pause className="h-3.5 w-3.5" />
-                      <span>إيقاف مؤقت</span>
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() =>
-                        void resumeFullOfflineBackgroundDownload(
-                          settings.preferredReciter,
-                        )
-                      }
-                      className="inline-flex min-h-[34px] items-center gap-1 rounded-xl bg-[#C9A227] px-3 text-[11px] font-extrabold text-black"
-                    >
-                      <Play className="h-3.5 w-3.5 fill-current" />
-                      <span>استئناف</span>
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    disabled={offlineDl.status !== 'downloading'}
+                    onClick={() => void pauseFullOfflineBackgroundDownload()}
+                    className={`inline-flex min-h-[34px] items-center gap-1 rounded-xl border px-3 text-[11px] font-extrabold ${
+                      offlineDl.status === 'downloading'
+                        ? 'border-[#C9A227] bg-black text-[#FCE38A]'
+                        : 'border-zinc-700 bg-black/50 text-zinc-500'
+                    }`}
+                  >
+                    <Pause className="h-3.5 w-3.5" />
+                    <span>إيقاف مؤقت</span>
+                  </button>
+                  <button
+                    type="button"
+                    disabled={offlineDl.status !== 'paused'}
+                    onClick={() =>
+                      void resumeFullOfflineBackgroundDownload(
+                        settings.preferredReciter,
+                      )
+                    }
+                    className={`inline-flex min-h-[34px] items-center gap-1 rounded-xl px-3 text-[11px] font-extrabold ${
+                      offlineDl.status === 'paused'
+                        ? 'bg-[#C9A227] text-black'
+                        : 'border border-zinc-700 bg-black/50 text-zinc-500'
+                    }`}
+                  >
+                    <Play className="h-3.5 w-3.5 fill-current" />
+                    <span>استئناف</span>
+                  </button>
                   <button
                     type="button"
                     onClick={() => void cancelFullOfflineBackgroundDownload()}

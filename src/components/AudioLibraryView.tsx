@@ -16,6 +16,7 @@ import {
   RECITERS_30,
 } from '../data/reciters';
 import {AdhanVoice, ReciterId} from '../types';
+import {resolveOfflinePlayableUrl} from '../utils/offlineAudioCache';
 import {AdhanLiveModal} from './AdhanLiveModal';
 
 interface AudioLibraryViewProps {
@@ -76,33 +77,48 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
       return;
     }
 
-    audio.src = url;
     setPlayingUrl(url);
     setPlayingTitle(title);
     setIsPlaying(true);
 
     let usedFallback = false;
+    const setOfflineOrErr = () => {
+      setIsPlaying(false);
+      setAudioError(
+        typeof navigator !== 'undefined' && !navigator.onLine
+          ? 'يرجى الاتصال بالإنترنت لتشغيل هذا المقطع (أو قم بتحميله للعمل بدون نت)'
+          : 'تعذر تشغيل هذا المقطع حاليًا',
+      );
+    };
+
     audio.onended = () => setIsPlaying(false);
     audio.onerror = () => {
       if (!usedFallback && fallbackUrl && !url.startsWith('/audio/')) {
         usedFallback = true;
-        audio.src = fallbackUrl;
-        audio.load();
-        audio.play().catch(() => setIsPlaying(false));
+        void resolveOfflinePlayableUrl(fallbackUrl).then((fbPlayable) => {
+          audio.src = fbPlayable;
+          audio.load();
+          audio.play().catch(setOfflineOrErr);
+        });
         return;
       }
-      setIsPlaying(false);
-      setAudioError('تعذر تشغيل هذا المقطع حاليًا');
+      setOfflineOrErr();
     };
-    audio.play().catch(() => {
-      if (!usedFallback && fallbackUrl && !url.startsWith('/audio/')) {
-        usedFallback = true;
-        audio.src = fallbackUrl;
-        audio.load();
-        audio.play().catch(() => setIsPlaying(false));
-      } else {
-        setIsPlaying(false);
-      }
+
+    void resolveOfflinePlayableUrl(url).then((playableUrl) => {
+      audio.src = playableUrl;
+      audio.play().catch(() => {
+        if (!usedFallback && fallbackUrl && !url.startsWith('/audio/')) {
+          usedFallback = true;
+          void resolveOfflinePlayableUrl(fallbackUrl).then((fbPlayable) => {
+            audio.src = fbPlayable;
+            audio.load();
+            audio.play().catch(setOfflineOrErr);
+          });
+        } else {
+          setOfflineOrErr();
+        }
+      });
     });
   };
 

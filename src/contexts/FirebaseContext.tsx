@@ -279,11 +279,21 @@ export const FirebaseProvider: React.FC<{
 
   const signInWithGoogle = useCallback(async () => {
     setAuthError(null);
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      setAuthError(
+        'يرجى الاتصال بالإنترنت لتسجيل الدخول والمزامنة السحابية.',
+      );
+      return;
+    }
     setSigningIn(true);
     try {
       await signInWithPopup(auth, googleProvider);
     } catch {
-      setAuthError('تعذر تسجيل الدخول — تأكد من السماح بالنوافذ المنبثقة والاتصال بالإنترنت.');
+      setAuthError(
+        typeof navigator !== 'undefined' && !navigator.onLine
+          ? 'يرجى الاتصال بالإنترنت لتسجيل الدخول والمزامنة السحابية.'
+          : 'تعذر تسجيل الدخول — تأكد من السماح بالنوافذ المنبثقة والاتصال بالإنترنت.',
+      );
     } finally {
       setSigningIn(false);
     }

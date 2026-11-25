@@ -36,6 +36,7 @@ import {
   POST_ADHAN_DUA,
   POST_PRAYER_AZKAR_AUDIO_URLS,
   PRE_ADHAN_VOICES_3,
+  SALAWAT_AUDIO_TRACKS,
   TAWASIH_NAQSHABANDI,
 } from '../data/reciters';
 import {
@@ -49,6 +50,10 @@ import {
 } from '../types';
 import {useHardwareBack} from '../utils/backNavigation';
 import {getDateKey, getHijriParts} from '../utils/hijri';
+import {
+  cacheBatchUrls,
+  resolveOfflinePlayableUrl,
+} from '../utils/offlineAudioCache';
 import {
   CALCULATION_METHODS,
   computeDailyPrayerData,
@@ -325,30 +330,46 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
     let usedFallback = false;
     audio.pause();
     audio.currentTime = 0;
-    audio.src = url;
-    audio.load();
     setPlayingId(id);
+
+    const handleOfflineOrErr = () => {
+      setPlayingId(null);
+      setAudioErr(
+        typeof navigator !== 'undefined' && !navigator.onLine
+          ? 'يرجى الاتصال بالإنترنت لتشغيل هذا الصوت (أو قم بتحميل قسم المؤذن)'
+          : 'تعذر تشغيل الصوت حاليًا',
+      );
+    };
+
     audio.onended = () => setPlayingId(null);
     audio.onerror = () => {
       if (!usedFallback && !url.startsWith('/audio/')) {
         usedFallback = true;
-        audio.src = resolvedFallback;
-        audio.load();
-        audio.play().catch(() => setPlayingId(null));
+        void resolveOfflinePlayableUrl(resolvedFallback).then((fbPlayable) => {
+          audio.src = fbPlayable;
+          audio.load();
+          audio.play().catch(handleOfflineOrErr);
+        });
         return;
       }
-      setPlayingId(null);
-      setAudioErr('تعذر تشغيل الصوت حاليًا');
+      handleOfflineOrErr();
     };
-    audio.play().catch(() => {
-      if (!usedFallback && !url.startsWith('/audio/')) {
-        usedFallback = true;
-        audio.src = resolvedFallback;
-        audio.load();
-        audio.play().catch(() => setPlayingId(null));
-      } else {
-        setPlayingId(null);
-      }
+
+    void resolveOfflinePlayableUrl(url).then((playableUrl) => {
+      audio.src = playableUrl;
+      audio.load();
+      audio.play().catch(() => {
+        if (!usedFallback && !url.startsWith('/audio/')) {
+          usedFallback = true;
+          void resolveOfflinePlayableUrl(resolvedFallback).then((fbPlayable) => {
+            audio.src = fbPlayable;
+            audio.load();
+            audio.play().catch(handleOfflineOrErr);
+          });
+        } else {
+          handleOfflineOrErr();
+        }
+      });
     });
   };
 
@@ -369,23 +390,49 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
         setPlayingId(null);
         return;
       }
-      audio.src = POST_PRAYER_AZKAR_AUDIO_URLS[idx];
-      setPlayingId('special-post-azkar');
-      audio.onended = () => {
-        postAzkarIdxRef.current = idx + 1;
-        startIdx(idx + 1);
-      };
-      audio.onerror = () => {
-        setPlayingId(null);
-        setAudioErr('تعذر تشغيل أذكار بعد الصلاة حاليًا');
-      };
-      audio.play().catch(() => setPlayingId(null));
+      const stepUrl = POST_PRAYER_AZKAR_AUDIO_URLS[idx];
+      void resolveOfflinePlayableUrl(stepUrl).then((playableUrl) => {
+        audio.src = playableUrl;
+        setPlayingId('special-post-azkar');
+        audio.onended = () => {
+          postAzkarIdxRef.current = idx + 1;
+          startIdx(idx + 1);
+        };
+        audio.onerror = () => {
+          setPlayingId(null);
+          setAudioErr(
+            typeof navigator !== 'undefined' && !navigator.onLine
+              ? 'يرجى الاتصال بالإنترنت لتشغيل أذكار بعد الصلاة'
+              : 'تعذر تشغيل أذكار بعد الصلاة حاليًا',
+          );
+        };
+        audio.play().catch(() => setPlayingId(null));
+      });
     };
     startIdx(0);
   };
 
   const handleActivateAdhanSystem = async () => {
     setActivationNote(null);
+    if (typeof navigator !== 'undefined' && navigator.onLine) {
+      const offlineAdhanSet = Array.from(
+        new Set([
+          ...ADHAN_VOICES_30.slice(0, 8).flatMap((v) => [
+            v.url,
+            ...(v.fallbackUrl ? [v.fallbackUrl] : []),
+          ]),
+          ...IQAMAH_VOICES_3.map((i) => i.url),
+          ...PRE_ADHAN_VOICES_3.map((p) => p.url),
+          POST_ADHAN_DUA.audioUrl,
+          ...TAWASIH_NAQSHABANDI.map((t) => t.url),
+          ...EID_TAKBEERAT_VOICES_3.map((e) => e.url),
+          ...FRIDAY_KAHF_VOICES_3.map((k) => k.url),
+          ...SALAWAT_AUDIO_TRACKS.map((s) => s.url),
+          ...POST_PRAYER_AZKAR_AUDIO_URLS,
+        ]),
+      );
+      void cacheBatchUrls(offlineAdhanSet, undefined, 4);
+    }
     if (onActivateAdhanEngine) {
       await onActivateAdhanEngine();
     }

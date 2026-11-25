@@ -19,6 +19,7 @@ import {ADHAN_TONE_DESCRIPTIONS, POST_ADHAN_DUA} from '../data/reciters';
 import {AdhanVoice, PrayerScheduleItem} from '../types';
 import {useHardwareBack} from '../utils/backNavigation';
 import {formatGregorianAr, getHijriParts} from '../utils/hijri';
+import {resolveOfflinePlayableUrl} from '../utils/offlineAudioCache';
 import {formatClock12, formatClock24} from '../utils/prayerTimes';
 
 interface AdhanLiveModalProps {
@@ -219,6 +220,8 @@ export const AdhanLiveModal: React.FC<AdhanLiveModalProps> = ({
     setDurationSec(0);
     audio.volume = 1;
 
+    let cancelled = false;
+
     const onPlay = () => {
       setIsPlaying(true);
       setAudioErr(null);
@@ -246,9 +249,14 @@ export const AdhanLiveModal: React.FC<AdhanLiveModalProps> = ({
         setProgress(0);
         setCurrentSec(0);
         setDurationSec(0);
-        audio.src = POST_ADHAN_DUA.audioUrl;
-        audio.load();
-        audio.play().catch(() => setIsPlaying(false));
+        void resolveOfflinePlayableUrl(POST_ADHAN_DUA.audioUrl).then(
+          (duaPlayable) => {
+            if (cancelled) return;
+            audio.src = duaPlayable;
+            audio.load();
+            audio.play().catch(() => setIsPlaying(false));
+          },
+        );
         return;
       }
       setIsPlaying(false);
@@ -261,13 +269,22 @@ export const AdhanLiveModal: React.FC<AdhanLiveModalProps> = ({
         audio.src !== window.location.origin + fallbackOfflineUrl
       ) {
         usedFallbackRef.current = true;
-        audio.src = fallbackOfflineUrl;
-        audio.load();
-        audio.play().catch(() => setIsPlaying(false));
+        void resolveOfflinePlayableUrl(fallbackOfflineUrl).then(
+          (fbPlayable) => {
+            if (cancelled) return;
+            audio.src = fbPlayable;
+            audio.load();
+            audio.play().catch(() => setIsPlaying(false));
+          },
+        );
         return;
       }
       setIsPlaying(false);
-      setAudioErr('اضغط تشغيل لبدء الصوت');
+      setAudioErr(
+        typeof navigator !== 'undefined' && !navigator.onLine
+          ? 'يرجى الاتصال بالإنترنت لسماع هذا الصوت (أو قم بتحميل قسم المؤذن)'
+          : 'اضغط تشغيل لبدء الصوت',
+      );
     };
 
     audio.addEventListener('play', onPlay);
@@ -279,13 +296,17 @@ export const AdhanLiveModal: React.FC<AdhanLiveModalProps> = ({
 
     const initialSrc =
       mode === 'dua' ? POST_ADHAN_DUA.audioUrl : voice.url;
-    audio.src = initialSrc;
-    audio.load();
-    audio.play().catch(() => {
-      setIsPlaying(false);
+    void resolveOfflinePlayableUrl(initialSrc).then((playableUrl) => {
+      if (cancelled) return;
+      audio.src = playableUrl;
+      audio.load();
+      audio.play().catch(() => {
+        setIsPlaying(false);
+      });
     });
 
     return () => {
+      cancelled = true;
       audio.removeEventListener('play', onPlay);
       audio.removeEventListener('playing', onPlay);
       audio.removeEventListener('pause', onPause);
@@ -312,12 +333,24 @@ export const AdhanLiveModal: React.FC<AdhanLiveModalProps> = ({
       setProgress(0);
     }
     if (audio.error || !audio.currentSrc) {
-      audio.src = playingDuaRef.current
+      const targetUrl = playingDuaRef.current
         ? POST_ADHAN_DUA.audioUrl
         : usedFallbackRef.current
           ? fallbackOfflineUrl
           : voice.url;
-      audio.load();
+      void resolveOfflinePlayableUrl(targetUrl).then((playable) => {
+        audio.src = playable;
+        audio.load();
+        audio.play().catch(() => {
+          setIsPlaying(false);
+          setAudioErr(
+            typeof navigator !== 'undefined' && !navigator.onLine
+              ? 'يرجى الاتصال بالإنترنت لسماع هذا الصوت'
+              : 'تعذر بدء الصوت — اضغط مرة أخرى للتشغيل',
+          );
+        });
+      });
+      return;
     }
 
     const playPromise = audio.play();
@@ -325,15 +358,25 @@ export const AdhanLiveModal: React.FC<AdhanLiveModalProps> = ({
       playPromise.catch(() => {
         if (!playingDuaRef.current && !usedFallbackRef.current) {
           usedFallbackRef.current = true;
-          audio.src = fallbackOfflineUrl;
-          audio.load();
-          audio.play().catch(() => {
-            setIsPlaying(false);
-            setAudioErr('تعذر بدء الصوت — اضغط مرة أخرى للتشغيل');
+          void resolveOfflinePlayableUrl(fallbackOfflineUrl).then((playable) => {
+            audio.src = playable;
+            audio.load();
+            audio.play().catch(() => {
+              setIsPlaying(false);
+              setAudioErr(
+                typeof navigator !== 'undefined' && !navigator.onLine
+                  ? 'يرجى الاتصال بالإنترنت لسماع هذا الصوت'
+                  : 'تعذر بدء الصوت — اضغط مرة أخرى للتشغيل',
+              );
+            });
           });
         } else {
           setIsPlaying(false);
-          setAudioErr('تعذر بدء الصوت — اضغط مرة أخرى للتشغيل');
+          setAudioErr(
+            typeof navigator !== 'undefined' && !navigator.onLine
+              ? 'يرجى الاتصال بالإنترنت لسماع هذا الصوت'
+              : 'تعذر بدء الصوت — اضغط مرة أخرى للتشغيل',
+          );
         }
       });
     }

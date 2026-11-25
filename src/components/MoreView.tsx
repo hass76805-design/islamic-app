@@ -25,6 +25,7 @@ import {
   Sparkles,
   Sun,
 } from 'lucide-react';
+import {AppSectionIconKey, getMoreMenuSections} from '../data/appSections';
 import {useFirebase} from '../contexts/FirebaseContext';
 import {
   ADHAN_VOICES_30,
@@ -80,114 +81,55 @@ interface MoreViewProps {
   onActivateAdhanEngine?: () => Promise<void> | void;
 }
 
+function renderSectionIcon(iconKey: AppSectionIconKey): React.ReactNode {
+  switch (iconKey) {
+    case 'bell_ring':
+      return <BellRing className="h-5 w-5" />;
+    case 'book_open_text':
+      return <BookOpenText className="h-5 w-5" />;
+    case 'mic':
+      return <Mic className="h-5 w-5" />;
+    case 'heart':
+      return <Heart className="h-5 w-5" />;
+    case 'scroll_text':
+      return <ScrollText className="h-5 w-5" />;
+    case 'audio_lines':
+      return <AudioLines className="h-5 w-5" />;
+    case 'book_open':
+      return <BookOpen className="h-5 w-5" />;
+    case 'help_circle':
+      return <HelpCircle className="h-5 w-5" />;
+    case 'moon_star':
+      return <MoonStar className="h-5 w-5" />;
+    case 'sparkles':
+      return <Sparkles className="h-5 w-5" />;
+    case 'radio':
+      return <Radio className="h-5 w-5" />;
+    case 'book_marked':
+      return <BookMarked className="h-5 w-5" />;
+    case 'circle_dot':
+      return <CircleDot className="h-5 w-5" />;
+    case 'calendar_days':
+      return <CalendarDays className="h-5 w-5" />;
+    case 'check_circle_2':
+      return <CheckCircle2 className="h-5 w-5" />;
+    default:
+      return <Sparkles className="h-5 w-5" />;
+  }
+}
+
 const SUB_ITEMS: Array<{
   id: Exclude<MoreSubPageId, 'menu'>;
   titleAr: string;
   descAr: string;
   icon: React.ReactNode;
 }> = [
-  {
-    id: 'adhan',
-    titleAr: 'المؤذن الإلكتروني والأذان',
-    descAr: '30 مؤذنًا وتواشيح النقشبندي وقيام الليل وتنبيه الإقامة ودعاء بعد الأذان',
-    icon: <BellRing className="h-5 w-5" />,
-  },
-  {
-    id: 'books',
-    titleAr: 'صحيح البخاري والكتب الإسلامية',
-    descAr: 'صحيح البخاري كاملًا ومنظمًا بالبحث مع الأربعين النووية ورياض الصالحين',
-    icon: <BookOpenText className="h-5 w-5" />,
-  },
-  {
-    id: 'rafiqi',
-    titleAr: 'رفيقي (الحوار الصوتي الذكي)',
-    descAr: 'صوت بشري يسمعك ويرد عليك + 30 كلمة بالآية المخصصة بصوت الشيخ',
-    icon: <Mic className="h-5 w-5" />,
-  },
-  {
-    id: 'salawat',
-    titleAr: 'صلِّ على النبي ﷺ',
-    descAr: 'سبحة ذهبية تفاعلية وعداد ذكي وأصوات هادئة للصلاة على النبي ﷺ',
-    icon: <Heart className="h-5 w-5" />,
-  },
-  {
-    id: 'seerah',
-    titleAr: 'السيرة النبوية الكاملة ﷺ',
-    descAr: 'من الولادة حتى الوفاة صلى الله عليه وسلم كاملة قراءةً واستماعًا بدون نت',
-    icon: <ScrollText className="h-5 w-5" />,
-  },
-  {
-    id: 'voice_test',
-    titleAr: 'اختبر صوتك في التلاوة',
-    descAr: 'سجّل تلاوتك ليحدد السورة تلقائيًا ويصححها ويحفظ المقطع بصوتك',
-    icon: <AudioLines className="h-5 w-5" />,
-  },
-  {
-    id: 'prayer_guide',
-    titleAr: 'تعليم الوضوء والصلاة',
-    descAr: 'تعليم الوضوء والصلاة بالحرف مع صور توضيحية وشرح محترم',
-    icon: <BookOpen className="h-5 w-5" />,
-  },
-  {
-    id: 'fiqh',
-    titleAr: 'الفقه كامل + مسابقة الفقه',
-    descAr: 'جميع المسائل الفقهية سؤال وجواب مع مسابقة بدرجة',
-    icon: <HelpCircle className="h-5 w-5" />,
-  },
-  {
-    id: 'dreams',
-    titleAr: 'تفسير الأحلام كامل بالبحث',
-    descAr: 'تعبير الرؤى والأحلام مع البحث الفوري دون إنترنت',
-    icon: <MoonStar className="h-5 w-5" />,
-  },
-  {
-    id: 'stories',
-    titleAr: 'القصص الإسلامية الكاملة',
-    descAr: '25 قصة أنبياء و15 قصة قرآن و100 صحابة و30 وعبرة و20 غفران وتوبة',
-    icon: <BookOpenText className="h-5 w-5" />,
-  },
-  {
-    id: 'who_is_allah',
-    titleAr: 'من هو الله بالأسماء والصفات',
-    descAr: 'التعريف بالله وصفاته وأسمائه الحسنى الـ99',
-    icon: <Sparkles className="h-5 w-5" />,
-  },
-  {
-    id: 'scholars',
-    titleAr: 'محاضرات فيديو 30 شيخًا',
-    descAr: '30 شيخًا من العالم × 10 فيديوهات لكل شيخ مع قائمة المفضلة',
-    icon: <Mic className="h-5 w-5" />,
-  },
-  {
-    id: 'audio_library',
-    titleAr: 'مكتبة 30 سورة مشهورة',
-    descAr: 'تلاوة 30 سورة مشهورة بـ 30 قارئًا ومكتبة الـ 30 مؤذنًا',
-    icon: <Radio className="h-5 w-5" />,
-  },
-  {
-    id: 'duas',
-    titleAr: 'قسم الأدعية الكامل',
-    descAr: 'أدعية قرآنية ونبوية شاملة مع النسخ الفوري',
-    icon: <BookMarked className="h-5 w-5" />,
-  },
-  {
-    id: 'tasbih',
-    titleAr: 'المسبحة الإلكترونية',
-    descAr: 'عداد تسبيح ذكي مع حفظ الدورات والإجمالي',
-    icon: <CircleDot className="h-5 w-5" />,
-  },
-  {
-    id: 'calendar',
-    titleAr: 'التقويم الهجري',
-    descAr: 'التاريخ الهجري والميلادي والمناسبات ومحوّل التاريخ',
-    icon: <CalendarDays className="h-5 w-5" />,
-  },
-  {
-    id: 'tracker',
-    titleAr: 'سجل الصلوات',
-    descAr: 'متابعة الصلوات الخمس اليومية وسلسلة الالتزام',
-    icon: <CheckCircle2 className="h-5 w-5" />,
-  },
+  ...getMoreMenuSections().map((sec) => ({
+    id: sec.id as Exclude<MoreSubPageId, 'menu'>,
+    titleAr: sec.labelAr,
+    descAr: sec.moreDescAr || sec.descAr,
+    icon: renderSectionIcon(sec.iconKey),
+  })),
   {
     id: 'settings',
     titleAr: 'الحساب السحابي والإعدادات',

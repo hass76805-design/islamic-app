@@ -3,6 +3,7 @@ import {Pause, Play, Repeat, Search, Volume2, X} from 'lucide-react';
 import {getAyahAudioUrl, RECITERS_30} from '../data/reciters';
 import {CompactAyah, CompactSurah, ReciterId} from '../types';
 import {useHardwareBack} from '../utils/backNavigation';
+import {resolveOfflinePlayableUrl} from '../utils/offlineAudioCache';
 
 interface AyahReciterSheetProps {
   surah: CompactSurah;
@@ -65,7 +66,6 @@ export const AyahReciterSheet: React.FC<AyahReciterSheetProps> = ({
       audioRef.current = new Audio();
     }
     const audio = audioRef.current;
-    audio.src = url;
     repeatCounterRef.current = 1;
     setActiveReciter(reciterId);
     setRepeatNum(1);
@@ -83,13 +83,19 @@ export const AyahReciterSheet: React.FC<AyahReciterSheetProps> = ({
       }
     };
 
-    audio.onerror = () => {
+    const handleErr = () => {
       setIsPlaying(false);
-      setErrorMsg('تعذر تشغيل هذه الآية بهذا الصوت حاليًا');
+      setErrorMsg(
+        typeof navigator !== 'undefined' && !navigator.onLine
+          ? 'يرجى الاتصال بالإنترنت لسماع هذه الآية بصوت هذا القارئ'
+          : 'تعذر تشغيل هذه الآية بهذا الصوت حاليًا',
+      );
     };
+    audio.onerror = handleErr;
 
-    audio.play().catch(() => {
-      setIsPlaying(false);
+    void resolveOfflinePlayableUrl(url).then((playableUrl) => {
+      audio.src = playableUrl;
+      audio.play().catch(handleErr);
     });
   };
 

@@ -221,13 +221,13 @@ export const ScholarsView: React.FC = () => {
                     onError={handleImgError}
                     className="absolute inset-0 h-full w-full object-cover opacity-35"
                   />
-                  <div className="relative z-10 flex flex-col items-center gap-1.5 rounded-2xl border border-[#C9A227]/80 bg-black/90 px-4 py-3">
-                    <BookmarkCheck className="h-6 w-6 text-[#C9A227]" />
-                    <p className="text-xs font-bold text-[#FCE38A]">
-                      بطاقة المحاضرة المحفوظة · {selectedScholar.nameAr}
+                  <div className="relative z-10 flex flex-col items-center gap-1.5 rounded-2xl border-2 border-[#C9A227] bg-black/90 px-4 py-3.5">
+                    <Video className="h-6 w-6 text-[#FCE38A]" />
+                    <p className="text-sm font-extrabold text-[#FCE38A]">
+                      يرجى الاتصال بالإنترنت
                     </p>
-                    <p className="text-[11px] text-zinc-300">
-                      معلومات المحاضرة وصورتها وبياناتها محفوظة داخل التطبيق بدون نت
+                    <p className="text-[11px] leading-relaxed text-zinc-200">
+                      تشغيل فيديو المحاضرة يتطلب اتصالاً بالإنترنت — يمكنك تصفح قائمة المشايخ والمفضلة بدون نت
                     </p>
                   </div>
                 </div>
@@ -348,7 +348,15 @@ export const ScholarsView: React.FC = () => {
                 <div className="flex items-stretch gap-2.5 p-2.5">
                   <button
                     type="button"
-                    onClick={() => setActiveVideo(video)}
+                    onClick={() => {
+                      setActiveVideo(video);
+                      if (!isOnline) {
+                        setOfflineNotice(
+                          'يرجى الاتصال بالإنترنت لتشغيل فيديو المحاضرة',
+                        );
+                        window.setTimeout(() => setOfflineNotice(null), 3200);
+                      }
+                    }}
                     className="relative h-[68px] w-[108px] shrink-0 overflow-hidden rounded-xl border border-[#C9A227]/50 bg-black"
                   >
                     <img
@@ -377,7 +385,15 @@ export const ScholarsView: React.FC = () => {
                   <div className="flex min-w-0 flex-1 flex-col justify-between">
                     <button
                       type="button"
-                      onClick={() => setActiveVideo(video)}
+                      onClick={() => {
+                        setActiveVideo(video);
+                        if (!isOnline) {
+                          setOfflineNotice(
+                            'يرجى الاتصال بالإنترنت لتشغيل فيديو المحاضرة',
+                          );
+                          window.setTimeout(() => setOfflineNotice(null), 3200);
+                        }
+                      }}
                       className="text-right"
                     >
                       <span className="font-mono text-[10px] font-bold text-[#C9A227]">

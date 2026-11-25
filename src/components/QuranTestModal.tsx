@@ -26,10 +26,15 @@ import {
   ReciterId,
 } from '../types';
 import {useHardwareBack} from '../utils/backNavigation';
+import {resolveOfflinePlayableUrl} from '../utils/offlineAudioCache';
 import {
   compareArabicWords,
   tokenizeArabicAyah,
 } from '../utils/recitationMatcher';
+import {
+  playSheikhSingleWord,
+  stopSheikhWordPlayback,
+} from '../utils/sheikhWordAudio';
 
 interface AyahEntry {
   surah: CompactSurah;
@@ -497,6 +502,7 @@ export const QuranTestModal: React.FC<QuranTestModalProps> = ({
   useEffect(() => {
     return () => {
       releaseMic();
+      stopSheikhWordPlayback();
       audioRef.current?.pause();
     };
   }, [releaseMic]);
@@ -775,6 +781,16 @@ export const QuranTestModal: React.FC<QuranTestModalProps> = ({
         return;
       }
       if (
+        err.error === 'network' ||
+        (typeof navigator !== 'undefined' && !navigator.onLine)
+      ) {
+        setShowTypingBar(true);
+        setMicError(
+          'يرجى الاتصال بالإنترنت للتعرف التلقائي على الصوت، أو اكتب الآية أدناه للتصحيح.',
+        );
+        listeningRef.current = false;
+        setListening(false);
+      } else if (
         err.error === 'not-allowed' ||
         err.error === 'service-not-allowed'
       ) {
@@ -849,13 +865,14 @@ export const QuranTestModal: React.FC<QuranTestModalProps> = ({
       return;
     }
 
+    stopSheikhWordPlayback();
     // Mute transcript processing while Sheikh recites instead of stopping/restarting mic (prevents beep!)
     ignoreMicAudioRef.current = true;
 
     const activeObj = getReciterById(reciterId);
     setCorrectingNotice(
       wordToExplain
-        ? `الشيخ ${activeObj.shortNameAr} ينطق بالتجويد: «${wordToExplain}»`
+        ? `الشيخ ${activeObj.shortNameAr} ينطق: «${wordToExplain}»`
         : `تلاوة الآية ${toArabicDigits(target.ayah.n)} بصوت الشيخ ${activeObj.shortNameAr}`,
     );
 
@@ -878,26 +895,89 @@ export const QuranTestModal: React.FC<QuranTestModalProps> = ({
       setCorrectingNotice(null);
     };
 
-    audio.src = getAyahAudioUrl(reciterId, target.surah.n, target.ayah.n);
-    audio.playbackRate = wordToExplain ? 0.88 : 1;
+    const rawUrl = getAyahAudioUrl(reciterId, target.surah.n, target.ayah.n);
     setIsPlayingCorrection(true);
-    audio.onended = releaseMute;
-    audio.onerror = () => {
-      setAudioErr(
-        wordToExplain
-          ? `الصح هو: «${wordToExplain}» — تعذر تشغيل الصوت، تأكد من الاتصال`
-          : 'تعذر تشغيل التلاوة حاليًا — تحقق من الاتصال أو اختر شيخًا آخر',
-      );
-      releaseMute();
-    };
-    audio.play().catch(() => {
-      setAudioErr('تعذر تشغيل الصوت حاليًا');
-      releaseMute();
+    void resolveOfflinePlayableUrl(rawUrl).then((playableUrl) => {
+      audio.src = playableUrl;
+      audio.playbackRate = wordToExplain ? 0.88 : 1;
+      audio.onended = releaseMute;
+      audio.onerror = () => {
+        const offline = typeof navigator !== 'undefined' && !navigator.onLine;
+        setAudioErr(
+          offline
+            ? wordToExplain
+              ? `يرجى الاتصال بالإنترنت لسماع صوت الشيخ — الصح هو: «${wordToExplain}»`
+              : 'يرجى الاتصال بالإنترنت لسماع التلاوة (أو حمّل قسم اختبار الحفظ للعمل بدون نت)'
+            : wordToExplain
+              ? `الصح هو: «${wordToExplain}» — تعذر تشغيل الصوت، تأكد من التحميل أو الاتصال`
+              : 'تعذر تشغيل التلاوة حاليًا — تحقق من التحميل أو اختر شيخًا آخر',
+        );
+        releaseMute();
+      };
+      audio.play().catch(() => {
+        setAudioErr(
+          typeof navigator !== 'undefined' && !navigator.onLine
+            ? 'يرجى الاتصال بالإنترنت لسماع صوت الشيخ'
+            : 'تعذر تشغيل الصوت حاليًا',
+        );
+        releaseMute();
+      });
     });
   };
 
-  // User clicks "تكملة" beside the red word: stops Sheikh playback cleanly, unmutes mic (or opens silently if needed), and advances past the reviewed mistake
+  // Pronounces ONLY the specific wrong word in the Sheikh's real voice
+  const playSingleCorrectWord = (
+    ayahEntry: AyahEntry & {tokens: Array<{raw: string}>},
+    targetWordIdx: number,
+    expectedWord: string,
+    hint?: string | null,
+    spokenWord?: string,
+  ) => {
+    setAudioErr(null);
+    audioRef.current?.pause();
+    ignoreMicAudioRef.current = true;
+    const activeObj = getReciterById(correctionSheikh);
+    setIsPlayingCorrection(true);
+    setCorrectingNotice(
+      `الشيخ ${activeObj.shortNameAr} ينطق الكلمة الصح: «${expectedWord}»`,
+    );
+    setCorrectionDetail({
+      ayahNumber: ayahEntry.ayah.n,
+      expectedWord,
+      spokenWord,
+      hint:
+        hint ||
+        'استمع لنطق الكلمة فقط بصوت الشيخ ثم كررها أو اضغط «تكملة».',
+      sheikhNameAr: activeObj.shortNameAr,
+    });
+
+    const releaseWordMute = () => {
+      ignoreMicAudioRef.current = false;
+      setIsPlayingCorrection(false);
+      setCorrectingNotice(null);
+    };
+
+    void playSheikhSingleWord({
+      reciterId: correctionSheikh,
+      surahNumber: ayahEntry.surah.n,
+      ayahNumber: ayahEntry.ayah.n,
+      ayahTokens: ayahEntry.tokens.map((t) => t.raw),
+      targetWordIdx,
+      onEnd: releaseWordMute,
+      onError: () => {
+        setAudioErr(
+          typeof navigator !== 'undefined' && !navigator.onLine
+            ? `يرجى الاتصال بالإنترنت لنطق الكلمة — الكلمة الصح: «${expectedWord}»`
+            : `تعذر نطق الكلمة الآن — الكلمة الصح: «${expectedWord}»`,
+        );
+        releaseWordMute();
+      },
+    });
+  };
+
+  // User clicks "تكملة" beside the red word: stops Sheikh playback cleanly, unmutes mic, and continues the ayah
   const handleContinueAfterMistake = useCallback(() => {
+    stopSheikhWordPlayback();
     audioRef.current?.pause();
     ignoreMicAudioRef.current = false;
     setIsPlayingCorrection(false);
@@ -947,13 +1027,23 @@ export const QuranTestModal: React.FC<QuranTestModalProps> = ({
         currentAyah ||
         preparedAyahs[0];
       if (targetEntry) {
-        playCorrectionAyah(
-          correctionSheikh,
-          targetEntry,
-          targetMistake.expectedWord,
-          targetMistake.hint,
-          targetMistake.spokenWord,
-        );
+        if ('wordIdx' in targetMistake) {
+          playSingleCorrectWord(
+            targetEntry,
+            targetMistake.wordIdx,
+            targetMistake.expectedWord,
+            targetMistake.hint,
+            targetMistake.spokenWord,
+          );
+        } else {
+          playCorrectionAyah(
+            correctionSheikh,
+            targetEntry,
+            targetMistake.expectedWord,
+            targetMistake.hint,
+            targetMistake.spokenWord,
+          );
+        }
         return;
       }
     }
@@ -972,6 +1062,7 @@ export const QuranTestModal: React.FC<QuranTestModalProps> = ({
 
   const resetTest = () => {
     releaseMic();
+    stopSheikhWordPlayback();
     audioRef.current?.pause();
     setIsPlayingCorrection(false);
     setCorrectingNotice(null);
@@ -1359,12 +1450,15 @@ export const QuranTestModal: React.FC<QuranTestModalProps> = ({
                                 key={w.key}
                                 className="mx-0.5 inline-flex flex-wrap items-center gap-1 align-baseline"
                               >
+                                <span className="inline-flex items-center gap-1 rounded-lg bg-rose-600/30 px-1.5 py-0.5 font-bold text-rose-400 ring-1 ring-rose-500/70">
+                                  <span>{w.raw}</span>
+                                </span>
                                 <button
                                   type="button"
                                   onClick={() =>
-                                    playCorrectionAyah(
-                                      correctionSheikh,
+                                    playSingleCorrectWord(
                                       group.ayahEntry,
+                                      w.wordIdx,
                                       w.raw,
                                       isHaltedWord
                                         ? haltedMistake?.hint
@@ -1374,21 +1468,36 @@ export const QuranTestModal: React.FC<QuranTestModalProps> = ({
                                         : undefined,
                                     )
                                   }
-                                  title="اضغط لسماع الشيخ ينطقها صحيحًا"
-                                  className="inline-flex items-center gap-1 rounded-lg bg-rose-600/25 px-1.5 py-0.5 font-bold text-rose-400 underline decoration-rose-400 decoration-2 underline-offset-4"
+                                  title="نطق الكلمة الصح فقط بصوت الشيخ"
+                                  aria-label={`نطق كلمة ${w.raw} بصوت الشيخ`}
+                                  className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-[#FCE38A] bg-[#141004] text-[#FCE38A] shadow"
                                 >
-                                  <span>{w.raw}</span>
-                                  <Volume2 className="h-3.5 w-3.5 shrink-0" />
+                                  <Mic className="h-3.5 w-3.5" />
                                 </button>
                                 {isHaltedWord && (
-                                  <button
-                                    type="button"
-                                    onClick={handleContinueAfterMistake}
-                                    className="inline-flex items-center gap-1 rounded-lg bg-[#C9A227] px-2 py-0.5 font-sans text-xs font-extrabold text-black shadow"
-                                  >
-                                    <Play className="h-3 w-3 fill-black" />
-                                    <span>تكملة</span>
-                                  </button>
+                                  <>
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        playCorrectionAyah(
+                                          correctionSheikh,
+                                          group.ayahEntry,
+                                        )
+                                      }
+                                      className="inline-flex items-center gap-1 rounded-lg border border-[#C9A227] bg-black px-2 py-0.5 font-sans text-xs font-bold text-[#FCE38A]"
+                                    >
+                                      <Volume2 className="h-3 w-3" />
+                                      <span>استمع</span>
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={handleContinueAfterMistake}
+                                      className="inline-flex items-center gap-1 rounded-lg bg-[#C9A227] px-2 py-0.5 font-sans text-xs font-extrabold text-black shadow"
+                                    >
+                                      <Play className="h-3 w-3 fill-black" />
+                                      <span>تكملة</span>
+                                    </button>
+                                  </>
                                 )}
                               </span>
                             );
@@ -1426,7 +1535,7 @@ export const QuranTestModal: React.FC<QuranTestModalProps> = ({
                 <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border-2 border-rose-500/70 bg-rose-950/35 px-3 py-2">
                   <div className="min-w-0 flex-1 text-right">
                     <p className="text-xs font-bold text-rose-300">
-                      خطأ في الآية {toArabicDigits(haltedMistake.ayahEntry.ayah.n)} — اضغط الكلمة الحمراء للاستماع
+                      خطأ في الآية {toArabicDigits(haltedMistake.ayahEntry.ayah.n)} — اضغط الميكروفون الصغير لنطق الكلمة الصح بصوت الشيخ
                     </p>
                     <p className="mt-0.5 text-xs text-white">
                       الصحيح:{' '}
@@ -1443,19 +1552,36 @@ export const QuranTestModal: React.FC<QuranTestModalProps> = ({
                   <div className="flex shrink-0 items-center gap-1.5">
                     <button
                       type="button"
+                      onClick={() => {
+                        const targetGroup = preparedAyahs[haltedMistake.ayahIdx];
+                        if (targetGroup) {
+                          playSingleCorrectWord(
+                            targetGroup,
+                            haltedMistake.wordIdx,
+                            haltedMistake.expectedWord,
+                            haltedMistake.hint,
+                            haltedMistake.spokenWord,
+                          );
+                        }
+                      }}
+                      title="نطق الكلمة الصح فقط"
+                      aria-label="نطق الكلمة الصح بصوت الشيخ"
+                      className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-[#FCE38A] bg-[#141004] text-[#FCE38A]"
+                    >
+                      <Mic className="h-4 w-4" />
+                    </button>
+                    <button
+                      type="button"
                       onClick={() =>
                         playCorrectionAyah(
                           correctionSheikh,
                           haltedMistake.ayahEntry,
-                          haltedMistake.expectedWord,
-                          haltedMistake.hint,
-                          haltedMistake.spokenWord,
                         )
                       }
                       className="inline-flex min-h-[36px] items-center gap-1 rounded-xl border border-[#C9A227] bg-black px-2.5 text-xs font-bold text-[#FCE38A]"
                     >
                       <Volume2 className="h-3.5 w-3.5" />
-                      <span>اسمعها صح</span>
+                      <span>استمع</span>
                     </button>
                     <button
                       type="button"

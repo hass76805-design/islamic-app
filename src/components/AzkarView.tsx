@@ -2,6 +2,7 @@ import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {Check, Pause, Play, RotateCcw, Sparkles} from 'lucide-react';
 import {AZKAR_CATEGORIES} from '../data/azkar';
 import {AzkarCategoryId, DhikrItem} from '../types';
+import {resolveOfflinePlayableUrl} from '../utils/offlineAudioCache';
 
 interface AzkarViewProps {
   counts: Record<string, number>;
@@ -55,16 +56,20 @@ export const AzkarView: React.FC<AzkarViewProps> = ({
       audioRef.current = new Audio();
     }
     const audio = audioRef.current;
-    audio.src = item.audioUrl;
     setPlayingId(item.id);
-    audio.onended = () => setPlayingId(null);
-    audio.onerror = () => {
+    const onOfflineOrErr = () => {
       setPlayingId(null);
-      setAudioErr('تعذر تشغيل المقطع الصوتي حاليًا');
+      setAudioErr(
+        typeof navigator !== 'undefined' && !navigator.onLine
+          ? 'يرجى الاتصال بالإنترنت لتشغيل هذا الذكر الصوتي (النص متاح بدون نت)'
+          : 'تعذر تشغيل المقطع الصوتي حاليًا',
+      );
     };
-    audio.play().catch(() => {
-      setPlayingId(null);
-      setAudioErr('تعذر تشغيل المقطع الصوتي حاليًا');
+    audio.onended = () => setPlayingId(null);
+    audio.onerror = onOfflineOrErr;
+    void resolveOfflinePlayableUrl(item.audioUrl).then((playableUrl) => {
+      audio.src = playableUrl;
+      audio.play().catch(onOfflineOrErr);
     });
   };
 

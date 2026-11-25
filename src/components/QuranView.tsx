@@ -21,7 +21,12 @@ import {
   ZoomOut,
 } from 'lucide-react';
 import {LastReadPosition} from '../App';
-import {getAyahAudioUrl, getReciterById, RECITERS_30} from '../data/reciters';
+import {
+  getAyahAudioUrl,
+  getReciterById,
+  getSurahAudioUrl,
+  RECITERS_30,
+} from '../data/reciters';
 import {
   CompactAyah,
   CompactSurah,
@@ -36,7 +41,10 @@ import {
   extractAyahWordMeanings,
 } from '../utils/ayahWordMeanings';
 import {useHardwareBack} from '../utils/backNavigation';
-import {loadOfflineJson} from '../utils/offlineAudioCache';
+import {
+  loadOfflineJson,
+  resolveOfflinePlayableUrl,
+} from '../utils/offlineAudioCache';
 import {AyahReciterSheet} from './AyahReciterSheet';
 import {SurahHeaderFrame} from './IslamicOrnament';
 import {QuranTeacherModal} from './QuranTeacherModal';
@@ -142,6 +150,7 @@ export const QuranView: React.FC<QuranViewProps> = ({
 
   // 4-Circular-Button Translucent Ayah Dock
   const [floatingPopup, setFloatingPopup] = useState<PageEntry | null>(null);
+  const [popupSubmenu, setPopupSubmenu] = useState<'none' | 'sahhahli'>('none');
   const mushafBoxRef = useRef<HTMLDivElement | null>(null);
   const swipeStartRef = useRef<{x: number; y: number; ignored: boolean} | null>(
     null,
@@ -177,7 +186,10 @@ export const QuranView: React.FC<QuranViewProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
 
   // Hardware Back handlers
-  useHardwareBack(Boolean(floatingPopup), () => setFloatingPopup(null));
+  useHardwareBack(Boolean(floatingPopup), () => {
+    setFloatingPopup(null);
+    setPopupSubmenu('none');
+  });
   useHardwareBack(indexOpen, () => setIndexOpen(false));
   useHardwareBack(Boolean(ayahDetailModal), () => setAyahDetailModal(null));
 
@@ -188,6 +200,7 @@ export const QuranView: React.FC<QuranViewProps> = ({
   const [correctingAyahBanner, setCorrectingAyahBanner] =
     useState<PageEntry | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const playSessionRef = useRef<number>(0);
 
   const [retryTick, setRetryTick] = useState(0);
 
@@ -388,6 +401,7 @@ export const QuranView: React.FC<QuranViewProps> = ({
   );
 
   const stopAudio = useCallback(() => {
+    playSessionRef.current++;
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current.currentTime = 0;
@@ -401,7 +415,7 @@ export const QuranView: React.FC<QuranViewProps> = ({
   const playSingleAyahOrSequence = useCallback(
     (entry: PageEntry, continuePage = false, slowTajweed = false) => {
       setAudioError(null);
-      const url = getAyahAudioUrl(
+      const rawUrl = getAyahAudioUrl(
         preferredReciter,
         entry.surah.n,
         entry.ayah.n,
@@ -421,44 +435,141 @@ export const QuranView: React.FC<QuranViewProps> = ({
         return;
       }
 
+      const session = ++playSessionRef.current;
+
       if (slowTajweed) {
         setCorrectingAyahBanner(entry);
       } else {
         setCorrectingAyahBanner(null);
       }
 
-      audio.src = url;
-      audio.playbackRate = slowTajweed ? 0.88 : 1;
       setPlayingAyahId(entry.ayah.id);
       setIsPlaying(true);
 
-      audio.onended = () => {
-        audio.playbackRate = 1;
-        if (continuePage) {
-          const idx = pageEntries.findIndex((e) => e.ayah.id === entry.ayah.id);
-          if (idx >= 0 && idx < pageEntries.length - 1) {
-            playSingleAyahOrSequence(pageEntries[idx + 1], true);
-            return;
+      void resolveOfflinePlayableUrl(rawUrl).then((playableUrl) => {
+        if (session !== playSessionRef.current) return;
+        audio.src = playableUrl;
+        audio.playbackRate = slowTajweed ? 0.88 : 1;
+
+        audio.onended = () => {
+          if (session !== playSessionRef.current) return;
+          audio.playbackRate = 1;
+          if (continuePage) {
+            const idx = pageEntries.findIndex(
+              (e) => e.ayah.id === entry.ayah.id,
+            );
+            if (idx >= 0 && idx < pageEntries.length - 1) {
+              playSingleAyahOrSequence(pageEntries[idx + 1], true);
+              return;
+            }
           }
-        }
-        setIsPlaying(false);
-        setPlayingAyahId(null);
-        setCorrectingAyahBanner(null);
-      };
+          setIsPlaying(false);
+          setPlayingAyahId(null);
+          setCorrectingAyahBanner(null);
+        };
 
-      audio.onerror = () => {
-        audio.playbackRate = 1;
-        setIsPlaying(false);
-        setPlayingAyahId(null);
-        setAudioError('تعذر تشغيل هذه التلاوة حاليًا');
-      };
+        audio.onerror = () => {
+          if (session !== playSessionRef.current) return;
+          audio.playbackRate = 1;
+          setIsPlaying(false);
+          setPlayingAyahId(null);
+          setAudioError(
+            typeof navigator !== 'undefined' && !navigator.onLine
+              ? 'يرجى الاتصال بالإنترنت لسماع هذه التلاوة (القراءة والتفسير متاحان بدون نت)'
+              : 'تعذر تشغيل هذه التلاوة حاليًا',
+          );
+        };
 
-      audio.play().catch(() => {
-        audio.playbackRate = 1;
-        setIsPlaying(false);
+        audio.play().catch(() => {
+          if (session !== playSessionRef.current) return;
+          audio.playbackRate = 1;
+          setIsPlaying(false);
+        });
       });
     },
     [preferredReciter, pageEntries, isPlaying, playingAyahId, stopAudio],
+  );
+
+  const playSurahAyahsSequentially = useCallback(
+    (surah: CompactSurah, ayahIdx: number, session: number) => {
+      if (session !== playSessionRef.current) return;
+      const ayah = surah.ayahs[ayahIdx];
+      if (!ayah) {
+        setIsPlaying(false);
+        setPlayingAyahId(null);
+        return;
+      }
+      if (!audioRef.current) {
+        audioRef.current = new Audio();
+      }
+      const audio = audioRef.current;
+      const rawUrl = getAyahAudioUrl(preferredReciter, surah.n, ayah.n);
+      setPlayingAyahId(ayah.id);
+      setIsPlaying(true);
+
+      void resolveOfflinePlayableUrl(rawUrl).then((playableUrl) => {
+        if (session !== playSessionRef.current) return;
+        audio.src = playableUrl;
+        audio.playbackRate = 1;
+        audio.onended = () => {
+          if (session !== playSessionRef.current) return;
+          playSurahAyahsSequentially(surah, ayahIdx + 1, session);
+        };
+        audio.onerror = () => {
+          if (session !== playSessionRef.current) return;
+          setIsPlaying(false);
+          setPlayingAyahId(null);
+          setAudioError(
+            typeof navigator !== 'undefined' && !navigator.onLine
+              ? 'يرجى الاتصال بالإنترنت لسماع تلاوة السورة (القراءة والتفسير متاحان بدون نت)'
+              : 'تعذر تشغيل تلاوة السورة حاليًا',
+          );
+        };
+        audio.play().catch(() => {
+          if (session !== playSessionRef.current) return;
+          setIsPlaying(false);
+          setPlayingAyahId(null);
+        });
+      });
+    },
+    [preferredReciter],
+  );
+
+  const playFullSurahAudio = useCallback(
+    (surah: CompactSurah) => {
+      setAudioError(null);
+      setCorrectingAyahBanner(null);
+      if (!audioRef.current) {
+        audioRef.current = new Audio();
+      }
+      const audio = audioRef.current;
+      const session = ++playSessionRef.current;
+      const firstAyahId = surah.ayahs[0]?.id ?? null;
+      setPlayingAyahId(firstAyahId);
+      setIsPlaying(true);
+
+      const surahUrl = getSurahAudioUrl(preferredReciter, surah.n);
+      void resolveOfflinePlayableUrl(surahUrl).then((playableUrl) => {
+        if (session !== playSessionRef.current) return;
+        audio.src = playableUrl;
+        audio.playbackRate = 1;
+        audio.onended = () => {
+          if (session !== playSessionRef.current) return;
+          setIsPlaying(false);
+          setPlayingAyahId(null);
+        };
+        audio.onerror = () => {
+          if (session !== playSessionRef.current) return;
+          // Seamless fallback to sequential ayah-by-ayah playback for the entire Surah
+          playSurahAyahsSequentially(surah, 0, session);
+        };
+        audio.play().catch(() => {
+          if (session !== playSessionRef.current) return;
+          playSurahAyahsSequentially(surah, 0, session);
+        });
+      });
+    },
+    [preferredReciter, playSurahAyahsSequentially],
   );
 
   useEffect(() => {
@@ -498,6 +609,7 @@ export const QuranView: React.FC<QuranViewProps> = ({
   const openAyahCircularDock = (entry: PageEntry) => {
     setSelectedAyah(entry);
     setFloatingPopup(entry);
+    setPopupSubmenu('none');
     onUpdateLastRead(entry.surah.n, entry.ayah.n, currentPage);
   };
 
@@ -821,7 +933,7 @@ export const QuranView: React.FC<QuranViewProps> = ({
         </div>
       </div>
 
-      {/* 4 SMALL CIRCULAR BUTTONS TRANSLUCENT AYAH DOCK (تغيير الشيخ | استمع | الشيخ يصححلي | تفسير) */}
+      {/* 4 SMALL CIRCULAR BUTTONS TRANSLUCENT AYAH DOCK (تغيير الشيخ | استماع | صححلي | تفسير) */}
       {floatingPopup && (
         <div
           data-ayah-popup="true"
@@ -834,13 +946,71 @@ export const QuranView: React.FC<QuranViewProps> = ({
             </span>
             <button
               type="button"
-              onClick={() => setFloatingPopup(null)}
+              onClick={() => {
+                setFloatingPopup(null);
+                setPopupSubmenu('none');
+              }}
               aria-label="إغلاق"
               className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-[#C9A227]/50 text-[#F3D56B]"
             >
               <X className="h-3.5 w-3.5" />
             </button>
           </div>
+
+          {popupSubmenu === 'sahhahli' && (
+            <div className="mb-3 space-y-1.5 rounded-2xl border border-[#C9A227]/60 bg-[#0D0A02] p-2.5">
+              <div className="flex items-center justify-between px-1">
+                <span className="text-[11px] font-extrabold text-[#FCE38A]">
+                  اختر طريقة الاستماع (صححلي):
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setPopupSubmenu('none')}
+                  className="text-[10px] font-bold text-zinc-400"
+                >
+                  رجوع
+                </button>
+              </div>
+              <div className="grid grid-cols-3 gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const target = floatingPopup;
+                    setPopupSubmenu('none');
+                    setFloatingPopup(null);
+                    playSingleAyahOrSequence(target, false);
+                  }}
+                  className="min-h-[40px] rounded-xl border border-[#C9A227] bg-black px-2 py-1.5 text-[11px] font-extrabold text-[#FCE38A] active:scale-95"
+                >
+                  استمع للآية
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const startOfPage = pageEntries[0] || floatingPopup;
+                    setPopupSubmenu('none');
+                    setFloatingPopup(null);
+                    playSingleAyahOrSequence(startOfPage, true);
+                  }}
+                  className="min-h-[40px] rounded-xl border border-[#C9A227] bg-black px-2 py-1.5 text-[11px] font-extrabold text-[#FCE38A] active:scale-95"
+                >
+                  استمع للصفحة
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const targetSurah = floatingPopup.surah;
+                    setPopupSubmenu('none');
+                    setFloatingPopup(null);
+                    playFullSurahAudio(targetSurah);
+                  }}
+                  className="min-h-[40px] rounded-xl bg-[#C9A227] px-2 py-1.5 text-[11px] font-extrabold text-black active:scale-95"
+                >
+                  استمع للسورة كاملة
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* 4 SMALL CIRCULAR ACTION BUTTONS */}
           <div className="grid grid-cols-4 gap-1.5 text-center">
@@ -850,6 +1020,7 @@ export const QuranView: React.FC<QuranViewProps> = ({
               onClick={() => {
                 const target = floatingPopup;
                 stopAudio();
+                setPopupSubmenu('none');
                 setFloatingPopup(null);
                 setLongPressTarget(target);
               }}
@@ -863,7 +1034,7 @@ export const QuranView: React.FC<QuranViewProps> = ({
               </span>
             </button>
 
-            {/* 2. استمع */}
+            {/* 2. استماع */}
             <button
               type="button"
               onClick={() => playSingleAyahOrSequence(floatingPopup, false)}
@@ -879,25 +1050,31 @@ export const QuranView: React.FC<QuranViewProps> = ({
                 )}
               </span>
               <span className="text-[10px] font-bold leading-tight text-[#FCE38A]">
-                استمع
+                استماع
               </span>
             </button>
 
-            {/* 3. الشيخ يصححلي */}
+            {/* 3. صححلي */}
             <button
               type="button"
-              onClick={() => {
-                const target = floatingPopup;
-                setFloatingPopup(null);
-                playSingleAyahOrSequence(target, false, true);
-              }}
+              onClick={() =>
+                setPopupSubmenu((prev) =>
+                  prev === 'sahhahli' ? 'none' : 'sahhahli',
+                )
+              }
               className="flex flex-col items-center gap-1"
             >
-              <span className="flex h-12 w-12 items-center justify-center rounded-full border-2 border-[#C9A227] bg-[#141004] text-emerald-400">
+              <span
+                className={`flex h-12 w-12 items-center justify-center rounded-full border-2 ${
+                  popupSubmenu === 'sahhahli'
+                    ? 'border-[#FCE38A] bg-emerald-500 text-black'
+                    : 'border-[#C9A227] bg-[#141004] text-emerald-400'
+                }`}
+              >
                 <Mic className="h-4 w-4" />
               </span>
               <span className="text-[10px] font-bold leading-tight text-[#FCE38A]">
-                الشيخ يصححلي
+                صححلي
               </span>
             </button>
 
@@ -906,6 +1083,7 @@ export const QuranView: React.FC<QuranViewProps> = ({
               type="button"
               onClick={() => {
                 const target = floatingPopup;
+                setPopupSubmenu('none');
                 setFloatingPopup(null);
                 setAyahDetailModal({entry: target, tab: 'tafsir'});
               }}

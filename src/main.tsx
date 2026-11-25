@@ -7,7 +7,7 @@ import {initAppProtection} from './utils/appProtection';
 
 initAppProtection();
 
-const updateSW = registerSW({
+registerSW({
   immediate: true,
   onRegisteredSW(_swUrl, registration) {
     if (registration) {
@@ -17,7 +17,7 @@ const updateSW = registerSW({
     }
   },
   onNeedRefresh() {
-    updateSW(true).catch(() => {});
+    // Wait silently for next cold launch instead of reloading mid-session/splash
   },
 });
 
