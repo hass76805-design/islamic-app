@@ -3,6 +3,7 @@ import {BookOpenText, Check, Copy, Search, Sparkles} from 'lucide-react';
 import {ISLAMIC_STORIES} from '../data/storiesData';
 import {StoryCategoryId} from '../types';
 import {useHardwareBack} from '../utils/backNavigation';
+import {SectionOfflineButton} from './SectionOfflineButton';
 
 interface StoriesViewProps {
   initialCategory?: StoryCategoryId;
@@ -82,9 +83,17 @@ export const StoriesView: React.FC<StoriesViewProps> = ({
                 موسوعة القصص الإسلامية الكاملة (للقراءة فقط)
               </h2>
               <p className="mt-0.5 text-xs text-slate-600 dark:text-zinc-300">
-                25 قصة للأنبياء · 15 قصة من القرآن · 100 للصحابة · 30 وعبرة · 20 في الغفران والتوبة
+                25 قصة للأنبياء · 15 قصة من القرآن · 100 للصحابة · 30 وعبرة · 20 في الغفران والتوبة · تعمل بدون نت مباشرة
               </p>
             </div>
+          </div>
+
+          <div className="w-full">
+            <SectionOfflineButton
+              sectionId="stories"
+              preferredReciter="alafasy"
+              labelOverride="موسوعة القصص"
+            />
           </div>
 
           <div className="relative w-full">

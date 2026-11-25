@@ -30,6 +30,7 @@ import {
   db,
   googleProvider,
   handleFirestoreError,
+  isOfflineFirebaseError,
   OperationType,
 } from '../firebase';
 import {
@@ -122,7 +123,13 @@ export const FirebaseProvider: React.FC<{
   }, []);
 
   const ensureParentUserDoc = useCallback(async (u: User): Promise<void> => {
-    if (!u.emailVerified || parentReadyRef.current === u.uid) return;
+    if (
+      !u.emailVerified ||
+      parentReadyRef.current === u.uid ||
+      (typeof navigator !== 'undefined' && !navigator.onLine)
+    ) {
+      return;
+    }
     const userPath = `users/${u.uid}`;
     const userDocRef = doc(db, 'users', u.uid);
     try {
@@ -151,21 +158,26 @@ export const FirebaseProvider: React.FC<{
       }
       parentReadyRef.current = u.uid;
     } catch (err) {
-      handleFirestoreError(err, OperationType.WRITE, userPath);
+      if (!isOfflineFirebaseError(err)) {
+        handleFirestoreError(err, OperationType.WRITE, userPath);
+      }
     }
   }, []);
 
   // Only attach real-time listeners once auth is ready & user email is verified
   useEffect(() => {
     if (!authReady || !user || !user.emailVerified) return;
+    if (typeof navigator !== 'undefined' && !navigator.onLine) return;
 
     let unsubUser: (() => void) | undefined;
     let unsubBookmarks: (() => void) | undefined;
     let unsubTests: (() => void) | undefined;
     let cancelled = false;
 
-    void ensureParentUserDoc(user).then(() => {
-      if (cancelled) return;
+    void ensureParentUserDoc(user)
+      .catch(() => {})
+      .then(() => {
+        if (cancelled) return;
 
       const userPath = `users/${user.uid}`;
       unsubUser = onSnapshot(
@@ -281,7 +293,7 @@ export const FirebaseProvider: React.FC<{
     setAuthError(null);
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
       setAuthError(
-        'يرجى الاتصال بالإنترنت لتسجيل الدخول والمزامنة السحابية.',
+        'أنت تعمل حاليًا بالوضع الأوفلاين — تسجيل الدخول السحابي يتطلب إنترنت، بينما جميع بياناتك محفوظة محليًا على الجهاز.',
       );
       return;
     }
@@ -291,7 +303,7 @@ export const FirebaseProvider: React.FC<{
     } catch {
       setAuthError(
         typeof navigator !== 'undefined' && !navigator.onLine
-          ? 'يرجى الاتصال بالإنترنت لتسجيل الدخول والمزامنة السحابية.'
+          ? 'أنت تعمل حاليًا بالوضع الأوفلاين — تسجيل الدخول السحابي يتطلب إنترنت، بينما جميع بياناتك محفوظة محليًا على الجهاز.'
           : 'تعذر تسجيل الدخول — تأكد من السماح بالنوافذ المنبثقة والاتصال بالإنترنت.',
       );
     } finally {

@@ -100,8 +100,8 @@ export const AyahReciterSheet: React.FC<AyahReciterSheetProps> = ({
   };
 
   return (
-    <div className="fixed inset-y-0 left-1/2 z-50 flex w-full max-w-[400px] -translate-x-1/2 items-end justify-center bg-black/85 p-0">
-      <div className="flex max-h-[88vh] w-full max-w-[400px] flex-col overflow-hidden rounded-t-3xl border-x-2 border-t-2 border-[#C9A227] bg-[#050505] text-white shadow-2xl">
+    <div className="fixed inset-y-0 left-1/2 z-50 flex w-full max-w-[390px] -translate-x-1/2 items-end justify-center bg-black/85 p-0">
+      <div className="flex max-h-[88vh] w-full max-w-[390px] flex-col overflow-hidden rounded-t-3xl border-x-2 border-t-2 border-[#C9A227] bg-[#050505] text-white shadow-2xl">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-[#C9A227]/30 bg-black px-5 py-4 text-white">
           <div>

@@ -7,16 +7,15 @@ import {
   Download,
   HeartHandshake,
   Home,
-  LayoutGrid,
-  MapPin,
   Moon,
   Pause,
   Play,
-  ShieldCheck,
+  Settings,
   Sun,
   X,
 } from 'lucide-react';
 import {AdhanLiveModal} from './components/AdhanLiveModal';
+import {AdhanMuezzinView} from './components/AdhanMuezzinView';
 import {AzkarView} from './components/AzkarView';
 import {HomeView} from './components/HomeView';
 import {MoreView} from './components/MoreView';
@@ -64,6 +63,7 @@ import {
   cacheBatchUrls,
   cancelFullOfflineBackgroundDownload,
   getCurrentOfflineProgress,
+  hydrateOfflineStateFromIdb,
   notifyNetworkOfflineToSw,
   notifyNetworkOnlineAutoResumeToSw,
   pauseFullOfflineBackgroundDownload,
@@ -74,9 +74,16 @@ import {
   syncOfflineContentUpdatesInBackground,
 } from './utils/offlineAudioCache';
 import {
+  ensureInitialOfflineSeedData,
+  requestPersistentStorage,
+} from './utils/offlineDb';
+import {
   computeDailyPrayerData,
   computeQiyamAlLaylTime,
   DEFAULT_PRAYER_OFFSETS,
+  formatCountdown,
+  formatTime12,
+  hydrateMonthlyPrayerCacheFromIdb,
   precomputeMonthlyPrayerCache,
 } from './utils/prayerTimes';
 import {
@@ -233,9 +240,10 @@ const DEFAULT_SETTINGS: AppSettings = {
 const NAV_ITEMS: Array<{id: TabId; labelAr: string; icon: typeof Home}> = [
   {id: 'home', labelAr: 'الرئيسية', icon: Home},
   {id: 'quran', labelAr: 'القرآن', icon: BookOpen},
+  {id: 'prayer', labelAr: 'الصلاة', icon: BellRing},
   {id: 'azkar', labelAr: 'الأذكار', icon: HeartHandshake},
   {id: 'qibla', labelAr: 'القبلة', icon: Compass},
-  {id: 'more', labelAr: 'المزيد', icon: LayoutGrid},
+  {id: 'settings', labelAr: 'الإعدادات', icon: Settings},
 ];
 
 export interface LastReadPosition {
@@ -378,11 +386,20 @@ function AppContent({
   });
   navStateRef.current = {activeTab, moreSubPage};
 
+  const mainScrollRef = useRef<HTMLElement | null>(null);
+  const scrollMainTop = useCallback(() => {
+    mainScrollRef.current?.scrollTo({top: 0, behavior: 'auto'});
+  }, []);
+
   useEffect(() => {
     setRootBackHandler(() => {
       const {activeTab: tab, moreSubPage: sub} = navStateRef.current;
       if (tab === 'more' && sub !== 'menu') {
         setMoreSubPage('menu');
+        return true;
+      }
+      if (tab === 'settings' && sub !== 'settings') {
+        setMoreSubPage('settings');
         return true;
       }
       if (tab !== 'home') {
@@ -517,6 +534,11 @@ function AppContent({
   );
 
   useEffect(() => {
+    void requestPersistentStorage();
+    void ensureInitialOfflineSeedData();
+    void hydrateOfflineStateFromIdb();
+    void hydrateMonthlyPrayerCacheFromIdb();
+
     const unsub = subscribeOfflineDownloadState((next) => {
       const prevStatus = prevOfflineDlStatusRef.current;
       prevOfflineDlStatusRef.current = next.status;
@@ -869,6 +891,7 @@ function AppContent({
 
   const isForcedBlackGold =
     settings.darkMode ||
+    activeTab === 'prayer' ||
     (activeTab === 'more' &&
       (moreSubPage === 'adhan' || moreSubPage === 'prayer_guide'));
 
@@ -923,16 +946,19 @@ function AppContent({
       }
       window.history.replaceState({}, '', window.location.pathname);
     } else if (openMuezzin) {
-      setMoreSubPage('adhan');
-      setActiveTab('more');
+      setActiveTab('prayer');
+      setMoreSubPage('menu');
       window.history.replaceState({}, '', window.location.pathname);
     } else if (
       tabParam === 'quran' ||
+      tabParam === 'prayer' ||
       tabParam === 'azkar' ||
       tabParam === 'qibla' ||
+      tabParam === 'settings' ||
       tabParam === 'more'
     ) {
       setActiveTab(tabParam);
+      if (tabParam === 'settings') setMoreSubPage('settings');
       window.history.replaceState({}, '', window.location.pathname);
     }
 
@@ -2168,23 +2194,51 @@ function AppContent({
     [setPrayerLog],
   );
 
+  const headerNextPrayer = useMemo(() => {
+    const nowMs = now.getTime();
+    const nextItem = dailyPrayerData.schedule.find(
+      (item) => item.time.getTime() > nowMs,
+    );
+    const targetName = nextItem ? nextItem.nameAr : 'الفجر';
+    const targetTime = nextItem
+      ? nextItem.time
+      : new Date(
+          dailyPrayerData.schedule[0].time.getTime() + 24 * 60 * 60 * 1000,
+        );
+    const remainingMs = Math.max(0, targetTime.getTime() - nowMs);
+    return {
+      nameAr: targetName,
+      timeText: formatTime12(targetTime),
+      countdown: formatCountdown(remainingMs),
+    };
+  }, [dailyPrayerData, now]);
+
   const handleTabSelect = (tab: TabId) => {
     if (tab !== 'home' && tab !== activeTab) {
       pushNavigationState(`tab-${tab}`);
     }
     setActiveTab(tab);
-    if (tab !== 'more') {
+    if (tab === 'settings') {
+      setMoreSubPage('settings');
+    } else if (tab !== 'more') {
       setMoreSubPage('menu');
     }
-    window.scrollTo({top: 0, behavior: 'auto'});
+    scrollMainTop();
   };
 
   const handleSelectMoreSubPage = (sub: MoreSubPageId) => {
+    if (sub === 'adhan') {
+      pushNavigationState('tab-prayer');
+      setActiveTab('prayer');
+      setMoreSubPage('menu');
+      scrollMainTop();
+      return;
+    }
     if (sub !== 'menu' && moreSubPage === 'menu') {
       pushNavigationState(`sub-${sub}`);
     }
     setMoreSubPage(sub);
-    window.scrollTo({top: 0, behavior: 'auto'});
+    scrollMainTop();
   };
 
   const handleOpenQuranFatiha = () => {
@@ -2193,7 +2247,7 @@ function AppContent({
     }
     setQuranDirective({type: 'fatiha', key: Date.now()});
     setActiveTab('quran');
-    window.scrollTo({top: 0, behavior: 'auto'});
+    scrollMainTop();
   };
 
   const handleOpenQuranTest = () => {
@@ -2202,53 +2256,99 @@ function AppContent({
     }
     setQuranDirective({type: 'test', key: Date.now()});
     setActiveTab('quran');
-    window.scrollTo({top: 0, behavior: 'auto'});
+    scrollMainTop();
   };
 
   const handleOpenMoreSubPage = (
     sub: MoreSubPageId,
     storyCat?: StoryCategoryId,
   ) => {
+    if (sub === 'adhan') {
+      pushNavigationState('tab-prayer');
+      setActiveTab('prayer');
+      setMoreSubPage('menu');
+      scrollMainTop();
+      return;
+    }
+    if (sub === 'settings') {
+      pushNavigationState('tab-settings');
+      setActiveTab('settings');
+      setMoreSubPage('settings');
+      scrollMainTop();
+      return;
+    }
     if (storyCat) setStoryCategory(storyCat);
     pushNavigationState(`sub-${sub}`);
     setMoreSubPage(sub);
     setActiveTab('more');
-    window.scrollTo({top: 0, behavior: 'auto'});
+    scrollMainTop();
   };
 
+  const showHomePermBanner =
+    !permBannerDismissed &&
+    (notifPermState === 'default' || !location.isGps || !audioUnlocked);
+
   return (
-    <div className="min-h-dvh w-full bg-[#000000]">
+    <div className="h-dvh w-full overflow-hidden bg-[#000000]">
       <div
-        className={`relative mx-auto flex min-h-dvh w-full max-w-[400px] flex-col overflow-x-clip border-x border-[#C9A227]/35 ${
+        className={`relative mx-auto flex h-dvh w-full max-w-[390px] flex-col overflow-hidden sm:border-x sm:border-[#C9A227]/35 ${
           isForcedBlackGold ? 'bg-[#000000] text-white' : 'bg-white text-slate-900'
         }`}
       >
         {showSplash && <SplashScreen onComplete={handleSplashComplete} />}
 
-        {/* Fixed Calm 400px Mobile Top Header */}
+        {/* Native Android Top AppBar (56px) with Live Prayer Time */}
         <header
-          className={`sticky top-0 z-40 border-b border-[#C9A227]/45 ${
-            isForcedBlackGold ? 'bg-[#000000]' : 'bg-white'
+          className={`z-40 shrink-0 border-b border-[#C9A227]/40 ${
+            isForcedBlackGold
+              ? 'bg-[#000000]/95 backdrop-blur-md'
+              : 'bg-white/95 backdrop-blur-md'
           }`}
         >
-          <div className="flex h-[54px] w-full items-center justify-between gap-2 px-3">
+          <div className="flex h-[56px] w-full items-center justify-between gap-2 px-3">
             <button
               type="button"
               onClick={() => handleTabSelect('home')}
-              className="flex min-w-0 items-center gap-2"
+              className="flex min-h-[44px] min-w-0 items-center gap-2 text-right transition-transform active:scale-[0.98]"
             >
               <img
                 src="/pwa-192x192.png"
                 alt="البرنامج الإسلامي الذهبي"
-                className="h-8 w-8 shrink-0 rounded-xl border border-[#C9A227] object-cover"
+                className="h-9 w-9 shrink-0 rounded-xl border border-[#C9A227] object-cover"
               />
-              <span className="font-quran truncate text-base font-bold text-[#9A7415] dark:text-[#F3D56B]">
-                البرنامج الإسلامي الذهبي
-              </span>
+              <div className="min-w-0">
+                <span className="font-quran block truncate text-[15px] font-bold leading-tight text-[#9A7415] dark:text-[#F3D56B]">
+                  الذهبي الإسلامي
+                </span>
+                <span className="block truncate text-[10px] font-semibold text-slate-500 dark:text-zinc-400">
+                  {location.city}
+                </span>
+              </div>
             </button>
 
             <div className="flex shrink-0 items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => handleTabSelect('prayer')}
+                aria-label={`الصلاة القادمة ${headerNextPrayer.nameAr}`}
+                className="flex min-h-[40px] items-center gap-1.5 rounded-2xl border border-[#C9A227]/65 bg-[#120D03] px-2.5 py-1 text-right text-white transition active:scale-[0.97]"
+              >
+                <BellRing className="h-3.5 w-3.5 shrink-0 text-[#C9A227]" />
+                <div className="leading-tight">
+                  <span className="block text-[10px] font-extrabold text-[#FCE38A]">
+                    {headerNextPrayer.nameAr} · {headerNextPrayer.timeText}
+                  </span>
+                  <span
+                    dir="ltr"
+                    className="font-mono-num block text-[10px] font-bold text-zinc-300"
+                  >
+                    باقي {headerNextPrayer.countdown}
+                  </span>
+                </div>
+              </button>
+
               <PWAInstallButton compact />
+
               <button
                 type="button"
                 onClick={() =>
@@ -2259,7 +2359,7 @@ function AppContent({
                     ? 'تغيير الخلفية إلى البيضاء'
                     : 'تغيير الخلفية إلى السوداء'
                 }
-                className="flex h-9 w-9 items-center justify-center rounded-xl border border-[#C9A227] bg-black/40 text-[#C9A227]"
+                className="flex h-[42px] w-[42px] shrink-0 items-center justify-center rounded-2xl border border-[#C9A227]/65 bg-black/40 text-[#C9A227] transition active:scale-[0.95]"
               >
                 {settings.darkMode ? (
                   <Sun className="h-4 w-4" />
@@ -2271,239 +2371,181 @@ function AppContent({
           </div>
         </header>
 
-        {/* One-Tap All Permissions & Background Engine Activation Card */}
-        {!permBannerDismissed &&
-          (notifPermState === 'default' || !location.isGps || !audioUnlocked) && (
-            <div className="w-full px-3 pt-2.5">
-              <div className="space-y-2 rounded-2xl border-2 border-[#C9A227] bg-[#0B0802] p-3 text-white">
+        {/* Active Prayer Confirmation / Adhan Alert / Download Progress Strip */}
+        {(activeUnconfirmedPrayer ||
+          adhanBanner ||
+          offlineDl.status === 'downloading' ||
+          offlineDl.status === 'paused' ||
+          (offlineDl.status === 'completed' && offlineDoneBannerVisible)) && (
+          <div className="shrink-0 space-y-2 border-b border-[#C9A227]/25 px-3 py-2">
+            {activeUnconfirmedPrayer && (
+              <div className="flex items-center justify-between gap-2 rounded-2xl border-2 border-[#FCE38A] bg-gradient-to-l from-[#1C1404] via-[#120D02] to-[#080601] px-3 py-2 text-white">
+                <div className="min-w-0">
+                  <p className="flex items-center gap-1.5 text-xs font-extrabold text-[#FCE38A]">
+                    <BellRing className="h-4 w-4 shrink-0 text-[#FCE38A]" />
+                    <span>هل صليت {activeUnconfirmedPrayer.nameAr}؟</span>
+                  </p>
+                  <p className="mt-0.5 text-[10px] text-zinc-300">
+                    {activeUnconfirmedPrayer.elapsedMin > 0
+                      ? `مرّ ${activeUnconfirmedPrayer.elapsedMin} دقيقة — اضغط صليت لإيقاف التذكير`
+                      : 'حان وقت الصلاة — اضغط صليت عند الانتهاء'}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    confirmPrayerAndStopReminders(
+                      todayKey,
+                      activeUnconfirmedPrayer.key,
+                    )
+                  }
+                  className="inline-flex min-h-[40px] shrink-0 items-center gap-1 rounded-xl bg-gradient-to-b from-[#FCE38A] to-[#C9A227] px-3.5 text-xs font-extrabold text-black active:scale-95"
+                >
+                  <Check className="h-3.5 w-3.5" />
+                  <span>صليت ✓</span>
+                </button>
+              </div>
+            )}
+
+            {adhanBanner && (
+              <div className="flex items-center justify-between gap-2 rounded-2xl border-2 border-[#C9A227] bg-[#0D0A02] px-3 py-2 text-white">
+                <div className="flex min-w-0 items-center gap-2 text-xs font-bold text-[#F3D56B]">
+                  <BellRing className="h-4 w-4 shrink-0 text-[#C9A227]" />
+                  <span className="truncate">{adhanBanner.text}</span>
+                </div>
+                <div className="flex shrink-0 items-center gap-1.5">
+                  {adhanBanner.actionLabel && adhanBanner.onAction && (
+                    <button
+                      type="button"
+                      onClick={adhanBanner.onAction}
+                      className="min-h-[36px] rounded-xl bg-[#C9A227] px-2.5 py-1 text-[11px] font-bold text-black"
+                    >
+                      {adhanBanner.actionLabel}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      adhanAudioRef.current?.pause();
+                      setAdhanBanner(null);
+                    }}
+                    aria-label="إغلاق تنبيه الأذان"
+                    className="flex h-9 w-9 items-center justify-center rounded-xl border border-[#C9A227]/60 text-[#F3D56B]"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {(offlineDl.status === 'downloading' ||
+              offlineDl.status === 'paused' ||
+              (offlineDl.status === 'completed' &&
+                offlineDoneBannerVisible)) && (
+              <div className="space-y-2 rounded-2xl border-2 border-[#C9A227] bg-[#0B0902] p-2.5 text-white shadow-[0_6px_22px_rgba(201,162,39,0.22)]">
                 <div className="flex items-start justify-between gap-2">
-                  <div className="flex items-start gap-2">
-                    <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-[#FCE38A]" />
-                    <div>
+                  <div className="flex min-w-0 items-start gap-2">
+                    <Download className="mt-0.5 h-4 w-4 shrink-0 text-[#FCE38A]" />
+                    <div className="min-w-0 space-y-0.5">
                       <p className="text-xs font-extrabold text-[#FCE38A]">
-                        تفعيل الأذان التلقائي والموقع والعمل في الخلفية
+                        {offlineDl.status === 'completed'
+                          ? 'تم تحميل المحتوى بالكامل ✓'
+                          : offlineDl.status === 'paused'
+                            ? `التحميل متوقف — باقي ${offlineDl.remainingMb} ميجا`
+                            : offlineDl.mode === 'updating'
+                              ? 'جاري تحميل تحديث المحتوى تلقائيًا...'
+                              : 'جاري تحميل المحتوى المختار للعمل بدون نت'}
                       </p>
-                      <p className="mt-0.5 text-[10px] leading-relaxed text-zinc-300">
-                        اسمح بالموقع والإشعارات وصوت الخلفية ليأذن التطبيق مع الدعاء والإقامة حتى والهاتف مقفول.
+                      <p className="text-[11px] font-semibold text-zinc-300">
+                        {offlineDl.status === 'completed'
+                          ? `تم تحميل ${offlineDl.totalMb} ميجا من ${offlineDl.totalMb} ميجا — باقي 0 ميجا — 100%`
+                          : offlineDl.status === 'paused' &&
+                              offlineDl.pauseReason === 'offline'
+                            ? `تم تحميل ${offlineDl.downloadedMb} من ${offlineDl.totalMb} ميجا (${offlineDl.percent}%) — سيكمل تلقائيًا فور عودة النت`
+                            : `تم تحميل ${offlineDl.downloadedMb} من ${offlineDl.totalMb} ميجا — باقي ${offlineDl.remainingMb} ميجا — ${offlineDl.percent}%`}
                       </p>
                     </div>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setPermBannerDismissed(true)}
-                    aria-label="إخفاء"
-                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-[#C9A227]/40 text-zinc-400"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
+                  {offlineDl.status === 'completed' && (
+                    <button
+                      type="button"
+                      onClick={() => setOfflineDoneBannerVisible(false)}
+                      aria-label="إغلاق إشعار اكتمال التحميل"
+                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-[#C9A227]/60 text-[#FCE38A]"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  )}
                 </div>
 
-                <div className="flex flex-wrap items-center gap-1.5 text-[10px] font-bold">
-                  <span
-                    className={`inline-flex items-center gap-1 rounded-lg border px-2 py-0.5 ${
-                      location.isGps
-                        ? 'border-emerald-500/60 bg-emerald-950/40 text-emerald-300'
-                        : 'border-[#C9A227]/50 bg-black text-[#FCE38A]'
-                    }`}
-                  >
-                    <MapPin className="h-3 w-3" />
-                    <span>{location.isGps ? `GPS: ${location.city}` : `الافتراضي: ${location.city}`}</span>
-                  </span>
-                  <span
-                    className={`inline-flex items-center gap-1 rounded-lg border px-2 py-0.5 ${
-                      notifPermState === 'granted'
-                        ? 'border-emerald-500/60 bg-emerald-950/40 text-emerald-300'
-                        : 'border-[#C9A227]/50 bg-black text-[#FCE38A]'
-                    }`}
-                  >
-                    <BellRing className="h-3 w-3" />
-                    <span>
-                      {notifPermState === 'granted' ? 'الإشعارات نشطة' : 'الإشعارات بانتظار التفعيل'}
-                    </span>
-                  </span>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => void handleActivateAllPermissions()}
-                  className="flex min-h-[38px] w-full items-center justify-center gap-1.5 rounded-xl bg-gradient-to-l from-[#FCE38A] via-[#C9A227] to-[#9A7415] px-3 text-xs font-extrabold text-black"
-                >
-                  <Check className="h-4 w-4" />
-                  <span>تفعيل كل الصلاحيات (الموقع + الإشعارات + الخلفية)</span>
-                </button>
-              </div>
-            </div>
-          )}
-
-        {/* Persistent "Have you prayed?" Reminder Bar until user taps "صليت ✓" */}
-        {activeUnconfirmedPrayer && (
-          <div className="w-full px-3 pt-2.5">
-            <div className="flex items-center justify-between gap-2 rounded-2xl border-2 border-[#FCE38A] bg-gradient-to-l from-[#1C1404] via-[#120D02] to-[#080601] px-3 py-2.5 text-white">
-              <div className="min-w-0">
-                <p className="flex items-center gap-1.5 text-xs font-extrabold text-[#FCE38A]">
-                  <BellRing className="h-4 w-4 shrink-0 text-[#FCE38A]" />
-                  <span>هل صليت {activeUnconfirmedPrayer.nameAr}؟</span>
-                </p>
-                <p className="mt-0.5 text-[10px] text-zinc-300">
-                  {activeUnconfirmedPrayer.elapsedMin > 0
-                    ? `مرّ ${activeUnconfirmedPrayer.elapsedMin} دقيقة على الأذان — اضغط صليت لإيقاف التذكير`
-                    : 'حان وقت الصلاة — اضغط صليت عند الانتهاء'}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() =>
-                  confirmPrayerAndStopReminders(
-                    todayKey,
-                    activeUnconfirmedPrayer.key,
-                  )
-                }
-                className="inline-flex min-h-[36px] shrink-0 items-center gap-1 rounded-xl bg-gradient-to-b from-[#FCE38A] to-[#C9A227] px-3.5 text-xs font-extrabold text-black"
-              >
-                <Check className="h-3.5 w-3.5" />
-                <span>صليت ✓</span>
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Non-blocking Reminder Banner */}
-        {adhanBanner && (
-          <div className="w-full px-3 pt-2.5">
-            <div className="flex items-center justify-between gap-2 rounded-2xl border-2 border-[#C9A227] bg-[#0D0A02] px-3 py-2.5 text-white">
-              <div className="flex min-w-0 items-center gap-2 text-xs font-bold text-[#F3D56B]">
-                <BellRing className="h-4 w-4 shrink-0 text-[#C9A227]" />
-                <span className="truncate">{adhanBanner.text}</span>
-              </div>
-              <div className="flex shrink-0 items-center gap-1.5">
-                {adhanBanner.actionLabel && adhanBanner.onAction && (
-                  <button
-                    type="button"
-                    onClick={adhanBanner.onAction}
-                    className="min-h-[32px] rounded-xl bg-[#C9A227] px-2.5 py-1 text-[11px] font-bold text-black"
-                  >
-                    {adhanBanner.actionLabel}
-                  </button>
-                )}
-                <button
-                  type="button"
-                  onClick={() => {
-                    adhanAudioRef.current?.pause();
-                    setAdhanBanner(null);
-                  }}
-                  aria-label="إغلاق تنبيه الأذان"
-                  className="flex h-8 w-8 items-center justify-center rounded-xl border border-[#C9A227]/60 text-[#F3D56B]"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Single Unified In-App Offline Download / Auto-Update Notification Bar */}
-        {(offlineDl.status === 'downloading' ||
-          offlineDl.status === 'paused' ||
-          (offlineDl.status === 'completed' && offlineDoneBannerVisible)) && (
-          <div className="w-full px-3 pt-2.5">
-            <div className="space-y-2 rounded-2xl border-2 border-[#C9A227] bg-[#0B0902] p-3 text-white shadow-[0_6px_22px_rgba(201,162,39,0.22)]">
-              <div className="flex items-start justify-between gap-2">
-                <div className="flex min-w-0 items-start gap-2">
-                  <Download className="mt-0.5 h-4 w-4 shrink-0 text-[#FCE38A]" />
-                  <div className="min-w-0 space-y-0.5">
-                    <p className="text-xs font-extrabold text-[#FCE38A]">
-                      {offlineDl.status === 'completed'
-                        ? 'تم تحميل المحتوى بالكامل ✓'
-                        : offlineDl.status === 'paused'
-                          ? `التحميل متوقف — باقي ${offlineDl.remainingMb} ميجا`
-                          : offlineDl.mode === 'updating'
-                            ? 'جاري تحميل تحديث المحتوى تلقائيًا...'
-                            : 'جاري تحميل المحتوى المختار للعمل بدون نت'}
-                    </p>
-                    <p className="text-[11px] font-semibold text-zinc-300">
-                      {offlineDl.status === 'completed'
-                        ? `تم تحميل ${offlineDl.totalMb} ميجا من ${offlineDl.totalMb} ميجا — باقي 0 ميجا — 100%`
-                        : offlineDl.status === 'paused' &&
-                            offlineDl.pauseReason === 'offline'
-                          ? `تم تحميل ${offlineDl.downloadedMb} من ${offlineDl.totalMb} ميجا (${offlineDl.percent}%) — سيكمل تلقائيًا فور عودة النت`
-                          : `تم تحميل ${offlineDl.downloadedMb} ميجا من ${offlineDl.totalMb} ميجا — باقي ${offlineDl.remainingMb} ميجا — ${offlineDl.percent}%`}
-                    </p>
+                <div className="flex items-center gap-2">
+                  <div className="h-2 flex-1 overflow-hidden rounded-full border border-[#C9A227]/45 bg-black">
+                    <div
+                      className="h-full bg-gradient-to-l from-[#FCE38A] to-[#C9A227] transition-all duration-300"
+                      style={{
+                        width: `${offlineDl.status === 'completed' ? 100 : Math.max(3, offlineDl.percent)}%`,
+                      }}
+                    />
                   </div>
+                  <span className="font-mono-num shrink-0 text-[11px] font-extrabold text-[#FCE38A]">
+                    {offlineDl.status === 'completed' ? 100 : offlineDl.percent}%
+                  </span>
                 </div>
-                {offlineDl.status === 'completed' && (
-                  <button
-                    type="button"
-                    onClick={() => setOfflineDoneBannerVisible(false)}
-                    aria-label="إغلاق إشعار اكتمال التحميل"
-                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-xl border border-[#C9A227]/60 text-[#FCE38A]"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
+
+                {(offlineDl.status === 'downloading' ||
+                  offlineDl.status === 'paused') && (
+                  <div className="flex flex-wrap items-center justify-end gap-2">
+                    <button
+                      type="button"
+                      disabled={offlineDl.status !== 'downloading'}
+                      onClick={() => void pauseFullOfflineBackgroundDownload()}
+                      className={`inline-flex min-h-[38px] items-center gap-1 rounded-xl border px-3 text-[11px] font-extrabold ${
+                        offlineDl.status === 'downloading'
+                          ? 'border-[#C9A227] bg-black text-[#FCE38A]'
+                          : 'border-zinc-700 bg-black/50 text-zinc-500'
+                      }`}
+                    >
+                      <Pause className="h-3.5 w-3.5" />
+                      <span>إيقاف مؤقت</span>
+                    </button>
+                    <button
+                      type="button"
+                      disabled={offlineDl.status !== 'paused'}
+                      onClick={() =>
+                        void resumeFullOfflineBackgroundDownload(
+                          settings.preferredReciter,
+                        )
+                      }
+                      className={`inline-flex min-h-[38px] items-center gap-1 rounded-xl px-3 text-[11px] font-extrabold ${
+                        offlineDl.status === 'paused'
+                          ? 'bg-[#C9A227] text-black'
+                          : 'border border-zinc-700 bg-black/50 text-zinc-500'
+                      }`}
+                    >
+                      <Play className="h-3.5 w-3.5 fill-current" />
+                      <span>استئناف</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void cancelFullOfflineBackgroundDownload()}
+                      className="inline-flex min-h-[38px] items-center gap-1 rounded-xl border border-red-500/60 bg-red-950/30 px-3 text-[11px] font-bold text-red-200"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                      <span>إلغاء</span>
+                    </button>
+                  </div>
                 )}
               </div>
-
-              <div className="flex items-center gap-2">
-                <div className="h-2.5 flex-1 overflow-hidden rounded-full border border-[#C9A227]/45 bg-black">
-                  <div
-                    className="h-full bg-gradient-to-l from-[#FCE38A] to-[#C9A227] transition-all duration-300"
-                    style={{
-                      width: `${offlineDl.status === 'completed' ? 100 : Math.max(3, offlineDl.percent)}%`,
-                    }}
-                  />
-                </div>
-                <span className="font-mono-num shrink-0 text-[11px] font-extrabold text-[#FCE38A]">
-                  {offlineDl.status === 'completed' ? 100 : offlineDl.percent}%
-                </span>
-              </div>
-
-              {(offlineDl.status === 'downloading' ||
-                offlineDl.status === 'paused') && (
-                <div className="flex flex-wrap items-center justify-end gap-2">
-                  <button
-                    type="button"
-                    disabled={offlineDl.status !== 'downloading'}
-                    onClick={() => void pauseFullOfflineBackgroundDownload()}
-                    className={`inline-flex min-h-[34px] items-center gap-1 rounded-xl border px-3 text-[11px] font-extrabold ${
-                      offlineDl.status === 'downloading'
-                        ? 'border-[#C9A227] bg-black text-[#FCE38A]'
-                        : 'border-zinc-700 bg-black/50 text-zinc-500'
-                    }`}
-                  >
-                    <Pause className="h-3.5 w-3.5" />
-                    <span>إيقاف مؤقت</span>
-                  </button>
-                  <button
-                    type="button"
-                    disabled={offlineDl.status !== 'paused'}
-                    onClick={() =>
-                      void resumeFullOfflineBackgroundDownload(
-                        settings.preferredReciter,
-                      )
-                    }
-                    className={`inline-flex min-h-[34px] items-center gap-1 rounded-xl px-3 text-[11px] font-extrabold ${
-                      offlineDl.status === 'paused'
-                        ? 'bg-[#C9A227] text-black'
-                        : 'border border-zinc-700 bg-black/50 text-zinc-500'
-                    }`}
-                  >
-                    <Play className="h-3.5 w-3.5 fill-current" />
-                    <span>استئناف</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void cancelFullOfflineBackgroundDownload()}
-                    className="inline-flex min-h-[34px] items-center gap-1 rounded-xl border border-red-500/60 bg-red-950/30 px-3 text-[11px] font-bold text-red-200"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                    <span>إلغاء</span>
-                  </button>
-                </div>
-              )}
-            </div>
+            )}
           </div>
         )}
 
-        <main className="w-full flex-1 px-3 pt-3 pb-24">
+        {/* Native Mobile Vertical Scroll Body (TikTok/WhatsApp-like smooth vertical feed) */}
+        <main
+          id="app-main-scroll"
+          ref={mainScrollRef}
+          className="no-scrollbar w-full flex-1 overflow-y-auto overscroll-y-contain px-3 pt-2.5 pb-6"
+        >
           {activeTab === 'home' && (
             <HomeView
               now={now}
@@ -2520,6 +2562,10 @@ function AppContent({
               onOpenQuranFatiha={handleOpenQuranFatiha}
               onOpenQuranTest={handleOpenQuranTest}
               onOpenMoreSubPage={handleOpenMoreSubPage}
+              showPermBanner={showHomePermBanner}
+              notifPermGranted={notifPermState === 'granted'}
+              onActivateAllPermissions={handleActivateAllPermissions}
+              onDismissPermBanner={() => setPermBannerDismissed(true)}
             />
           )}
 
@@ -2547,6 +2593,19 @@ function AppContent({
             />
           )}
 
+          {activeTab === 'prayer' && (
+            <AdhanMuezzinView
+              now={now}
+              location={location}
+              onSelectLocation={setLocation}
+              onRequestGps={handleRequestGps}
+              gpsLoading={gpsLoading}
+              settings={settings}
+              onUpdateSettings={setSettings}
+              onActivateAdhanEngine={handleActivateAllPermissions}
+            />
+          )}
+
           {activeTab === 'azkar' && (
             <AzkarView
               counts={todayAzkarCounts}
@@ -2563,9 +2622,13 @@ function AppContent({
             />
           )}
 
-          {activeTab === 'more' && (
+          {(activeTab === 'settings' || activeTab === 'more') && (
             <MoreView
-              subPage={moreSubPage}
+              subPage={
+                activeTab === 'settings' && moreSubPage === 'menu'
+                  ? 'settings'
+                  : moreSubPage
+              }
               onSelectSubPage={handleSelectMoreSubPage}
               storyCategory={storyCategory}
               now={now}
@@ -2582,34 +2645,46 @@ function AppContent({
           )}
         </main>
 
-        {/* Fixed 400px Bottom Mobile Navigation */}
+        {/* Native Android Bottom Navigation Bar (390px APK Tab Bar) */}
         <nav
           aria-label="شريط التنقل السفلي"
-          className={`pb-safe fixed bottom-0 left-1/2 z-40 w-full max-w-[400px] -translate-x-1/2 border-t border-[#C9A227]/45 ${
-            isForcedBlackGold ? 'bg-[#000000]' : 'bg-white'
+          className={`pb-safe z-40 shrink-0 border-t border-[#C9A227]/45 ${
+            isForcedBlackGold
+              ? 'bg-[#000000]/95 backdrop-blur-md'
+              : 'bg-white/95 backdrop-blur-md'
           }`}
         >
-          <div className="grid h-[58px] grid-cols-5 items-center">
+          <div className="grid h-[60px] grid-cols-6 items-center px-1">
             {NAV_ITEMS.map((item) => {
               const Icon = item.icon;
-              const isActive = activeTab === item.id;
+              const isActive =
+                activeTab === item.id ||
+                (activeTab === 'more' &&
+                  ((moreSubPage === 'adhan' && item.id === 'prayer') ||
+                    (moreSubPage !== 'adhan' && item.id === 'settings')));
               return (
                 <button
                   key={item.id}
                   type="button"
                   onClick={() => handleTabSelect(item.id)}
-                  className={`flex min-h-[44px] flex-col items-center justify-center gap-0.5 transition-colors ${
+                  className={`flex min-h-[50px] flex-col items-center justify-center gap-0.5 rounded-2xl transition-all active:scale-95 ${
                     isActive
                       ? 'text-[#C9A227]'
                       : 'text-slate-500 dark:text-zinc-400'
                   }`}
                 >
-                  <Icon
-                    className={`h-5 w-5 ${
-                      isActive ? 'stroke-[2.4]' : 'stroke-[1.8]'
+                  <span
+                    className={`flex h-7 w-10 items-center justify-center rounded-full transition-colors ${
+                      isActive ? 'bg-[#C9A227]/18' : ''
                     }`}
-                  />
-                  <span className="whitespace-nowrap text-[10px] font-bold">
+                  >
+                    <Icon
+                      className={`h-[19px] w-[19px] ${
+                        isActive ? 'stroke-[2.4]' : 'stroke-[1.8]'
+                      }`}
+                    />
+                  </span>
+                  <span className="whitespace-nowrap text-[10px] font-bold leading-none">
                     {item.labelAr}
                   </span>
                 </button>

@@ -15,6 +15,7 @@ import {
   PrayerOffsets,
   PrayerScheduleItem,
 } from '../types';
+import {readAppStateFromIdb, saveAppStateToIdb} from './offlineDb';
 
 export const KAABA_COORDS = {
   latitude: 21.422487,
@@ -417,6 +418,7 @@ export function precomputeMonthlyPrayerCache(
     } catch {
       // ignore storage quota errors
     }
+    void saveAppStateToIdb(PRAYER_MONTH_CACHE_KEY, payload);
     if (typeof caches !== 'undefined') {
       caches
         .open('alzahabi-core-data-v1')
@@ -444,4 +446,18 @@ export function readSavedMonthlyPrayerCache(): SavedMonthlyPrayerCache | null {
   } catch {
     return null;
   }
+}
+
+export async function hydrateMonthlyPrayerCacheFromIdb(): Promise<SavedMonthlyPrayerCache | null> {
+  const fromIdb = await readAppStateFromIdb<SavedMonthlyPrayerCache>(
+    PRAYER_MONTH_CACHE_KEY,
+  );
+  if (fromIdb && typeof window !== 'undefined') {
+    try {
+      window.localStorage.setItem(PRAYER_MONTH_CACHE_KEY, JSON.stringify(fromIdb));
+    } catch {
+      // ignore
+    }
+  }
+  return fromIdb;
 }

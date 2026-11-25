@@ -42,6 +42,7 @@ import {
 } from '../utils/ayahWordMeanings';
 import {useHardwareBack} from '../utils/backNavigation';
 import {
+  isQuranShowingInitialSeedOnly,
   loadOfflineJson,
   resolveOfflinePlayableUrl,
 } from '../utils/offlineAudioCache';
@@ -49,6 +50,7 @@ import {AyahReciterSheet} from './AyahReciterSheet';
 import {SurahHeaderFrame} from './IslamicOrnament';
 import {QuranTeacherModal} from './QuranTeacherModal';
 import {QuranTestModal} from './QuranTestModal';
+import {SectionOfflineButton} from './SectionOfflineButton';
 
 export interface QuranLaunchDirective {
   type: 'fatiha' | 'test';
@@ -136,6 +138,9 @@ export const QuranView: React.FC<QuranViewProps> = ({
   );
   const [loading, setLoading] = useState(!cachedSurahs);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [seedOnlyMode, setSeedOnlyMode] = useState<boolean>(() =>
+    isQuranShowingInitialSeedOnly(),
+  );
 
   const [currentPage, setCurrentPage] = useState<number>(() => {
     if (launchDirective?.type === 'fatiha') return 1;
@@ -204,13 +209,14 @@ export const QuranView: React.FC<QuranViewProps> = ({
 
   const [retryTick, setRetryTick] = useState(0);
 
-  // Load offline Quran & Tafsir JSONs (IndexedDB -> CacheStorage -> Network)
+  // Load offline Quran & Tafsir JSONs (IndexedDB -> CacheStorage -> Network -> Initial Seed Data)
   useEffect(() => {
     let active = true;
-    async function loadData() {
-      if (cachedSurahs) {
+    async function loadData(forceUpgradeSeed = false) {
+      if (cachedSurahs && !forceUpgradeSeed && !isQuranShowingInitialSeedOnly()) {
         setSurahs(cachedSurahs);
         setTafsir(cachedTafsir);
+        setSeedOnlyMode(false);
         setLoadError(null);
         setLoading(false);
         if (!cachedTafsir) {
@@ -224,15 +230,16 @@ export const QuranView: React.FC<QuranViewProps> = ({
         return;
       }
       try {
-        setLoading(true);
+        if (!cachedSurahs) setLoading(true);
         setLoadError(null);
         const qData = await loadOfflineJson<CompactSurah[]>('/data/quran.json');
         cachedSurahs = qData;
         if (active) {
           setSurahs(qData);
+          setSeedOnlyMode(isQuranShowingInitialSeedOnly());
           setLoading(false);
         }
-        // Load tafsir in parallel non-blocking so Quran 604 pages ALWAYS open offline
+        // Load tafsir in parallel non-blocking so Quran opens seamlessly offline
         loadOfflineJson<Record<number, string>>('/data/tafsir.json')
           .then((tData) => {
             cachedTafsir = tData;
@@ -240,7 +247,7 @@ export const QuranView: React.FC<QuranViewProps> = ({
           })
           .catch(() => {});
       } catch {
-        if (active) {
+        if (active && !cachedSurahs) {
           setLoadError(
             'تعذر فتح صفحة المصحف حاليًا — اضغط إعادة المحاولة',
           );
@@ -248,9 +255,19 @@ export const QuranView: React.FC<QuranViewProps> = ({
         }
       }
     }
-    loadData();
+    void loadData();
+
+    const handleOnlineUpgrade = () => {
+      if (isQuranShowingInitialSeedOnly()) {
+        cachedSurahs = null;
+        cachedTafsir = null;
+        void loadData(true);
+      }
+    };
+    window.addEventListener('online', handleOnlineUpgrade);
     return () => {
       active = false;
+      window.removeEventListener('online', handleOnlineUpgrade);
     };
   }, [retryTick]);
 
@@ -377,7 +394,7 @@ export const QuranView: React.FC<QuranViewProps> = ({
     setHighlightedAyahId(highlightId ?? null);
     setFloatingPopup(null);
     setIndexOpen(false);
-    window.scrollTo({top: 0, behavior: 'auto'});
+    document.getElementById('app-main-scroll')?.scrollTo({top: 0, behavior: 'auto'});
   }, []);
 
   // Explicit Surah ID lookup (1..114) -> exact start page, closes index immediately
@@ -395,7 +412,7 @@ export const QuranView: React.FC<QuranViewProps> = ({
       setSurahFilter('');
       setCurrentPage(targetPage);
       onUpdateLastRead(targetSurah.n, firstAyah.n, targetPage);
-      window.scrollTo({top: 0, behavior: 'auto'});
+      document.getElementById('app-main-scroll')?.scrollTo({top: 0, behavior: 'auto'});
     },
     [surahs, onUpdateLastRead],
   );
@@ -736,6 +753,18 @@ export const QuranView: React.FC<QuranViewProps> = ({
         </span>
       </div>
 
+      <SectionOfflineButton
+        sectionId="quran"
+        preferredReciter={preferredReciter}
+        labelOverride="المصحف والتلاوات"
+      />
+
+      {seedOnlyMode && (
+        <div className="rounded-2xl border border-[#C9A227]/60 bg-[#120E04] px-3 py-2 text-center text-[11px] font-bold leading-relaxed text-[#FCE38A]">
+          وضع الأوفلاين المبدئي: السور الأساسية والقصار متاحة من الذاكرة المحلية — اتصل بالنت أو اضغط «تحميل المحتوى» لحفظ الـ 604 صفحة كاملة.
+        </div>
+      )}
+
       {audioError && (
         <p className="rounded-xl border border-rose-500/50 bg-rose-950/30 px-3 py-2 text-center text-xs font-bold text-rose-300">
           {audioError}
@@ -783,11 +812,11 @@ export const QuranView: React.FC<QuranViewProps> = ({
             if (dx > 0) {
               if (currentPage < 604) {
                 goToPage(currentPage + 1);
-                window.scrollTo({top: 0, behavior: 'auto'});
+                document.getElementById('app-main-scroll')?.scrollTo({top: 0, behavior: 'auto'});
               }
             } else if (currentPage > 1) {
               goToPage(currentPage - 1);
-              window.scrollTo({top: 0, behavior: 'auto'});
+              document.getElementById('app-main-scroll')?.scrollTo({top: 0, behavior: 'auto'});
             }
           }
         }}
@@ -811,11 +840,11 @@ export const QuranView: React.FC<QuranViewProps> = ({
             if (dx > 0) {
               if (currentPage < 604) {
                 goToPage(currentPage + 1);
-                window.scrollTo({top: 0, behavior: 'auto'});
+                document.getElementById('app-main-scroll')?.scrollTo({top: 0, behavior: 'auto'});
               }
             } else if (currentPage > 1) {
               goToPage(currentPage - 1);
-              window.scrollTo({top: 0, behavior: 'auto'});
+              document.getElementById('app-main-scroll')?.scrollTo({top: 0, behavior: 'auto'});
             }
           }
         }}
@@ -937,7 +966,7 @@ export const QuranView: React.FC<QuranViewProps> = ({
       {floatingPopup && (
         <div
           data-ayah-popup="true"
-          className="fixed bottom-[68px] left-1/2 z-40 w-[calc(100%-1rem)] max-w-[384px] -translate-x-1/2 rounded-3xl border-2 border-[#C9A227] bg-black/92 p-3 text-white shadow-[0_12px_36px_rgba(0,0,0,0.88)]"
+          className="fixed bottom-[72px] left-1/2 z-40 w-[calc(100%-1rem)] max-w-[374px] -translate-x-1/2 rounded-3xl border-2 border-[#C9A227] bg-black/92 p-3 text-white shadow-[0_12px_36px_rgba(0,0,0,0.88)]"
         >
           <div className="mb-2 flex items-center justify-between border-b border-[#C9A227]/35 pb-1.5">
             <span className="truncate text-xs font-bold text-[#FCE38A]">
@@ -1100,9 +1129,9 @@ export const QuranView: React.FC<QuranViewProps> = ({
         </div>
       )}
 
-      {/* TAFSIR & WORD MEANINGS MODAL (400px Mobile Constrained) */}
+      {/* TAFSIR & WORD MEANINGS MODAL (390px Mobile Constrained) */}
       {ayahDetailModal && (
-        <div className="fixed inset-y-0 left-1/2 z-50 flex w-full max-w-[400px] -translate-x-1/2 items-end justify-center bg-black/90">
+        <div className="fixed inset-y-0 left-1/2 z-50 flex w-full max-w-[390px] -translate-x-1/2 items-end justify-center bg-black/90">
           <div className="animate-sheet-up flex max-h-[90dvh] w-full flex-col overflow-hidden rounded-t-3xl border-t-2 border-x-2 border-[#C9A227] bg-[#050505] text-white">
             <div className="flex items-center justify-between border-b border-[#C9A227]/35 px-4 py-3.5">
               <div>
@@ -1229,9 +1258,9 @@ export const QuranView: React.FC<QuranViewProps> = ({
         </div>
       )}
 
-      {/* SINGLE COMPREHENSIVE "فهرس" DRAWER MODAL (400px Mobile Constrained) */}
+      {/* SINGLE COMPREHENSIVE "فهرس" DRAWER MODAL (390px Mobile Constrained) */}
       {indexOpen && (
-        <div className="fixed inset-y-0 left-1/2 z-50 flex w-full max-w-[400px] -translate-x-1/2 items-end justify-center bg-black/90">
+        <div className="fixed inset-y-0 left-1/2 z-50 flex w-full max-w-[390px] -translate-x-1/2 items-end justify-center bg-black/90">
           <div className="animate-sheet-up flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-t-3xl border-t-2 border-x-2 border-[#C9A227] bg-[#050505] text-white">
             {/* Header */}
             <div className="flex items-center justify-between border-b border-[#C9A227]/35 px-4 py-3.5">

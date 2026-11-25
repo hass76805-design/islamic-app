@@ -416,7 +416,7 @@ export const AdhanLiveModal: React.FC<AdhanLiveModalProps> = ({
   return (
     <div
       dir="rtl"
-      className="fixed inset-y-0 left-1/2 z-50 flex h-dvh w-full max-w-[400px] -translate-x-1/2 flex-col justify-between overflow-hidden bg-black text-white"
+      className="fixed inset-y-0 left-1/2 z-50 flex h-dvh w-full max-w-[390px] -translate-x-1/2 flex-col justify-between overflow-hidden bg-black text-white"
     >
       <audio ref={audioRef} preload="auto" playsInline className="hidden" />
 

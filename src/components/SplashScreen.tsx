@@ -37,7 +37,7 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({onComplete}) => {
           animate={{opacity: 1}}
           exit={{opacity: 0, scale: 1.03}}
           transition={{duration: 0.45, ease: 'easeInOut'}}
-          className="fixed inset-y-0 left-1/2 z-[100] flex w-full max-w-[400px] -translate-x-1/2 flex-col items-center justify-center overflow-hidden bg-[#000000]"
+          className="fixed inset-y-0 left-1/2 z-[100] flex w-full max-w-[390px] -translate-x-1/2 flex-col items-center justify-center overflow-hidden bg-[#000000]"
           aria-label="البرنامج الإسلامي الذهبي"
         >
           {/* Soft ambient golden halo behind full-screen splash artwork */}
@@ -53,7 +53,7 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({onComplete}) => {
             initial={{opacity: 0, scale: 0.94}}
             animate={{opacity: 1, scale: 1}}
             transition={{duration: 0.85, ease: [0.22, 1, 0.36, 1]}}
-            className="relative flex h-full w-full max-w-[400px] items-center justify-center p-4"
+            className="relative flex h-full w-full max-w-[390px] items-center justify-center p-4"
           >
             <div className="relative flex aspect-square max-h-[80vh] w-full max-w-[360px] items-center justify-center overflow-hidden rounded-[12%] bg-[#000000] shadow-[0_0_48px_rgba(201,162,39,0.28)]">
               <img

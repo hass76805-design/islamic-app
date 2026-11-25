@@ -17,6 +17,7 @@ import {
   tokenizeArabicAyah,
 } from '../utils/recitationMatcher';
 import {useHardwareBack} from '../utils/backNavigation';
+import {useOnlineStatus} from '../hooks/useOnlineStatus';
 
 interface AyahEntry {
   surah: CompactSurah;
@@ -58,6 +59,7 @@ export const QuranTeacherModal: React.FC<QuranTeacherModalProps> = ({
   onClose,
 }) => {
   useHardwareBack(true, onClose);
+  const isOnline = useOnlineStatus();
   const [ayahIdx, setAyahIdx] = useState(initialIndex);
   const currentEntry = entries[ayahIdx] || entries[0];
 
@@ -302,8 +304,8 @@ export const QuranTeacherModal: React.FC<QuranTeacherModalProps> = ({
   if (!currentEntry) return null;
 
   return (
-    <div className="fixed inset-y-0 left-1/2 z-50 flex w-full max-w-[400px] -translate-x-1/2 items-center justify-center bg-black/90 p-2">
-      <div className="flex max-h-[94vh] w-full max-w-[400px] flex-col overflow-hidden rounded-3xl border-2 border-[#C9A227] bg-[#050505] text-white shadow-2xl">
+    <div className="fixed inset-y-0 left-1/2 z-50 flex w-full max-w-[390px] -translate-x-1/2 items-center justify-center bg-black/90 p-2">
+      <div className="flex max-h-[94vh] w-full max-w-[390px] flex-col overflow-hidden rounded-3xl border-2 border-[#C9A227] bg-[#050505] text-white shadow-2xl">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-[#C9A227]/30 bg-black px-5 py-4 text-white">
           <div>
@@ -327,6 +329,11 @@ export const QuranTeacherModal: React.FC<QuranTeacherModalProps> = ({
 
         {/* Body */}
         <div className="flex-1 space-y-5 overflow-y-auto p-5 sm:p-6">
+          {!isOnline && (
+            <div className="rounded-2xl border border-[#C9A227]/60 bg-[#120E04] px-3.5 py-2.5 text-xs font-bold leading-relaxed text-[#FCE38A]">
+              وضع الأوفلاين: الميكروفون المباشر يحتاج إنترنت — يمكنك متابعة التسميع الكتابي للآيات بالأسفل دون توقف.
+            </div>
+          )}
           {/* Mic Controls Row */}
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#C9A227]/50 bg-slate-50 p-4 dark:bg-[#0B0B0B]">
             <div className="flex flex-wrap items-center gap-2">

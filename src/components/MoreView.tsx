@@ -1,4 +1,4 @@
-import React, {useState} from 'react';
+import React from 'react';
 import {
   ArrowRight,
   AudioLines,
@@ -9,6 +9,7 @@ import {
   CalendarDays,
   Check,
   CheckCircle2,
+  ChevronLeft,
   CircleDot,
   Cloud,
   Heart,
@@ -27,6 +28,7 @@ import {
 } from 'lucide-react';
 import {AppSectionIconKey, getMoreMenuSections} from '../data/appSections';
 import {useFirebase} from '../contexts/FirebaseContext';
+import {useOnlineStatus} from '../hooks/useOnlineStatus';
 import {
   ADHAN_VOICES_30,
   RECITERS_30,
@@ -155,6 +157,7 @@ export const MoreView: React.FC<MoreViewProps> = ({
 }) => {
   const {user, signingIn, authError, signInWithGoogle, signOutUser} =
     useFirebase();
+  const isOnline = useOnlineStatus();
 
   if (subPage !== 'menu') {
     const activeItem = SUB_ITEMS.find((i) => i.id === subPage);
@@ -167,9 +170,9 @@ export const MoreView: React.FC<MoreViewProps> = ({
       subPage === 'seerah' ||
       subPage === 'voice_test';
     return (
-      <div className="space-y-4">
+      <div className="space-y-3">
         <div
-          className={`flex items-center justify-between gap-2 rounded-2xl border-2 border-[#C9A227] px-3.5 py-2.5 ${
+          className={`flex items-center justify-between gap-2 rounded-2xl border-2 border-[#C9A227] px-3 py-2 ${
             forceBlackGold
               ? 'bg-[#050505] text-white'
               : 'bg-white dark:bg-[#050505]'
@@ -177,18 +180,27 @@ export const MoreView: React.FC<MoreViewProps> = ({
         >
           <button
             type="button"
-            onClick={() => onSelectSubPage('menu')}
-            className={`inline-flex min-h-[38px] items-center gap-1.5 rounded-xl border border-[#C9A227] px-3 py-1.5 text-xs font-bold ${
+            onClick={() => onSelectSubPage(subPage === 'settings' ? 'menu' : 'settings')}
+            className={`inline-flex min-h-[42px] items-center gap-1.5 rounded-xl border border-[#C9A227] px-3 text-xs font-bold active:scale-95 ${
               forceBlackGold
                 ? 'bg-black text-[#F3D56B]'
                 : 'text-[#9A7415] dark:text-[#F3D56B]'
             }`}
           >
-            <ArrowRight className="h-4 w-4" />
-            <span>العودة</span>
+            {subPage === 'settings' ? (
+              <>
+                <Sparkles className="h-4 w-4" />
+                <span>كل الأقسام</span>
+              </>
+            ) : (
+              <>
+                <ArrowRight className="h-4 w-4" />
+                <span>العودة</span>
+              </>
+            )}
           </button>
           <h2
-            className={`truncate text-sm font-bold ${
+            className={`truncate text-sm font-extrabold ${
               forceBlackGold
                 ? 'text-[#F3D56B]'
                 : 'text-slate-900 dark:text-white'
@@ -249,9 +261,9 @@ export const MoreView: React.FC<MoreViewProps> = ({
           <PrayerTrackerView log={prayerLog} onSetStatus={onSetPrayerStatus} />
         )}
         {subPage === 'settings' && (
-          <div className="space-y-4">
+          <div className="space-y-3">
             {/* Google Sign-In & Firebase Cloud Sync Card */}
-            <div className="rounded-3xl border-2 border-[#C9A227] bg-white p-5 dark:bg-[#050505]">
+            <div className="rounded-3xl border-2 border-[#C9A227] bg-white p-4 dark:bg-[#050505]">
               <div className="flex items-center gap-2.5">
                 <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-[#C9A227] bg-[#C9A227]/15 text-[#C9A227]">
                   <Cloud className="h-5 w-5" />
@@ -266,8 +278,14 @@ export const MoreView: React.FC<MoreViewProps> = ({
                 </div>
               </div>
 
+              {!isOnline && (
+                <p className="mt-2.5 rounded-2xl border border-[#C9A227]/50 bg-[#120E04] px-3 py-2 text-[11px] font-bold text-[#FCE38A]">
+                  المزامنة السحابية وتسجيل الدخول بحساب جوجل يتطلبان اتصالاً بالإنترنت — تقدمك وإعداداتك محفوظة محليًا على الجهاز بأمان.
+                </p>
+              )}
+
               {user ? (
-                <div className="mt-4 space-y-3 rounded-2xl border border-[#C9A227]/45 bg-[#0A0904] p-3.5 text-white">
+                <div className="mt-3 space-y-2.5 rounded-2xl border border-[#C9A227]/45 bg-[#0A0904] p-3 text-white">
                   <div className="flex items-center justify-between gap-2">
                     <div className="min-w-0">
                       <p className="truncate text-sm font-bold text-[#F3D56B]">
@@ -280,7 +298,7 @@ export const MoreView: React.FC<MoreViewProps> = ({
                     <button
                       type="button"
                       onClick={() => void signOutUser()}
-                      className="inline-flex min-h-[36px] shrink-0 items-center gap-1.5 rounded-xl border border-[#C9A227]/70 px-3 py-1.5 text-xs font-bold text-[#F3D56B]"
+                      className="inline-flex min-h-[40px] shrink-0 items-center gap-1.5 rounded-xl border border-[#C9A227]/70 px-3 text-xs font-bold text-[#F3D56B] active:scale-95"
                     >
                       <LogOut className="h-3.5 w-3.5" />
                       <span>خروج</span>
@@ -290,16 +308,20 @@ export const MoreView: React.FC<MoreViewProps> = ({
               ) : (
                 <button
                   type="button"
-                  disabled={signingIn}
+                  disabled={signingIn || !isOnline}
                   onClick={() => void signInWithGoogle()}
-                  className="mt-4 flex min-h-[44px] w-full items-center justify-center gap-2 rounded-2xl bg-[#C9A227] px-4 py-2.5 text-xs font-extrabold text-black disabled:opacity-60"
+                  className="mt-3 flex min-h-[48px] w-full items-center justify-center gap-2 rounded-2xl bg-[#C9A227] px-4 text-xs font-extrabold text-black active:scale-[0.98] disabled:opacity-60"
                 >
                   {signingIn ? (
                     <Loader2 className="h-4 w-4 animate-spin" />
                   ) : (
                     <LogIn className="h-4 w-4" />
                   )}
-                  <span>تسجيل الدخول بحساب جوجل لحفظ التقدم سحابيًا</span>
+                  <span>
+                    {isOnline
+                      ? 'تسجيل الدخول بحساب جوجل لحفظ التقدم سحابيًا'
+                      : 'يتطلب إنترنت لتسجيل الدخول بجوجل'}
+                  </span>
                 </button>
               )}
               {authError && (
@@ -310,19 +332,17 @@ export const MoreView: React.FC<MoreViewProps> = ({
             </div>
 
             {/* 30 Reciters Selector */}
-            <div className="rounded-3xl border-2 border-[#C9A227] bg-white p-5 dark:bg-[#050505]">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <h3 className="text-sm font-bold text-slate-900 dark:text-white">
-                    القراء الثلاثون الكاملون للقرآن
-                  </h3>
-                  <p className="mt-0.5 text-[11px] text-slate-500 dark:text-zinc-400">
-                    القارئ المفضل للتلاوة والمصحف والتصحيح ورفيقي
-                  </p>
-                </div>
+            <div className="rounded-3xl border-2 border-[#C9A227] bg-white p-4 dark:bg-[#050505]">
+              <div>
+                <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                  القراء الثلاثون الكاملون للقرآن
+                </h3>
+                <p className="mt-0.5 text-[11px] text-slate-500 dark:text-zinc-400">
+                  القارئ المفضل للتلاوة والمصحف والتصحيح ورفيقي
+                </p>
               </div>
 
-              <div className="mt-3 grid max-h-72 grid-cols-1 gap-2 overflow-y-auto pl-1">
+              <div className="mt-3 grid max-h-64 grid-cols-1 gap-2 overflow-y-auto pl-1">
                 {RECITERS_30.map((r) => {
                   const isPref = settings.preferredReciter === r.id;
                   return (
@@ -335,7 +355,7 @@ export const MoreView: React.FC<MoreViewProps> = ({
                           preferredReciter: r.id as ReciterId,
                         }))
                       }
-                      className={`flex min-h-[48px] items-center justify-between rounded-2xl border-2 px-3.5 py-2.5 text-right ${
+                      className={`flex min-h-[48px] items-center justify-between rounded-2xl border-2 px-3.5 py-2 text-right transition active:scale-[0.99] ${
                         isPref
                           ? 'border-[#C9A227] bg-[#C9A227]/15 text-slate-900 dark:text-white'
                           : 'border-[#C9A227]/40 bg-slate-50/70 dark:bg-[#0B0B0B] dark:text-white'
@@ -355,7 +375,7 @@ export const MoreView: React.FC<MoreViewProps> = ({
             </div>
 
             {/* Preferred Adhan */}
-            <div className="rounded-3xl border-2 border-[#C9A227] bg-white p-5 dark:bg-[#050505]">
+            <div className="rounded-3xl border-2 border-[#C9A227] bg-white p-4 dark:bg-[#050505]">
               <h3 className="text-sm font-bold text-slate-900 dark:text-white">
                 صوت الأذان المفضل (30 مؤذنًا)
               </h3>
@@ -367,7 +387,7 @@ export const MoreView: React.FC<MoreViewProps> = ({
                     preferredAdhan: e.target.value,
                   }))
                 }
-                className="mt-2.5 w-full rounded-xl border border-[#C9A227]/60 bg-slate-50 px-3 py-2.5 text-xs font-bold text-slate-900 outline-none dark:bg-[#0B0B0B] dark:text-white"
+                className="mt-2.5 min-h-[46px] w-full rounded-2xl border border-[#C9A227]/60 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-900 outline-none dark:bg-[#0B0B0B] dark:text-white"
               >
                 {ADHAN_VOICES_30.map((a) => (
                   <option key={a.id} value={a.id}>
@@ -378,16 +398,16 @@ export const MoreView: React.FC<MoreViewProps> = ({
             </div>
 
             {/* Background Theme */}
-            <div className="rounded-3xl border-2 border-[#C9A227] bg-white p-5 dark:bg-[#050505]">
+            <div className="rounded-3xl border-2 border-[#C9A227] bg-white p-4 dark:bg-[#050505]">
               <h3 className="text-sm font-bold text-slate-900 dark:text-white">
-                الخلفية الليلية والنهارية
+                المظهر الليلي والنهاري
               </h3>
               <button
                 type="button"
                 onClick={() =>
                   onUpdateSettings((s) => ({...s, darkMode: !s.darkMode}))
                 }
-                className="mt-3 inline-flex min-h-[42px] w-full items-center justify-center gap-2 rounded-xl bg-[#C9A227] px-4 py-2 text-xs font-bold text-black"
+                className="mt-2.5 inline-flex min-h-[48px] w-full items-center justify-center gap-2 rounded-2xl bg-[#C9A227] px-4 text-xs font-extrabold text-black active:scale-[0.98]"
               >
                 {settings.darkMode ? (
                   <>
@@ -404,11 +424,11 @@ export const MoreView: React.FC<MoreViewProps> = ({
             </div>
 
             {/* Prayer Calculation */}
-            <div className="rounded-3xl border-2 border-[#C9A227] bg-white p-5 dark:bg-[#050505]">
+            <div className="rounded-3xl border-2 border-[#C9A227] bg-white p-4 dark:bg-[#050505]">
               <h3 className="text-sm font-bold text-slate-900 dark:text-white">
                 طريقة حساب مواقيت الصلاة
               </h3>
-              <div className="mt-3 space-y-3">
+              <div className="mt-2.5 space-y-2.5">
                 <select
                   aria-label="طريقة الحساب الفلكية"
                   value={settings.calculationMethod}
@@ -419,7 +439,7 @@ export const MoreView: React.FC<MoreViewProps> = ({
                         e.target.value as AppSettings['calculationMethod'],
                     }))
                   }
-                  className="w-full rounded-xl border border-[#C9A227]/60 bg-slate-50 px-3 py-2.5 text-xs font-bold text-slate-900 outline-none dark:bg-[#0B0B0B] dark:text-white"
+                  className="min-h-[46px] w-full rounded-2xl border border-[#C9A227]/60 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-900 outline-none dark:bg-[#0B0B0B] dark:text-white"
                 >
                   {CALCULATION_METHODS.map((m) => (
                     <option key={m.id} value={m.id}>
@@ -434,7 +454,7 @@ export const MoreView: React.FC<MoreViewProps> = ({
                     onClick={() =>
                       onUpdateSettings((s) => ({...s, madhab: 'Shafi'}))
                     }
-                    className={`min-h-[40px] rounded-xl border py-2 text-xs font-bold ${
+                    className={`min-h-[44px] rounded-2xl border py-2 text-xs font-bold active:scale-95 ${
                       settings.madhab === 'Shafi'
                         ? 'border-[#C9A227] bg-[#C9A227] text-black'
                         : 'border-[#C9A227]/40 text-slate-700 dark:text-white'
@@ -447,7 +467,7 @@ export const MoreView: React.FC<MoreViewProps> = ({
                     onClick={() =>
                       onUpdateSettings((s) => ({...s, madhab: 'Hanafi'}))
                     }
-                    className={`min-h-[40px] rounded-xl border py-2 text-xs font-bold ${
+                    className={`min-h-[44px] rounded-2xl border py-2 text-xs font-bold active:scale-95 ${
                       settings.madhab === 'Hanafi'
                         ? 'border-[#C9A227] bg-[#C9A227] text-black'
                         : 'border-[#C9A227]/40 text-slate-700 dark:text-white'
@@ -460,7 +480,7 @@ export const MoreView: React.FC<MoreViewProps> = ({
             </div>
 
             {/* Offline & PWA */}
-            <div className="rounded-3xl border-2 border-[#C9A227] bg-white p-5 dark:bg-[#050505]">
+            <div className="rounded-3xl border-2 border-[#C9A227] bg-white p-4 dark:bg-[#050505]">
               <h3 className="text-sm font-bold text-slate-900 dark:text-white">
                 تثبيت التطبيق والعمل دون إنترنت
               </h3>
@@ -471,6 +491,21 @@ export const MoreView: React.FC<MoreViewProps> = ({
                 <PWAInstallButton />
               </div>
             </div>
+
+            {/* Quick Open All Islamic Library Sections */}
+            <button
+              type="button"
+              onClick={() => onSelectSubPage('menu')}
+              className="flex min-h-[54px] w-full items-center justify-between gap-3 rounded-3xl border-2 border-[#C9A227] bg-[#0B0903] px-4 py-3 text-right text-[#FCE38A] active:scale-[0.98]"
+            >
+              <div className="flex items-center gap-2.5">
+                <Sparkles className="h-5 w-5 text-[#C9A227]" />
+                <span className="text-sm font-extrabold">
+                  فتح جميع الأقسام والمكتبة الإسلامية ({SUB_ITEMS.length - 1} قسمًا)
+                </span>
+              </div>
+              <ChevronLeft className="h-4 w-4 shrink-0 text-[#C9A227]" />
+            </button>
           </div>
         )}
       </div>
@@ -478,37 +513,52 @@ export const MoreView: React.FC<MoreViewProps> = ({
   }
 
   return (
-    <div className="space-y-3.5">
-      <div className="rounded-3xl border-2 border-[#C9A227] bg-white p-4 dark:bg-[#050505]">
-        <h2 className="text-lg font-bold text-slate-900 dark:text-white">
-          الأقسام والمكتبة الإسلامية الكاملة
-        </h2>
-        <p className="mt-0.5 text-[11px] text-[#9A7415] dark:text-[#C9A227]">
-          المؤذن الإلكتروني · التعليم · الفقه · القصص · الحساب السحابي
-        </p>
+    <div className="space-y-3">
+      <div className="flex items-center justify-between gap-2 rounded-3xl border-2 border-[#C9A227] bg-white p-4 dark:bg-[#050505]">
+        <div>
+          <h2 className="text-base font-extrabold text-slate-900 dark:text-white">
+            المكتبة والأقسام الإسلامية
+          </h2>
+          <p className="mt-0.5 text-[11px] text-[#9A7415] dark:text-[#C9A227]">
+            المؤذن · التعليم · الفقه · القصص · الإعدادات
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => onSelectSubPage('settings')}
+          className="inline-flex min-h-[42px] shrink-0 items-center gap-1.5 rounded-2xl bg-[#C9A227] px-3 text-xs font-extrabold text-black active:scale-95"
+        >
+          <Settings className="h-4 w-4" />
+          <span>الإعدادات</span>
+        </button>
       </div>
 
-      <div className="grid grid-cols-1 gap-3">
-        {SUB_ITEMS.map((item) => (
-          <button
-            key={item.id}
-            type="button"
-            onClick={() => onSelectSubPage(item.id)}
-            className="flex items-start gap-3 rounded-3xl border-2 border-[#C9A227] bg-white p-4 text-right dark:bg-[#050505]"
-          >
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-[#C9A227] bg-[#C9A227]/15 text-[#C9A227]">
-              {item.icon}
-            </div>
-            <div>
-              <h3 className="text-sm font-bold text-slate-900 dark:text-white">
-                {item.titleAr}
-              </h3>
-              <p className="mt-0.5 text-xs leading-relaxed text-slate-600 dark:text-zinc-300">
-                {item.descAr}
-              </p>
-            </div>
-          </button>
-        ))}
+      <div className="overflow-hidden rounded-3xl border-2 border-[#C9A227] bg-white dark:bg-[#050505]">
+        <div className="divide-y divide-[#C9A227]/20">
+          {SUB_ITEMS.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              onClick={() => onSelectSubPage(item.id)}
+              className="flex min-h-[64px] w-full items-center justify-between gap-3 px-3.5 py-2.5 text-right transition-colors active:bg-[#C9A227]/12"
+            >
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-[#C9A227] bg-[#C9A227]/15 text-[#C9A227]">
+                  {item.icon}
+                </div>
+                <div className="min-w-0">
+                  <h3 className="truncate text-sm font-bold text-slate-900 dark:text-white">
+                    {item.titleAr}
+                  </h3>
+                  <p className="mt-0.5 truncate text-[11px] text-slate-500 dark:text-zinc-400">
+                    {item.descAr}
+                  </p>
+                </div>
+              </div>
+              <ChevronLeft className="h-4 w-4 shrink-0 text-[#C9A227]" />
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );

@@ -18,6 +18,7 @@ import {
 import {AdhanVoice, ReciterId} from '../types';
 import {resolveOfflinePlayableUrl} from '../utils/offlineAudioCache';
 import {AdhanLiveModal} from './AdhanLiveModal';
+import {SectionOfflineButton} from './SectionOfflineButton';
 
 interface AudioLibraryViewProps {
   preferredReciter: ReciterId;
@@ -158,6 +159,14 @@ export const AudioLibraryView: React.FC<AudioLibraryViewProps> = ({
           >
             مكتبة الأذان (30 مؤذنًا)
           </button>
+        </div>
+
+        <div className="w-full">
+          <SectionOfflineButton
+            sectionId="audio_library"
+            preferredReciter={preferredReciter}
+            labelOverride="مكتبة السور والأذان"
+          />
         </div>
       </div>
 

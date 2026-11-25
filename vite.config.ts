@@ -108,12 +108,25 @@ export default defineConfig(() => {
         workbox: {
           maximumFileSizeToCacheInBytes: 25 * 1024 * 1024,
           navigateFallback: '/index.html',
-          globPatterns: ['**/*.{js,css,html,ico,png,jpg,svg,woff,woff2,json,mp3}'],
+          navigateFallbackDenylist: [/^\/api\//],
+          globPatterns: ['**/*.{js,css,html,ico,png,jpg,svg,woff,woff2,json,mp3,webmanifest}'],
           cleanupOutdatedCaches: true,
           skipWaiting: true,
           clientsClaim: true,
           importScripts: ['/adhan-sw-ext.js'],
           runtimeCaching: [
+            {
+              urlPattern: ({request, sameOrigin}) =>
+                sameOrigin && request.mode === 'navigate',
+              handler: 'NetworkFirst',
+              options: {
+                cacheName: 'alzahabi-app-shell-v1',
+                networkTimeoutSeconds: 3,
+                cacheableResponse: {
+                  statuses: [0, 200],
+                },
+              },
+            },
             {
               urlPattern: ({sameOrigin, url}) =>
                 sameOrigin && url.pathname.startsWith('/data/'),
@@ -148,14 +161,13 @@ export default defineConfig(() => {
               urlPattern: ({sameOrigin, url}) =>
                 sameOrigin &&
                 !url.pathname.startsWith('/api/') &&
-                !url.pathname.startsWith('/@vite') &&
                 !url.pathname.startsWith('/data/') &&
                 !url.pathname.startsWith('/audio/'),
               handler: 'StaleWhileRevalidate',
               options: {
                 cacheName: 'alzahabi-app-shell-v1',
                 expiration: {
-                  maxEntries: 300,
+                  maxEntries: 500,
                   maxAgeSeconds: 60 * 60 * 24 * 30,
                 },
                 cacheableResponse: {

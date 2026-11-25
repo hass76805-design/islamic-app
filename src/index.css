@@ -16,28 +16,29 @@
     -webkit-text-size-adjust: 100%;
     text-size-adjust: 100%;
     max-width: 100vw;
-    overflow-y: auto;
-    -webkit-overflow-scrolling: touch;
-    touch-action: auto;
+    height: 100%;
+    overflow: hidden;
+    touch-action: manipulation;
     background-color: #000000;
   }
 
   body {
     width: 100%;
-    overflow-y: auto;
-    -webkit-overflow-scrolling: touch;
-    touch-action: auto;
+    height: 100%;
+    margin: 0;
+    overflow: hidden;
+    overscroll-behavior-y: none;
+    touch-action: manipulation;
     background-color: #000000;
   }
 
   #root {
     width: 100%;
-    max-width: 400px;
+    max-width: 390px;
+    height: 100%;
     margin-left: auto;
     margin-right: auto;
-    overflow-y: auto;
-    -webkit-overflow-scrolling: touch;
-    touch-action: auto;
+    overflow: hidden;
     background-color: #000000;
   }
 

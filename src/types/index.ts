@@ -1,4 +1,11 @@
-export type TabId = 'home' | 'quran' | 'azkar' | 'qibla' | 'more';
+export type TabId =
+  | 'home'
+  | 'quran'
+  | 'prayer'
+  | 'azkar'
+  | 'qibla'
+  | 'settings'
+  | 'more';
 
 export type MoreSubPageId =
   | 'menu'

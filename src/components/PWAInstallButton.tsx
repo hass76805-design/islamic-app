@@ -19,14 +19,15 @@ export const PWAInstallButton: React.FC<PWAInstallButtonProps> = ({compact = fal
       <button
         type="button"
         onClick={install}
+        aria-label="تثبيت التطبيق"
         className={
           compact
-            ? 'inline-flex min-h-[40px] shrink-0 items-center gap-2 whitespace-nowrap rounded-xl bg-[#C9A227] px-3.5 py-2 text-xs font-bold text-black transition-opacity hover:opacity-90'
-            : 'inline-flex min-h-[44px] shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-xl bg-[#C9A227] px-4 py-2.5 text-sm font-bold text-black transition-opacity hover:opacity-90'
+            ? 'inline-flex h-[42px] w-[42px] shrink-0 items-center justify-center rounded-2xl bg-[#C9A227] text-black transition active:scale-95'
+            : 'inline-flex min-h-[46px] shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-2xl bg-[#C9A227] px-4 py-2.5 text-sm font-bold text-black transition active:scale-95'
         }
       >
         <Download className="h-4 w-4" />
-        <span>تثبيت التطبيق</span>
+        {!compact && <span>تثبيت التطبيق</span>}
       </button>
     );
   }
@@ -37,18 +38,19 @@ export const PWAInstallButton: React.FC<PWAInstallButtonProps> = ({compact = fal
         <button
           type="button"
           onClick={() => setShowIOSGuide(true)}
+          aria-label="تثبيت على آيفون"
           className={
             compact
-              ? 'inline-flex min-h-[40px] shrink-0 items-center gap-2 whitespace-nowrap rounded-xl border border-[#C9A227] px-3 py-2 text-xs font-bold text-[#9A7415] dark:text-[#F3D56B]'
-              : 'inline-flex min-h-[44px] shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-xl border border-[#C9A227] px-4 py-2.5 text-sm font-bold text-[#9A7415] dark:text-[#F3D56B]'
+              ? 'inline-flex h-[42px] w-[42px] shrink-0 items-center justify-center rounded-2xl border border-[#C9A227] text-[#9A7415] dark:text-[#F3D56B] active:scale-95'
+              : 'inline-flex min-h-[46px] shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-2xl border border-[#C9A227] px-4 py-2.5 text-sm font-bold text-[#9A7415] dark:text-[#F3D56B]'
           }
         >
           <Share className="h-4 w-4" />
-          <span>تثبيت على آيفون</span>
+          {!compact && <span>تثبيت على آيفون</span>}
         </button>
 
         {showIOSGuide && (
-          <div className="fixed inset-y-0 left-1/2 z-50 flex w-full max-w-[400px] -translate-x-1/2 items-center justify-center bg-black/85 p-4">
+          <div className="fixed inset-y-0 left-1/2 z-50 flex w-full max-w-[390px] -translate-x-1/2 items-end justify-center bg-black/85 p-3 sm:items-center">
             <div className="w-full max-w-sm rounded-3xl border-2 border-[#C9A227] bg-white p-6 shadow-2xl dark:bg-[#050505]">
               <div className="flex items-center justify-between">
                 <h3 className="text-lg font-bold text-slate-900 dark:text-[#F3D56B]">

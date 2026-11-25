@@ -23,11 +23,13 @@ import {
   RECITERS_30,
 } from '../data/reciters';
 import {ReciterId} from '../types';
+import {useOnlineStatus} from '../hooks/useOnlineStatus';
 import {resolveOfflinePlayableUrl} from '../utils/offlineAudioCache';
 import {
   generatePersonalizedSheikhReply,
   resolveSheikhHumanVoiceUrl,
 } from '../utils/rafiqiVoice';
+import {SectionOfflineButton} from './SectionOfflineButton';
 
 interface RafiqiViewProps {
   preferredReciter: ReciterId;
@@ -54,6 +56,7 @@ function toArabicDigits(num: number | string): string {
 }
 
 export const RafiqiView: React.FC<RafiqiViewProps> = ({preferredReciter}) => {
+  const isOnline = useOnlineStatus();
   const [selectedReciter, setSelectedReciter] =
     useState<ReciterId>(preferredReciter);
   const [activeWord, setActiveWord] = useState<RafiqiWordEntry>(
@@ -169,6 +172,7 @@ export const RafiqiView: React.FC<RafiqiViewProps> = ({preferredReciter}) => {
     textToSpeak: string,
     token: number,
     preloadedUrlPromise?: Promise<string | null>,
+    fallbackAyahReplyText?: string,
   ): Promise<boolean> => {
     if (!voiceReplyEnabled || token !== playbackTokenRef.current) return false;
 
@@ -179,17 +183,30 @@ export const RafiqiView: React.FC<RafiqiViewProps> = ({preferredReciter}) => {
     }
     setIsPlayingAyah(false);
     setIsPreparingSheikhVoice(true);
-    setAudioNote(null);
 
-    const wavUrl = await (preloadedUrlPromise ||
+    let wavUrl = await (preloadedUrlPromise ||
       resolveSheikhHumanVoiceUrl(textToSpeak));
+
+    // Offline resilience: if custom dynamic reply isn't cached offline, fall back to the Ayah's cached Sheikh reply in IndexedDB
+    if (
+      !wavUrl &&
+      fallbackAyahReplyText &&
+      fallbackAyahReplyText.trim() !== textToSpeak.trim()
+    ) {
+      const fallbackUrl = await resolveSheikhHumanVoiceUrl(fallbackAyahReplyText);
+      if (fallbackUrl && token === playbackTokenRef.current) {
+        wavUrl = fallbackUrl;
+        setActiveReplyText(fallbackAyahReplyText);
+      }
+    }
+
     setIsPreparingSheikhVoice(false);
 
     if (token !== playbackTokenRef.current) return false;
     if (!wavUrl) {
       setAudioNote(
         typeof navigator !== 'undefined' && !navigator.onLine
-          ? 'يرجى الاتصال بالإنترنت لسماع رد الشيخ الصوتي (أو حمّل قسم رفيقي للعمل بدون نت)'
+          ? 'أنت بالوضع الأوفلاين — لم يتم تحميل صوت الشيخ لهذه الآية بعد، يمكنك قراءة الرد أعلاه أو تحميل قسم رفيقي عند توفر الإنترنت'
           : 'تعذر تشغيل صوت الشيخ حاليًا — تأكد من الاتصال أو تحميل قسم رفيقي للعمل بدون نت',
       );
       return false;
@@ -222,13 +239,35 @@ export const RafiqiView: React.FC<RafiqiViewProps> = ({preferredReciter}) => {
     });
   };
 
-  const playAyahOnly = (
+  /**
+   * Plays the Quran Ayah FIRST until it finishes completely (`onended`),
+   * pauses briefly, and then speaks the Sheikh's human guidance according to that Ayah.
+   */
+  const playAyahThenSheikh = async (
     entry: RafiqiWordEntry,
-    reciterId: ReciterId = selectedReciter,
-  ) => {
+    reciterId: ReciterId,
+    replyText: string,
+    fallbackReplyText: string,
+  ): Promise<void> => {
     stopAllRafiqiAudio();
     const token = playbackTokenRef.current;
-    void playAyahAndWait(entry, reciterId, token);
+
+    const preloadPromise = voiceReplyEnabled
+      ? resolveSheikhHumanVoiceUrl(replyText)
+      : undefined;
+
+    await playAyahAndWait(entry, reciterId, token);
+    if (token !== playbackTokenRef.current || !voiceReplyEnabled) return;
+
+    await new Promise<void>((r) => window.setTimeout(r, 320));
+    if (token !== playbackTokenRef.current || !voiceReplyEnabled) return;
+
+    await playSheikhHumanVoiceAndWait(
+      replyText,
+      token,
+      preloadPromise,
+      fallbackReplyText,
+    );
   };
 
   const playSheikhReplyOnly = (textToSpeak: string) => {
@@ -238,29 +277,39 @@ export const RafiqiView: React.FC<RafiqiViewProps> = ({preferredReciter}) => {
     }
     stopAllRafiqiAudio();
     const token = playbackTokenRef.current;
-    void playSheikhHumanVoiceAndWait(textToSpeak, token);
+    void playSheikhHumanVoiceAndWait(
+      textToSpeak,
+      token,
+      undefined,
+      activeWord.replyAr,
+    );
   };
 
   const handleSelectWord = (entry: RafiqiWordEntry) => {
     setActiveWord(entry);
     setActiveReplyText(entry.replyAr);
     setAudioNote(null);
-    playAyahOnly(entry, selectedReciter);
+    void playAyahThenSheikh(entry, selectedReciter, entry.replyAr, entry.replyAr);
   };
 
   const togglePlayPauseAyah = () => {
-    if (isPlayingAyah) {
+    if (isPlayingAyah || isPlayingSheikhReply || isPreparingSheikhVoice) {
       stopAllRafiqiAudio();
       return;
     }
-    playAyahOnly(activeWord, selectedReciter);
+    void playAyahThenSheikh(
+      activeWord,
+      selectedReciter,
+      activeReplyText,
+      activeWord.replyAr,
+    );
   };
 
   /**
    * When the user speaks or writes to Rafiqi:
    * 1) Stop any current audio cleanly (never overlap).
    * 2) Play the matched Quran Ayah FIRST and wait for it to finish completely.
-   * 3) Meanwhile prepare the Sheikh's warm human response + WAV audio in the background.
+   * 3) Meanwhile prepare the Sheikh's warm human response tailored to the Ayah.
    * 4) After the Ayah finishes + a calm pause, play the real human Sheikh's voice reply.
    */
   const processUserDialogue = async (spoken: string) => {
@@ -299,12 +348,13 @@ export const RafiqiView: React.FC<RafiqiViewProps> = ({preferredReciter}) => {
 
     setActiveReplyText(prepared.replyText);
 
-    // Step 2: Speak the Sheikh's real human voice reply AFTER the Ayah ends
+    // Step 2: Speak the Sheikh's real human voice reply AFTER the Ayah ends (according to the Ayah)
     if (voiceReplyEnabled) {
       await playSheikhHumanVoiceAndWait(
         prepared.replyText,
         token,
         Promise.resolve(prepared.audioUrl),
+        matched.replyAr,
       );
     }
   };
@@ -357,7 +407,7 @@ export const RafiqiView: React.FC<RafiqiViewProps> = ({preferredReciter}) => {
         (typeof navigator !== 'undefined' && !navigator.onLine)
       ) {
         setAudioNote(
-          'يرجى الاتصال بالإنترنت للتعرف التلقائي على الصوت، ويمكنك كتابة كلمتك أدناه.',
+          'أنت حاليًا في وضع الأوفلاين — الميكروفون يحتاج إنترنت، لكن يمكنك كتابة كلمتك أو اختيار أي كلمة بالأسفل ليتلو الآية ثم يحدثك الشيخ وفقها.',
         );
       }
     };
@@ -417,6 +467,20 @@ export const RafiqiView: React.FC<RafiqiViewProps> = ({preferredReciter}) => {
               <VolumeX className="h-4 w-4" />
             )}
           </button>
+        </div>
+
+        {!isOnline && (
+          <div className="mt-3 rounded-2xl border border-[#C9A227]/60 bg-[#120E04] px-3 py-2 text-[11px] font-bold leading-relaxed text-[#FCE38A]">
+            أنت بدون إنترنت: التعرف الصوتي المباشر وتوليد الردود الجديدة يتطلبان اتصالاً بالإنترنت — أما الـ 30 كلمة الذهبية وقراءة الآيات والأصوات المحفوظة مسبقًا فتعمل معك أوفلاين.
+          </div>
+        )}
+
+        <div className="mt-3">
+          <SectionOfflineButton
+            sectionId="rafiqi"
+            preferredReciter={selectedReciter}
+            labelOverride="رفيقي وأصوات الشيخ"
+          />
         </div>
 
         {/* Talk to Companion Controls */}
@@ -492,7 +556,12 @@ export const RafiqiView: React.FC<RafiqiViewProps> = ({preferredReciter}) => {
             onChange={(e) => {
               const nextReciter = e.target.value as ReciterId;
               setSelectedReciter(nextReciter);
-              playAyahOnly(activeWord, nextReciter);
+              void playAyahThenSheikh(
+                activeWord,
+                nextReciter,
+                activeReplyText,
+                activeWord.replyAr,
+              );
             }}
             className="min-h-[40px] w-full rounded-xl border border-[#C9A227]/60 bg-black px-3 text-xs font-bold text-white outline-none"
           >
@@ -540,7 +609,7 @@ export const RafiqiView: React.FC<RafiqiViewProps> = ({preferredReciter}) => {
               <span>
                 {isPlayingAyah
                   ? 'إيقاف التلاوة'
-                  : `اسمع الآية بصوت ${activeSheikh.shortNameAr}`}
+                  : `اسمع الآية بصوت ${activeSheikh.shortNameAr} ثم رد الشيخ`}
               </span>
             </button>
 
@@ -562,10 +631,20 @@ export const RafiqiView: React.FC<RafiqiViewProps> = ({preferredReciter}) => {
                   ? 'جاري تجهيز صوت الشيخ...'
                   : isPlayingSheikhReply
                     ? 'إيقاف صوت الشيخ'
-                    : 'اسمع رد الشيخ'}
+                    : 'اسمع تعليق الشيخ'}
               </span>
             </button>
           </div>
+
+          {(isPlayingAyah || isPreparingSheikhVoice || isPlayingSheikhReply) && (
+            <p className="mt-2.5 rounded-xl border border-[#C9A227]/40 bg-[#120E04] px-3 py-1.5 text-[11px] font-bold text-[#FCE38A]">
+              {isPlayingAyah
+                ? 'جاري تلاوة الآية الآن — سيتحدث الشيخ وفق الآية فور انتهائها...'
+                : isPreparingSheikhVoice
+                  ? 'انتهت الآية — جاري تجهيز صوت الشيخ حسب الآية...'
+                  : 'الشيخ يحدثك الآن على حسب الآية الكريمة'}
+            </p>
+          )}
 
           {audioNote && (
             <p className="mt-2 text-[11px] font-semibold text-[#C9A227]">
@@ -579,7 +658,7 @@ export const RafiqiView: React.FC<RafiqiViewProps> = ({preferredReciter}) => {
       <section className="rounded-3xl border-2 border-[#C9A227] bg-white p-4 dark:bg-[#050505]">
         <div className="mb-3 flex items-center justify-between">
           <h3 className="text-sm font-bold text-slate-900 dark:text-[#FCE38A]">
-            الـ 30 كلمة في رفيقي — اضغط الكلمة لسماع آيتها
+            الـ 30 كلمة في رفيقي — اضغط لسماع الآية ثم حديث الشيخ
           </h3>
           <span className="font-mono-num text-xs font-bold text-[#C9A227]">
             {toArabicDigits(RAFIQI_WORDS_30.length)}

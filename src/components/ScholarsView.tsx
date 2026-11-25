@@ -106,7 +106,7 @@ export const ScholarsView: React.FC = () => {
   ) => {
     setSelectedScholar(scholar);
     setActiveVideo(initialVideo || scholar.videos[0] || null);
-    window.scrollTo({top: 0, behavior: 'auto'});
+    document.getElementById('app-main-scroll')?.scrollTo({top: 0, behavior: 'auto'});
   };
 
   const handleToggleSaveOffline = async (
@@ -224,10 +224,10 @@ export const ScholarsView: React.FC = () => {
                   <div className="relative z-10 flex flex-col items-center gap-1.5 rounded-2xl border-2 border-[#C9A227] bg-black/90 px-4 py-3.5">
                     <Video className="h-6 w-6 text-[#FCE38A]" />
                     <p className="text-sm font-extrabold text-[#FCE38A]">
-                      يرجى الاتصال بالإنترنت
+                      أنت تعمل حاليًا بالوضع الأوفلاين
                     </p>
                     <p className="text-[11px] leading-relaxed text-zinc-200">
-                      تشغيل فيديو المحاضرة يتطلب اتصالاً بالإنترنت — يمكنك تصفح قائمة المشايخ والمفضلة بدون نت
+                      تشغيل الفيديو يتطلب اتصالاً بالإنترنت، بينما باقي قائمة المشايخ والمفضلة المحفوظة تعمل من الجهاز
                     </p>
                   </div>
                 </div>

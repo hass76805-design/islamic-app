@@ -24,6 +24,7 @@ import {
   RECITERS_30,
 } from '../data/reciters';
 import {CompactAyah, CompactSurah, ReciterId} from '../types';
+import {useOnlineStatus} from '../hooks/useOnlineStatus';
 import {
   loadOfflineJson,
   resolveOfflinePlayableUrl,
@@ -44,6 +45,7 @@ import {
   playSheikhSingleWord,
   stopSheikhWordPlayback,
 } from '../utils/sheikhWordAudio';
+import {SectionOfflineButton} from './SectionOfflineButton';
 
 interface VoiceTestViewProps {
   preferredReciter: ReciterId;
@@ -662,6 +664,7 @@ const QUICK_SURAHS_PICKS = [1, 112, 113, 114, 108, 103, 97, 87];
 export const VoiceTestView: React.FC<VoiceTestViewProps> = ({
   preferredReciter,
 }) => {
+  const isOnline = useOnlineStatus();
   const [surahs, setSurahs] = useState<CompactSurah[] | null>(null);
   const [loadingQuran, setLoadingQuran] = useState(true);
   const [selectedReciter, setSelectedReciter] =
@@ -1340,6 +1343,20 @@ export const VoiceTestView: React.FC<VoiceTestViewProps> = ({
               </option>
             ))}
           </select>
+        </div>
+
+        {!isOnline && (
+          <div className="mt-3 rounded-2xl border border-[#C9A227]/60 bg-[#120E04] px-3 py-2 text-[11px] font-bold leading-relaxed text-[#FCE38A]">
+            تنبيه هادئ: التحليل التلقائي للصوت يحتاج اتصالاً بالإنترنت — لكن يمكنك التسجيل، ومراجعة السور وسجل تلاواتك المحفوظ أوفلاين بالكامل.
+          </div>
+        )}
+
+        <div className="mt-3">
+          <SectionOfflineButton
+            sectionId="voice_test"
+            preferredReciter={selectedReciter}
+            labelOverride="اختبر صوتك والتسجيلات"
+          />
         </div>
       </section>
 

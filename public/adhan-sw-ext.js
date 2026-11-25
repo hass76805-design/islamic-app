@@ -9,7 +9,7 @@ const OFFLINE_AUTO_UPDATE_NOTIF_TAG = 'alzahabi-offline-auto-update';
 const TOTAL_PACKAGE_MB = 850;
 
 const OFFLINE_IDB_NAME = 'alzahabi-offline-json-db';
-const OFFLINE_IDB_VERSION = 2;
+const OFFLINE_IDB_VERSION = 3;
 
 let offlineDownloadRunning = false;
 let offlineDownloadPauseRequested = false;
@@ -36,6 +36,9 @@ function openOfflineIdbInSw() {
         if (!db.objectStoreNames.contains('offline_meta')) {
           db.createObjectStore('offline_meta');
         }
+        if (!db.objectStoreNames.contains('app_state')) {
+          db.createObjectStore('app_state');
+        }
       };
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => resolve(null);
@@ -45,20 +48,65 @@ function openOfflineIdbInSw() {
   });
 }
 
-async function saveSwAudioBlobToIdb(url, blob) {
-  if (!url || !blob || blob.size === 0) return;
+async function swIdbRead(storeName, key) {
   const db = await openOfflineIdbInSw();
-  if (!db) return;
+  if (!db) return null;
   return new Promise((resolve) => {
     try {
-      const tx = db.transaction('audio_blobs', 'readwrite');
-      tx.objectStore('audio_blobs').put(blob, url);
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => resolve();
+      if (!db.objectStoreNames.contains(storeName)) {
+        resolve(null);
+        return;
+      }
+      const tx = db.transaction(storeName, 'readonly');
+      const req = tx.objectStore(storeName).get(key);
+      req.onsuccess = () => resolve(req.result ?? null);
+      req.onerror = () => resolve(null);
     } catch {
-      resolve();
+      resolve(null);
     }
   });
+}
+
+async function swIdbWrite(storeName, key, value) {
+  const db = await openOfflineIdbInSw();
+  if (!db) return false;
+  return new Promise((resolve) => {
+    try {
+      if (!db.objectStoreNames.contains(storeName)) {
+        resolve(false);
+        return;
+      }
+      const tx = db.transaction(storeName, 'readwrite');
+      tx.objectStore(storeName).put(value, key);
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = () => resolve(false);
+    } catch {
+      resolve(false);
+    }
+  });
+}
+
+async function saveSwAudioBlobToIdb(url, blob) {
+  if (!url || !blob || blob.size === 0) return;
+  await swIdbWrite('audio_blobs', url, blob);
+}
+
+async function saveSwJsonToIdb(url, data) {
+  if (!url || data === undefined || data === null) return;
+  await swIdbWrite('json_cache', url, data);
+}
+
+async function swFetchWithTimeout(url, init = {}, timeoutMs = 15000) {
+  if (typeof AbortController === 'undefined') {
+    return fetch(url, init);
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, {...init, signal: controller.signal});
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function computeMbStats(
@@ -95,11 +143,31 @@ function computeMbStats(
 }
 
 async function saveOfflineDlState(state) {
+  const payload = {
+    ...(state || {}),
+    storageEngine: 'IndexedDB+CacheStorage',
+    updatedAt: Date.now(),
+  };
+  // Primary permanent IndexedDB persistence
+  await swIdbWrite('offline_meta', 'offline_download_state', payload);
+  if (Array.isArray(payload.sections) && payload.sections.length > 0 && payload.status === 'completed') {
+    const existing = await swIdbRead('offline_meta', 'downloaded_sections');
+    const merged = Array.from(
+      new Set([...(Array.isArray(existing) ? existing : []), ...payload.sections]),
+    );
+    await swIdbWrite('offline_meta', 'downloaded_sections', merged);
+  }
+  if (payload.status === 'completed') {
+    await swIdbWrite('offline_meta', 'offline_ready_flag', true);
+  } else if (payload.status === 'idle') {
+    await swIdbWrite('offline_meta', 'offline_ready_flag', false);
+  }
+
   try {
     const cache = await caches.open(ADHAN_CACHE_META);
     await cache.put(
       '/__offline_download_state.json',
-      new Response(JSON.stringify(state || {}), {
+      new Response(JSON.stringify(payload), {
         headers: {'Content-Type': 'application/json'},
       }),
     );
@@ -109,6 +177,14 @@ async function saveOfflineDlState(state) {
 }
 
 async function readOfflineDlState() {
+  try {
+    const fromIdb = await swIdbRead('offline_meta', 'offline_download_state');
+    if (fromIdb && typeof fromIdb === 'object') {
+      return fromIdb;
+    }
+  } catch {
+    // fallback to CacheStorage
+  }
   try {
     const cache = await caches.open(ADHAN_CACHE_META);
     const res = await cache.match('/__offline_download_state.json');
@@ -191,6 +267,17 @@ async function showOfflineDownloadNotification(
 async function isUrlAlreadyCached(url) {
   if (!url) return false;
   try {
+    if (url.endsWith('.json')) {
+      const jsonHit = await swIdbRead('json_cache', url);
+      if (jsonHit !== null) return true;
+    } else {
+      const blobHit = await swIdbRead('audio_blobs', url);
+      if (blobHit && blobHit.size > 0) return true;
+    }
+  } catch {
+    // fallback to CacheStorage
+  }
+  try {
     const bucket =
       url.endsWith('.json') || url.endsWith('.html')
         ? OFFLINE_CORE_BUCKET
@@ -212,8 +299,32 @@ async function cacheOneOfflineUrl(url, forceRefresh = false) {
   try {
     const cache = await caches.open(bucket);
     if (!forceRefresh) {
+      if (url.endsWith('.json')) {
+        const jsonIdb = await swIdbRead('json_cache', url);
+        if (jsonIdb !== null) return {ok: true, fromCache: true};
+      }
       const existing = await cache.match(url);
-      if (existing) return {ok: true, fromCache: true};
+      if (existing) {
+        if (url.endsWith('.json') && existing.ok) {
+          try {
+            const parsed = await existing.clone().json();
+            await saveSwJsonToIdb(url, parsed);
+          } catch {
+            // ignore
+          }
+        } else if (bucket === OFFLINE_AUDIO_BUCKET && existing.type !== 'opaque') {
+          try {
+            const existingBlob = await swIdbRead('audio_blobs', url);
+            if (!existingBlob) {
+              const b = await existing.clone().blob();
+              if (b && b.size > 0) await saveSwAudioBlobToIdb(url, b);
+            }
+          } catch {
+            // ignore
+          }
+        }
+        return {ok: true, fromCache: true};
+      }
     }
 
     if (typeof navigator !== 'undefined' && navigator.onLine === false) {
@@ -224,16 +335,26 @@ async function cacheOneOfflineUrl(url, forceRefresh = false) {
       url.startsWith('/') || url.startsWith(self.location.origin);
 
     if (isSameOrigin) {
-      const res = await fetch(url, {
-        cache: forceRefresh ? 'no-store' : 'default',
-      });
+      const res = await swFetchWithTimeout(
+        url,
+        {cache: forceRefresh ? 'no-store' : 'default'},
+        15000,
+      );
       if (res.ok) {
-        if (bucket === OFFLINE_AUDIO_BUCKET) {
-          res
-            .clone()
-            .blob()
-            .then((b) => saveSwAudioBlobToIdb(url, b))
-            .catch(() => {});
+        if (url.endsWith('.json')) {
+          try {
+            const parsed = await res.clone().json();
+            await saveSwJsonToIdb(url, parsed);
+          } catch {
+            // ignore
+          }
+        } else if (bucket === OFFLINE_AUDIO_BUCKET) {
+          try {
+            const b = await res.clone().blob();
+            if (b && b.size > 0) await saveSwAudioBlobToIdb(url, b);
+          } catch {
+            // ignore
+          }
         }
         await cache.put(url, res);
         return {ok: true, fromCache: false};
@@ -242,17 +363,22 @@ async function cacheOneOfflineUrl(url, forceRefresh = false) {
     }
 
     try {
-      const corsRes = await fetch(url, {
-        mode: 'cors',
-        cache: forceRefresh ? 'no-store' : 'default',
-      });
+      const corsRes = await swFetchWithTimeout(
+        url,
+        {
+          mode: 'cors',
+          cache: forceRefresh ? 'no-store' : 'default',
+        },
+        15000,
+      );
       if (corsRes.ok) {
         if (bucket === OFFLINE_AUDIO_BUCKET) {
-          corsRes
-            .clone()
-            .blob()
-            .then((b) => saveSwAudioBlobToIdb(url, b))
-            .catch(() => {});
+          try {
+            const b = await corsRes.clone().blob();
+            if (b && b.size > 0) await saveSwAudioBlobToIdb(url, b);
+          } catch {
+            // ignore
+          }
         }
         await cache.put(url, corsRes);
         return {ok: true, fromCache: false};
@@ -269,10 +395,14 @@ async function cacheOneOfflineUrl(url, forceRefresh = false) {
     // Fallback to opaque no-cors response for external audio CDNs without ACAO.
     // Note: no-cors fetch ONLY throws when network/DNS is unreachable (offline).
     try {
-      const noCorsRes = await fetch(url, {
-        mode: 'no-cors',
-        cache: forceRefresh ? 'no-store' : 'default',
-      });
+      const noCorsRes = await swFetchWithTimeout(
+        url,
+        {
+          mode: 'no-cors',
+          cache: forceRefresh ? 'no-store' : 'default',
+        },
+        15000,
+      );
       await cache.put(url, noCorsRes);
       return {ok: true, fromCache: false};
     } catch {
@@ -292,6 +422,7 @@ async function runFullOfflineDownload(
   mode = 'full',
   targetTotalMb = TOTAL_PACKAGE_MB,
   sections = null,
+  activeSectionId = undefined,
 ) {
   if (offlineDownloadRunning) return;
   const cleanUrls = Array.isArray(urls)
@@ -317,6 +448,8 @@ async function runFullOfflineDownload(
     : prevState && Array.isArray(prevState.sections)
       ? prevState.sections
       : [];
+  const effectiveActiveSectionId =
+    activeSectionId || (prevState && prevState.activeSectionId) || undefined;
 
   // Scan what is already cached so resume ALWAYS continues from exact stopped position
   let alreadyCachedCount = 0;
@@ -346,6 +479,7 @@ async function runFullOfflineDownload(
     await saveOfflineDlState({
       status: 'completed',
       mode,
+      activeSectionId: effectiveActiveSectionId,
       sections: effectiveSections,
       urls: cleanUrls,
       done: total,
@@ -362,6 +496,7 @@ async function runFullOfflineDownload(
           : 'OFFLINE_DOWNLOAD_COMPLETE',
       status: 'completed',
       mode,
+      activeSectionId: effectiveActiveSectionId,
       sections: effectiveSections,
       done: total,
       total,
@@ -382,6 +517,7 @@ async function runFullOfflineDownload(
   await saveOfflineDlState({
     status: 'downloading',
     mode,
+    activeSectionId: effectiveActiveSectionId,
     sections: effectiveSections,
     urls: cleanUrls,
     done: completed,
@@ -403,6 +539,7 @@ async function runFullOfflineDownload(
     type: 'OFFLINE_DOWNLOAD_PROGRESS',
     status: 'downloading',
     mode,
+    activeSectionId: effectiveActiveSectionId,
     sections: effectiveSections,
     done: completed,
     total,
@@ -474,6 +611,7 @@ async function runFullOfflineDownload(
         await saveOfflineDlState({
           status: 'downloading',
           mode,
+          activeSectionId: effectiveActiveSectionId,
           sections: effectiveSections,
           urls: cleanUrls,
           done: completed,
@@ -487,6 +625,7 @@ async function runFullOfflineDownload(
           type: 'OFFLINE_DOWNLOAD_PROGRESS',
           status: 'downloading',
           mode,
+          activeSectionId: effectiveActiveSectionId,
           sections: effectiveSections,
           done: completed,
           total,
@@ -515,6 +654,7 @@ async function runFullOfflineDownload(
     if (offlineDownloadCancelRequested) {
       await saveOfflineDlState({
         status: 'idle',
+        activeSectionId: effectiveActiveSectionId,
         sections: effectiveSections,
         done: 0,
         total: 0,
@@ -530,6 +670,7 @@ async function runFullOfflineDownload(
       await broadcastOfflineDownload({
         type: 'OFFLINE_DOWNLOAD_CANCELLED',
         status: 'idle',
+        activeSectionId: effectiveActiveSectionId,
         sections: effectiveSections,
         done: 0,
         total: 0,
@@ -547,6 +688,7 @@ async function runFullOfflineDownload(
         status: 'paused',
         pauseReason: 'user',
         mode,
+        activeSectionId: effectiveActiveSectionId,
         sections: effectiveSections,
         urls: cleanUrls,
         done: completed,
@@ -561,6 +703,7 @@ async function runFullOfflineDownload(
         status: 'paused',
         pauseReason: 'user',
         mode,
+        activeSectionId: effectiveActiveSectionId,
         sections: effectiveSections,
         done: completed,
         total,
@@ -581,6 +724,7 @@ async function runFullOfflineDownload(
         status: 'paused',
         pauseReason: 'offline',
         mode,
+        activeSectionId: effectiveActiveSectionId,
         sections: effectiveSections,
         urls: cleanUrls,
         done: completed,
@@ -595,6 +739,7 @@ async function runFullOfflineDownload(
         status: 'paused',
         pauseReason: 'offline',
         mode,
+        activeSectionId: effectiveActiveSectionId,
         sections: effectiveSections,
         done: completed,
         total,
@@ -613,6 +758,7 @@ async function runFullOfflineDownload(
     await saveOfflineDlState({
       status: 'completed',
       mode: 'full',
+      activeSectionId: effectiveActiveSectionId,
       sections: effectiveSections,
       urls: cleanUrls,
       done: total,
@@ -629,6 +775,7 @@ async function runFullOfflineDownload(
           : 'OFFLINE_DOWNLOAD_COMPLETE',
       status: 'completed',
       mode: 'full',
+      activeSectionId: effectiveActiveSectionId,
       sections: effectiveSections,
       done: total,
       total,
@@ -749,6 +896,7 @@ async function resumeSavedOfflineDownload(autoFromNetwork = false) {
       state.mode || 'full',
       state.totalMb || TOTAL_PACKAGE_MB,
       state.sections || null,
+      state.activeSectionId,
     );
   }
 }
@@ -1264,7 +1412,16 @@ async function syncNativeTimestampTriggers(alerts) {
 
 async function prewarmEssentialOfflineShellInSw() {
   if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
-  const shellUrls = ['/', '/index.html', '/offline.html'];
+  const shellUrls = [
+    '/',
+    '/index.html',
+    '/offline.html',
+    '/manifest.webmanifest',
+    '/icon.svg',
+    '/pwa-192x192.png',
+    '/pwa-512x512.png',
+    '/assets/aistudio/IMG-20261120-WA4940_5880b328.jpg',
+  ];
   const coreUrls = ['/data/quran.json', '/data/tafsir.json'];
   const essentialAudioUrls = [
     '/audio/adhan-makkah.mp3',
@@ -1286,7 +1443,7 @@ async function prewarmEssentialOfflineShellInSw() {
       try {
         const hit = await shellCache.match(u);
         if (!hit) {
-          const res = await fetch(u);
+          const res = await swFetchWithTimeout(u, {}, 10000);
           if (res.ok) await shellCache.put(u, res);
         }
       } catch {
@@ -1314,6 +1471,7 @@ self.addEventListener('install', (event) => {
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     Promise.all([
+      self.clients && self.clients.claim ? self.clients.claim() : Promise.resolve(),
       prewarmEssentialOfflineShellInSw(),
       checkAndFireDueAlerts(),
       resumePendingOfflineDownloadIfNeeded(),
@@ -1379,6 +1537,10 @@ self.addEventListener('message', (event) => {
         ? payload.totalMb
         : TOTAL_PACKAGE_MB;
     const sections = Array.isArray(payload.sections) ? payload.sections : null;
+    const activeSectionId =
+      typeof payload.activeSectionId === 'string'
+        ? payload.activeSectionId
+        : undefined;
     event.waitUntil(
       runFullOfflineDownload(
         urls,
@@ -1386,6 +1548,7 @@ self.addEventListener('message', (event) => {
         'full',
         targetTotalMb,
         sections,
+        activeSectionId,
       ),
     );
     return;

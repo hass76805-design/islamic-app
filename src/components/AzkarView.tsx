@@ -3,6 +3,7 @@ import {Check, Pause, Play, RotateCcw, Sparkles} from 'lucide-react';
 import {AZKAR_CATEGORIES} from '../data/azkar';
 import {AzkarCategoryId, DhikrItem} from '../types';
 import {resolveOfflinePlayableUrl} from '../utils/offlineAudioCache';
+import {SectionOfflineButton} from './SectionOfflineButton';
 
 interface AzkarViewProps {
   counts: Record<string, number>;
@@ -83,7 +84,7 @@ export const AzkarView: React.FC<AzkarViewProps> = ({
   const progressPct = totalItems > 0 ? Math.round((completedCount / totalItems) * 100) : 0;
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-3.5">
       {/* Category Selector Tabs */}
       <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
         {AZKAR_CATEGORIES.map((cat) => {
@@ -99,10 +100,10 @@ export const AzkarView: React.FC<AzkarViewProps> = ({
                 stopAllAudio();
                 setActiveCategory(cat.id);
               }}
-              className={`min-h-[44px] shrink-0 whitespace-nowrap rounded-2xl border-2 px-4 py-2.5 text-sm font-bold transition-colors ${
+              className={`min-h-[46px] shrink-0 whitespace-nowrap rounded-2xl border-2 px-4 py-2 text-xs font-extrabold transition-all active:scale-95 ${
                 isActive
                   ? 'border-[#C9A227] bg-[#C9A227] text-black'
-                  : 'border-[#C9A227]/50 bg-white text-slate-900 hover:border-[#C9A227] dark:bg-[#050505] dark:text-white'
+                  : 'border-[#C9A227]/50 bg-white text-slate-900 dark:bg-[#050505] dark:text-white'
               }`}
             >
               <span>{cat.titleAr}</span>
@@ -119,16 +120,16 @@ export const AzkarView: React.FC<AzkarViewProps> = ({
       </div>
 
       {/* Category Progress Header */}
-      <div className="flex flex-wrap items-center justify-between gap-4 rounded-3xl border-2 border-[#C9A227] bg-white p-5 dark:bg-[#050505]">
-        <div className="min-w-[200px] flex-1">
-          <div className="flex items-center gap-2 text-xs font-bold text-[#C9A227]">
-            <Sparkles className="h-4 w-4" />
-            <span>{category.subtitleAr} · نص وصوت</span>
+      <div className="flex items-center justify-between gap-3 rounded-3xl border-2 border-[#C9A227] bg-white p-4 dark:bg-[#050505]">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5 text-xs font-bold text-[#C9A227]">
+            <Sparkles className="h-4 w-4 shrink-0" />
+            <span className="truncate">{category.subtitleAr} · نص وصوت</span>
           </div>
-          <h2 className="mt-1 text-xl font-bold text-slate-900 dark:text-white">
+          <h2 className="mt-1 text-lg font-extrabold text-slate-900 dark:text-white">
             {category.titleAr}
           </h2>
-          <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-[#C9A227]/20">
+          <div className="mt-2.5 h-2 w-full overflow-hidden rounded-full bg-[#C9A227]/20">
             <div
               className="h-full rounded-full bg-[#C9A227] transition-all duration-300"
               style={{width: `${progressPct}%`}}
@@ -136,26 +137,27 @@ export const AzkarView: React.FC<AzkarViewProps> = ({
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2.5">
-          <div className="ml-2 text-left">
-            <span className="block text-[11px] text-slate-500 dark:text-zinc-400">
-              المكتمل
-            </span>
-            <span className="font-mono-num text-xl font-bold text-[#C9A227]">
-              {completedCount}/{totalItems}
-            </span>
-          </div>
+        <div className="flex shrink-0 flex-col items-end gap-2">
+          <span className="font-mono-num text-lg font-extrabold text-[#C9A227]">
+            {completedCount}/{totalItems}
+          </span>
 
           <button
             type="button"
             onClick={() => onResetCategory(activeCategory)}
-            className="inline-flex min-h-[40px] items-center gap-1.5 rounded-xl border border-[#C9A227]/60 px-3.5 py-2 text-xs font-bold text-slate-800 hover:bg-[#C9A227]/15 dark:text-white"
+            className="inline-flex min-h-[42px] items-center gap-1.5 rounded-2xl border border-[#C9A227]/60 px-3 text-xs font-bold text-slate-800 active:scale-95 dark:text-white"
           >
-            <RotateCcw className="h-4 w-4 text-[#C9A227]" />
-            <span>إعادة ضبط</span>
+            <RotateCcw className="h-3.5 w-3.5 text-[#C9A227]" />
+            <span>ضبط</span>
           </button>
         </div>
       </div>
+
+      <SectionOfflineButton
+        sectionId="azkar"
+        preferredReciter="alafasy"
+        labelOverride="الأذكار والصوتيات"
+      />
 
       {audioErr && (
         <div className="rounded-2xl border-2 border-[#C9A227] bg-[#FFFDF6] px-4 py-3 text-xs font-bold text-[#9A7415] dark:bg-[#0D0A02] dark:text-[#F3D56B]">
@@ -164,7 +166,7 @@ export const AzkarView: React.FC<AzkarViewProps> = ({
       )}
 
       {/* Azkar Tap Cards Grid */}
-      <div className="grid grid-cols-1 gap-3.5">
+      <div className="grid grid-cols-1 gap-3">
         {category.items.map((item) => {
           const current = counts[item.id] || 0;
           const remaining = Math.max(0, item.count - current);
@@ -192,34 +194,34 @@ export const AzkarView: React.FC<AzkarViewProps> = ({
                   if (!done) onIncrement(item.id, item.count);
                 }
               }}
-              className={`group relative flex cursor-pointer flex-col justify-between rounded-3xl border-2 p-5 text-right transition-all active:scale-[0.99] ${
+              className={`group relative flex cursor-pointer flex-col justify-between rounded-3xl border-2 p-4 text-right transition-all active:scale-[0.98] ${
                 done
-                  ? 'border-[#C9A227] bg-[#C9A227]/10 dark:bg-[#141004]'
-                  : 'border-[#C9A227]/75 bg-white hover:border-[#C9A227] dark:bg-[#050505]'
+                  ? 'border-[#C9A227] bg-[#C9A227]/12 dark:bg-[#141004]'
+                  : 'border-[#C9A227]/75 bg-white dark:bg-[#050505]'
               }`}
             >
               <div>
-                <p className="font-quran text-xl leading-[2.1] text-slate-900 dark:text-white sm:text-2xl">
+                <p className="font-quran text-xl leading-[2.05] text-slate-900 dark:text-white">
                   {item.text}
                 </p>
                 {item.reward && (
-                  <p className="mt-3 text-xs leading-relaxed text-[#9A7415] dark:text-[#F3D56B]">
+                  <p className="mt-2.5 text-xs leading-relaxed text-[#9A7415] dark:text-[#F3D56B]">
                     {item.reward}
                   </p>
                 )}
               </div>
 
-              <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-[#C9A227]/25 pt-3.5">
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-2.5 border-t border-[#C9A227]/25 pt-3">
                 <div className="flex items-center gap-2">
                   {item.audioUrl && (
                     <button
                       type="button"
                       onClick={(e) => toggleDhikrAudio(e, item)}
                       aria-label={isThisPlaying ? 'إيقاف الصوت' : 'تشغيل الصوت المسجل'}
-                      className={`inline-flex min-h-[38px] items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-bold transition-colors ${
+                      className={`inline-flex min-h-[44px] items-center gap-1.5 rounded-2xl border px-3.5 text-xs font-bold transition-colors active:scale-95 ${
                         isThisPlaying
                           ? 'border-[#C9A227] bg-[#C9A227] text-black'
-                          : 'border-[#C9A227]/60 text-slate-900 hover:bg-[#C9A227]/15 dark:text-[#F3D56B]'
+                          : 'border-[#C9A227]/60 text-slate-900 dark:text-[#F3D56B]'
                       }`}
                     >
                       {isThisPlaying ? (

@@ -1,10 +1,21 @@
+import {
+  INITIAL_QURAN_SEED,
+  INITIAL_SEED_VERSION,
+  INITIAL_TAFSIR_SEED,
+} from '../data/initialSeedData';
+
 export const OFFLINE_DB_NAME = 'alzahabi-offline-json-db';
-export const OFFLINE_DB_VERSION = 2;
+export const OFFLINE_DB_VERSION = 3;
 
 export const STORE_JSON_CACHE = 'json_cache';
 export const STORE_AUDIO_BLOBS = 'audio_blobs';
 export const STORE_VOICE_HISTORY = 'voice_history';
 export const STORE_OFFLINE_META = 'offline_meta';
+export const STORE_APP_STATE = 'app_state';
+
+export const SEED_QURAN_KEY = 'seed:/data/quran.json';
+export const SEED_TAFSIR_KEY = 'seed:/data/tafsir.json';
+export const SEED_MARKER_KEY = 'initial_seed_manifest';
 
 export interface StoredVoiceWordResult {
   raw: string;
@@ -39,9 +50,14 @@ export interface VoiceHistoryRecord {
   evaluatedAyahs: StoredVoiceAyahResult[];
 }
 
+let cachedDbPromise: Promise<IDBDatabase | null> | null = null;
+let initialSeedPromise: Promise<void> | null = null;
+
 export function openOfflineDb(): Promise<IDBDatabase | null> {
   if (typeof indexedDB === 'undefined') return Promise.resolve(null);
-  return new Promise((resolve) => {
+  if (cachedDbPromise) return cachedDbPromise;
+
+  cachedDbPromise = new Promise((resolve) => {
     try {
       const req = indexedDB.open(OFFLINE_DB_NAME, OFFLINE_DB_VERSION);
       req.onupgradeneeded = () => {
@@ -58,13 +74,36 @@ export function openOfflineDb(): Promise<IDBDatabase | null> {
         if (!db.objectStoreNames.contains(STORE_OFFLINE_META)) {
           db.createObjectStore(STORE_OFFLINE_META);
         }
+        if (!db.objectStoreNames.contains(STORE_APP_STATE)) {
+          db.createObjectStore(STORE_APP_STATE);
+        }
       };
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () => resolve(null);
+      req.onsuccess = () => {
+        const db = req.result;
+        db.onversionchange = () => {
+          db.close();
+          cachedDbPromise = null;
+        };
+        db.onclose = () => {
+          cachedDbPromise = null;
+        };
+        resolve(db);
+      };
+      req.onerror = () => {
+        cachedDbPromise = null;
+        resolve(null);
+      };
+      req.onblocked = () => {
+        cachedDbPromise = null;
+        resolve(null);
+      };
     } catch {
+      cachedDbPromise = null;
       resolve(null);
     }
   });
+
+  return cachedDbPromise;
 }
 
 export async function idbRead<T>(
@@ -75,6 +114,10 @@ export async function idbRead<T>(
   if (!db) return null;
   return new Promise((resolve) => {
     try {
+      if (!db.objectStoreNames.contains(storeName)) {
+        resolve(null);
+        return;
+      }
       const tx = db.transaction(storeName, 'readonly');
       const store = tx.objectStore(storeName);
       const req = store.get(key);
@@ -92,18 +135,66 @@ export async function idbWrite<T>(
   storeName: string,
   key: string,
   value: T,
-): Promise<void> {
+): Promise<boolean> {
   const db = await openOfflineDb();
-  if (!db) return;
+  if (!db) return false;
   return new Promise((resolve) => {
     try {
-      const tx = db.transaction(storeName, 'write' in db ? 'readwrite' : 'readwrite');
+      if (!db.objectStoreNames.contains(storeName)) {
+        resolve(false);
+        return;
+      }
+      const tx = db.transaction(storeName, 'readwrite');
       const store = tx.objectStore(storeName);
       store.put(value, key);
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => resolve();
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = () => resolve(false);
+      tx.onabort = () => resolve(false);
     } catch {
-      resolve();
+      resolve(false);
+    }
+  });
+}
+
+export async function idbDelete(
+  storeName: string,
+  key: string,
+): Promise<boolean> {
+  const db = await openOfflineDb();
+  if (!db) return false;
+  return new Promise((resolve) => {
+    try {
+      if (!db.objectStoreNames.contains(storeName)) {
+        resolve(false);
+        return;
+      }
+      const tx = db.transaction(storeName, 'readwrite');
+      const store = tx.objectStore(storeName);
+      store.delete(key);
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = () => resolve(false);
+    } catch {
+      resolve(false);
+    }
+  });
+}
+
+export async function idbCount(storeName: string): Promise<number> {
+  const db = await openOfflineDb();
+  if (!db) return 0;
+  return new Promise((resolve) => {
+    try {
+      if (!db.objectStoreNames.contains(storeName)) {
+        resolve(0);
+        return;
+      }
+      const tx = db.transaction(storeName, 'readonly');
+      const store = tx.objectStore(storeName);
+      const req = store.count();
+      req.onsuccess = () => resolve(Number(req.result) || 0);
+      req.onerror = () => resolve(0);
+    } catch {
+      resolve(0);
     }
   });
 }
@@ -111,14 +202,92 @@ export async function idbWrite<T>(
 export async function saveAudioBlobToIdb(
   url: string,
   blob: Blob,
-): Promise<void> {
-  if (!url || !blob || blob.size === 0) return;
-  await idbWrite(STORE_AUDIO_BLOBS, url, blob);
+): Promise<boolean> {
+  if (!url || !blob || blob.size === 0) return false;
+  return idbWrite(STORE_AUDIO_BLOBS, url, blob);
 }
 
 export async function readAudioBlobFromIdb(url: string): Promise<Blob | null> {
   if (!url) return null;
   return idbRead<Blob>(STORE_AUDIO_BLOBS, url);
+}
+
+export async function countAudioBlobsInIdb(): Promise<number> {
+  return idbCount(STORE_AUDIO_BLOBS);
+}
+
+export async function saveAppStateToIdb<T>(
+  key: string,
+  value: T,
+): Promise<boolean> {
+  if (!key) return false;
+  return idbWrite(STORE_APP_STATE, key, value);
+}
+
+export async function readAppStateFromIdb<T>(key: string): Promise<T | null> {
+  if (!key) return null;
+  return idbRead<T>(STORE_APP_STATE, key);
+}
+
+export async function saveOfflineMetaToIdb<T>(
+  key: string,
+  value: T,
+): Promise<boolean> {
+  if (!key) return false;
+  return idbWrite(STORE_OFFLINE_META, key, value);
+}
+
+export async function readOfflineMetaFromIdb<T>(
+  key: string,
+): Promise<T | null> {
+  if (!key) return null;
+  return idbRead<T>(STORE_OFFLINE_META, key);
+}
+
+export async function requestPersistentStorage(): Promise<boolean> {
+  if (typeof navigator === 'undefined' || !navigator.storage?.persist) {
+    return false;
+  }
+  try {
+    const already = await navigator.storage.persisted?.();
+    if (already) return true;
+    return await navigator.storage.persist();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Ensures permanent Initial Seed Data exists inside IndexedDB on first open
+ * so core Surahs, Tafsir, Azkar/Prayer defaults, and metadata are immediately available
+ * completely offline even before the user runs any manual download.
+ */
+export async function ensureInitialOfflineSeedData(): Promise<void> {
+  if (initialSeedPromise) return initialSeedPromise;
+  initialSeedPromise = (async () => {
+    try {
+      const existingMarker = await idbRead<{version?: string}>(
+        STORE_OFFLINE_META,
+        SEED_MARKER_KEY,
+      );
+      if (existingMarker?.version === INITIAL_SEED_VERSION) {
+        return;
+      }
+      await Promise.all([
+        idbWrite(STORE_JSON_CACHE, SEED_QURAN_KEY, INITIAL_QURAN_SEED),
+        idbWrite(STORE_JSON_CACHE, SEED_TAFSIR_KEY, INITIAL_TAFSIR_SEED),
+        idbWrite(STORE_OFFLINE_META, SEED_MARKER_KEY, {
+          version: INITIAL_SEED_VERSION,
+          seededAt: Date.now(),
+          surahsCount: INITIAL_QURAN_SEED.length,
+          tafsirCount: Object.keys(INITIAL_TAFSIR_SEED).length,
+        }),
+      ]);
+    } catch {
+      // ignore IndexedDB unavailable
+    }
+  })();
+  return initialSeedPromise;
 }
 
 export async function saveVoiceHistoryRecord(

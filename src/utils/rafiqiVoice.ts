@@ -58,11 +58,15 @@ export async function resolveSheikhHumanVoiceUrl(
     }
 
     try {
+      const controller = new AbortController();
+      const timer = window.setTimeout(() => controller.abort(), 12000);
       const res = await fetch('/api/rafiqi-tts', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
+        signal: controller.signal,
         body: JSON.stringify({text: trimmed}),
       });
+      window.clearTimeout(timer);
       if (!res.ok) return null;
       const data = (await res.json()) as {
         ok?: boolean;
@@ -77,7 +81,7 @@ export async function resolveSheikhHumanVoiceUrl(
       );
       if (blob.size === 0) return null;
 
-      void saveAudioBlobToIdb(cacheKey, blob);
+      await saveAudioBlobToIdb(cacheKey, blob);
       const objUrl = URL.createObjectURL(blob);
       ttsObjectUrlCache.set(cacheKey, objUrl);
       return objUrl;

@@ -68,6 +68,7 @@ import {
 } from '../utils/prayerTimes';
 import {playRamadanCannonSound} from '../utils/ramadanCannon';
 import {AdhanLiveModal} from './AdhanLiveModal';
+import {SectionOfflineButton} from './SectionOfflineButton';
 
 interface AdhanMuezzinViewProps {
   now: Date;
@@ -690,6 +691,12 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
             {activationNote}
           </p>
         )}
+
+        <SectionOfflineButton
+          sectionId="adhan"
+          preferredReciter={settings.preferredReciter}
+          labelOverride="أصوات الأذان والمؤذن"
+        />
 
         {/* Compact Digital Clock + City/GPS Bar */}
         <div className="space-y-2 rounded-2xl border border-[#C9A227]/45 bg-black px-3.5 py-3">
@@ -2089,7 +2096,7 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
 
       {/* City Picker Modal */}
       {cityPickerOpen && (
-        <div className="fixed inset-y-0 left-1/2 z-50 flex w-full max-w-[400px] -translate-x-1/2 items-center justify-center bg-black/90 p-3">
+        <div className="fixed inset-y-0 left-1/2 z-50 flex w-full max-w-[390px] -translate-x-1/2 items-end justify-center bg-black/90 p-0 sm:items-center sm:p-3">
           <div className="flex max-h-[85vh] w-full flex-col rounded-3xl border-2 border-[#C9A227] bg-[#050505] text-white">
             <div className="flex items-center justify-between border-b border-[#C9A227]/35 px-4 py-3.5">
               <h3 className="text-sm font-bold text-[#FCE38A]">
