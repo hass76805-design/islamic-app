@@ -31,7 +31,7 @@ export class ErrorBoundary extends React.Component<
       return (
         <div
           dir="rtl"
-          className="mx-auto flex min-h-dvh w-full max-w-[390px] flex-col items-center justify-center bg-[#000000] p-6 text-center text-white"
+          className="flex min-h-dvh w-full flex-col items-center justify-center bg-[#000000] p-6 text-center text-white"
         >
           <div className="w-full rounded-3xl border-2 border-[#C9A227] bg-[#0A0802] p-6">
             <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl border border-[#C9A227] bg-[#C9A227]/15 text-[#F3D56B]">

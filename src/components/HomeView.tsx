@@ -906,9 +906,9 @@ export const HomeView: React.FC<HomeViewProps> = ({
         </div>
       </section>
 
-      {/* City Picker Modal (390px Mobile Constrained) */}
+      {/* City Picker Modal */}
       {cityPickerOpen && (
-        <div className="fixed inset-y-0 left-1/2 z-50 flex w-full max-w-[390px] -translate-x-1/2 items-end justify-center bg-black/90 p-0 sm:items-center sm:p-3">
+        <div className="fixed inset-0 z-50 flex w-full items-end justify-center bg-black/90 p-0 sm:items-center sm:p-3">
           <div className="flex max-h-[85vh] w-full flex-col rounded-3xl border-2 border-[#C9A227] bg-[#050505] text-white">
             <div className="flex items-center justify-between border-b border-[#C9A227]/30 px-4 py-3.5">
               <h3 className="text-sm font-bold text-[#F3D56B]">
@@ -979,7 +979,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
           role="dialog"
           aria-modal="true"
           aria-label="مشاركة التطبيق"
-          className="fixed inset-y-0 left-1/2 z-50 flex w-full max-w-[390px] -translate-x-1/2 items-end justify-center bg-black/80 p-3 sm:items-center"
+          className="fixed inset-0 z-50 flex w-full items-end justify-center bg-black/80 p-3 sm:items-center"
         >
           <div className="w-full space-y-3 rounded-3xl border-2 border-[#C9A227] bg-[#050505] p-4 text-white">
             <div className="flex items-center justify-between border-b border-[#C9A227]/30 pb-2.5">
@@ -1098,7 +1098,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
           role="dialog"
           aria-modal="true"
           aria-label="اختيار أقسام التحميل بدون نت"
-          className="fixed inset-y-0 left-1/2 z-50 flex w-full max-w-[390px] -translate-x-1/2 items-end justify-center bg-black/85 p-0 sm:items-center sm:p-3"
+          className="fixed inset-0 z-50 flex w-full items-end justify-center bg-black/85 p-0 sm:items-center sm:p-3"
         >
           <div className="flex max-h-[85vh] w-full flex-col space-y-3 rounded-3xl border-2 border-[#C9A227] bg-[#050505] p-5 text-white shadow-[0_0_40px_rgba(201,162,39,0.3)]">
             <div className="flex shrink-0 items-center justify-between border-b border-[#C9A227]/30 pb-2.5">
@@ -1257,7 +1257,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
           role="dialog"
           aria-modal="true"
           aria-label="تفاصيل حجم ووقت التحميل"
-          className="fixed inset-y-0 left-1/2 z-50 flex w-full max-w-[390px] -translate-x-1/2 items-end justify-center bg-black/85 p-0 sm:items-center sm:p-3"
+          className="fixed inset-0 z-50 flex w-full items-end justify-center bg-black/85 p-0 sm:items-center sm:p-3"
         >
           <div className="w-full space-y-3.5 rounded-3xl border-2 border-[#C9A227] bg-[#050505] p-5 text-white shadow-[0_0_40px_rgba(201,162,39,0.3)]">
             <div className="flex items-center justify-between border-b border-[#C9A227]/30 pb-2.5">

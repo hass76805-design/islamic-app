@@ -1119,7 +1119,7 @@ export const QuranTestModal: React.FC<QuranTestModalProps> = ({
   return (
     <div
       dir="rtl"
-      className="fixed inset-y-0 left-1/2 z-50 flex h-dvh w-full max-w-[390px] -translate-x-1/2 flex-col overflow-y-auto sm:border-x sm:border-[#C9A227]/60 bg-[#000000] text-white"
+      className="fixed inset-0 z-50 flex h-dvh w-full flex-col overflow-y-auto bg-[#000000] text-white"
     >
       {/* FIXED COMPACT TOP HEADER: Back | Surah | Timer | فهرس | بحث */}
       <header className="flex shrink-0 items-center justify-between gap-1.5 border-b border-[#C9A227]/40 bg-[#050401] px-2.5 py-2">
@@ -1702,7 +1702,7 @@ export const QuranTestModal: React.FC<QuranTestModalProps> = ({
 
       {/* DEDICATED SURAH INDEX MODAL (فهرس 114 سورة) */}
       {indexModalOpen && allSurahs && (
-        <div className="fixed inset-y-0 left-1/2 z-[60] flex w-full max-w-[390px] -translate-x-1/2 items-end justify-center bg-black/90">
+        <div className="fixed inset-0 z-[60] flex w-full items-end justify-center bg-black/90">
           <div className="animate-sheet-up flex max-h-[85dvh] w-full flex-col rounded-t-3xl border-t-2 border-x-2 border-[#C9A227] bg-[#050401] p-4 text-white">
             <div className="flex items-center justify-between border-b border-[#C9A227]/35 pb-3">
               <h3 className="text-sm font-bold text-[#FCE38A]">
@@ -1751,7 +1751,7 @@ export const QuranTestModal: React.FC<QuranTestModalProps> = ({
 
       {/* DEDICATED SEARCH AYAH MODAL (بحث بالاسم أو الرقم أو النص) */}
       {searchModalOpen && allSurahs && (
-        <div className="fixed inset-y-0 left-1/2 z-[60] flex w-full max-w-[390px] -translate-x-1/2 items-end justify-center bg-black/90">
+        <div className="fixed inset-0 z-[60] flex w-full items-end justify-center bg-black/90">
           <div className="animate-sheet-up flex max-h-[85dvh] w-full flex-col rounded-t-3xl border-t-2 border-x-2 border-[#C9A227] bg-[#050401] p-4 text-white">
             <div className="flex items-center justify-between border-b border-[#C9A227]/35 pb-3">
               <h3 className="text-sm font-bold text-[#FCE38A]">
@@ -1812,7 +1812,7 @@ export const QuranTestModal: React.FC<QuranTestModalProps> = ({
 
       {/* SHEIKH PICKER OVERLAY: الحصري - المنشاوي - عبد الباسط - ماهر المعيقلي */}
       {sheikhModalOpen && (
-        <div className="fixed inset-y-0 left-1/2 z-[60] flex w-full max-w-[390px] -translate-x-1/2 items-end justify-center bg-black/90">
+        <div className="fixed inset-0 z-[60] flex w-full items-end justify-center bg-black/90">
           <div className="animate-sheet-up flex max-h-[85dvh] w-full flex-col rounded-t-3xl border-t-2 border-x-2 border-[#C9A227] bg-[#050401] p-4 text-white">
             <div className="flex items-center justify-between border-b border-[#C9A227]/35 pb-3">
               <div>

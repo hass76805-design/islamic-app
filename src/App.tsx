@@ -1,4 +1,4 @@
-import {useCallback, useEffect, useMemo, useRef, useState} from 'react';
+import {useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState} from 'react';
 import {
   BellRing,
   BookOpen,
@@ -22,10 +22,12 @@ import {MoreView} from './components/MoreView';
 import {OfflineIndicator} from './components/OfflineIndicator';
 import {PWAInstallButton} from './components/PWAInstallButton';
 import {QiblaView} from './components/QiblaView';
+import {QuranTestModal} from './components/QuranTestModal';
 import {QuranLaunchDirective, QuranView} from './components/QuranView';
 import {SplashScreen} from './components/SplashScreen';
 import {FirebaseProvider, useFirebase} from './contexts/FirebaseContext';
 import {AZKAR_CATEGORIES} from './data/azkar';
+import {INITIAL_QURAN_SEED} from './data/initialSeedData';
 import {findNearestCity, PRESET_CITIES} from './data/cities';
 import {
   ADHAN_VOICES_30,
@@ -44,6 +46,7 @@ import {
   AdhanVoice,
   AppSettings,
   AzkarCategoryId,
+  CompactSurah,
   DailyPrayerLog,
   KhatmaPlan,
   MemorizationTestResult,
@@ -56,7 +59,11 @@ import {
   TrackablePrayer,
   UserLocation,
 } from './types';
-import {pushNavigationState, setRootBackHandler} from './utils/backNavigation';
+import {
+  popHistoryEntrySilently,
+  pushNavigationState,
+  setRootBackHandler,
+} from './utils/backNavigation';
 import {getDateKey, getHijriParts} from './utils/hijri';
 import {
   BackgroundOfflineProgress,
@@ -64,6 +71,7 @@ import {
   cancelFullOfflineBackgroundDownload,
   getCurrentOfflineProgress,
   hydrateOfflineStateFromIdb,
+  loadOfflineJson,
   notifyNetworkOfflineToSw,
   notifyNetworkOnlineAutoResumeToSw,
   pauseFullOfflineBackgroundDownload,
@@ -291,6 +299,9 @@ function AppContent({
     useState<StoryCategoryId>('prophets');
   const [quranDirective, setQuranDirective] =
     useState<QuranLaunchDirective | null>(null);
+  const [directTestOpen, setDirectTestOpen] = useState(false);
+  const [directTestSurahs, setDirectTestSurahs] =
+    useState<CompactSurah[]>(INITIAL_QURAN_SEED);
   const [now, setNow] = useState<Date>(() => new Date());
 
   const [location, setLocation] = useLocalStorage<UserLocation>(
@@ -380,37 +391,142 @@ function AppContent({
   const adhanAudioRef = useRef<HTMLAudioElement | null>(null);
   const keepAliveAudioRef = useRef<HTMLAudioElement | null>(null);
   const triggeredAlertsRef = useRef<Set<string>>(readPersistedFiredAlerts());
-  const navStateRef = useRef<{activeTab: TabId; moreSubPage: MoreSubPageId}>({
+  const navStateRef = useRef<{
+    activeTab: TabId;
+    moreSubPage: MoreSubPageId;
+    storyCategory: StoryCategoryId;
+  }>({
     activeTab: 'home',
     moreSubPage: 'menu',
+    storyCategory: 'prophets',
   });
-  navStateRef.current = {activeTab, moreSubPage};
+  navStateRef.current = {activeTab, moreSubPage, storyCategory};
+
+  const navHistoryRef = useRef<
+    Array<{
+      activeTab: TabId;
+      moreSubPage: MoreSubPageId;
+      storyCategory: StoryCategoryId;
+      scrollTop: number;
+    }>
+  >([]);
+  const pendingScrollRestoreRef = useRef<number | null>(null);
 
   const mainScrollRef = useRef<HTMLElement | null>(null);
-  const scrollMainTop = useCallback(() => {
-    mainScrollRef.current?.scrollTo({top: 0, behavior: 'auto'});
+
+  useLayoutEffect(() => {
+    const target = pendingScrollRestoreRef.current;
+    pendingScrollRestoreRef.current = null;
+    const el = mainScrollRef.current;
+    if (!el) return;
+    if (target === null) return;
+
+    el.scrollTop = target;
+    let raf2 = 0;
+    const raf1 = window.requestAnimationFrame(() => {
+      if (mainScrollRef.current) {
+        mainScrollRef.current.scrollTop = target;
+      }
+      raf2 = window.requestAnimationFrame(() => {
+        if (mainScrollRef.current && target > 0) {
+          mainScrollRef.current.scrollTop = target;
+        }
+      });
+    });
+    const t =
+      target > 0
+        ? window.setTimeout(() => {
+            if (mainScrollRef.current) {
+              mainScrollRef.current.scrollTop = target;
+            }
+          }, 45)
+        : 0;
+    return () => {
+      window.cancelAnimationFrame(raf1);
+      window.cancelAnimationFrame(raf2);
+      if (t) window.clearTimeout(t);
+    };
+  }, [activeTab, moreSubPage, storyCategory]);
+
+  const navigateForward = useCallback(
+    (next: {
+      activeTab: TabId;
+      moreSubPage: MoreSubPageId;
+      storyCategory?: StoryCategoryId;
+      tag: string;
+    }) => {
+      const cur = navStateRef.current;
+      const effectiveNextStory = next.storyCategory ?? cur.storyCategory;
+      if (
+        cur.activeTab === next.activeTab &&
+        cur.moreSubPage === next.moreSubPage &&
+        cur.storyCategory === effectiveNextStory
+      ) {
+        mainScrollRef.current?.scrollTo({top: 0, behavior: 'smooth'});
+        return;
+      }
+
+      const currentScroll = mainScrollRef.current?.scrollTop ?? 0;
+      navHistoryRef.current = [
+        ...navHistoryRef.current.slice(-39),
+        {
+          activeTab: cur.activeTab,
+          moreSubPage: cur.moreSubPage,
+          storyCategory: cur.storyCategory,
+          scrollTop: currentScroll,
+        },
+      ];
+      pendingScrollRestoreRef.current = 0;
+      pushNavigationState(next.tag);
+      setActiveTab(next.activeTab);
+      setMoreSubPage(next.moreSubPage);
+      if (next.storyCategory) {
+        setStoryCategory(next.storyCategory);
+      }
+    },
+    [],
+  );
+
+  const navigateBackFromStack = useCallback((fromHardwarePop: boolean) => {
+    const prev = navHistoryRef.current.pop();
+    if (prev) {
+      pendingScrollRestoreRef.current = prev.scrollTop;
+      setActiveTab(prev.activeTab);
+      setMoreSubPage(prev.moreSubPage);
+      setStoryCategory(prev.storyCategory);
+      if (!fromHardwarePop) {
+        popHistoryEntrySilently();
+      }
+      return true;
+    }
+
+    const {activeTab: tab, moreSubPage: sub} = navStateRef.current;
+    if (tab === 'more' && sub !== 'menu') {
+      pendingScrollRestoreRef.current = 0;
+      setMoreSubPage('menu');
+      if (!fromHardwarePop) popHistoryEntrySilently();
+      return true;
+    }
+    if (tab === 'settings' && sub !== 'settings') {
+      pendingScrollRestoreRef.current = 0;
+      setMoreSubPage('settings');
+      if (!fromHardwarePop) popHistoryEntrySilently();
+      return true;
+    }
+    if (tab !== 'home') {
+      pendingScrollRestoreRef.current = 0;
+      setActiveTab('home');
+      setMoreSubPage('menu');
+      if (!fromHardwarePop) popHistoryEntrySilently();
+      return true;
+    }
+    return false;
   }, []);
 
   useEffect(() => {
-    setRootBackHandler(() => {
-      const {activeTab: tab, moreSubPage: sub} = navStateRef.current;
-      if (tab === 'more' && sub !== 'menu') {
-        setMoreSubPage('menu');
-        return true;
-      }
-      if (tab === 'settings' && sub !== 'settings') {
-        setMoreSubPage('settings');
-        return true;
-      }
-      if (tab !== 'home') {
-        setActiveTab('home');
-        setMoreSubPage('menu');
-        return true;
-      }
-      return false;
-    });
+    setRootBackHandler(() => navigateBackFromStack(true));
     return () => setRootBackHandler(null);
-  }, []);
+  }, [navigateBackFromStack]);
 
   // Ensure initial non-GPS default migrates cleanly to Cairo + Egyptian method
   const cairoInitRef = useRef(false);
@@ -2214,74 +2330,91 @@ function AppContent({
   }, [dailyPrayerData, now]);
 
   const handleTabSelect = (tab: TabId) => {
-    if (tab !== 'home' && tab !== activeTab) {
-      pushNavigationState(`tab-${tab}`);
-    }
-    setActiveTab(tab);
-    if (tab === 'settings') {
-      setMoreSubPage('settings');
-    } else if (tab !== 'more') {
-      setMoreSubPage('menu');
-    }
-    scrollMainTop();
+    navigateForward({
+      activeTab: tab,
+      moreSubPage: tab === 'settings' ? 'settings' : 'menu',
+      tag: `tab-${tab}`,
+    });
   };
 
   const handleSelectMoreSubPage = (sub: MoreSubPageId) => {
     if (sub === 'adhan') {
-      pushNavigationState('tab-prayer');
-      setActiveTab('prayer');
-      setMoreSubPage('menu');
-      scrollMainTop();
+      navigateForward({
+        activeTab: 'prayer',
+        moreSubPage: 'menu',
+        tag: 'tab-prayer',
+      });
       return;
     }
-    if (sub !== 'menu' && moreSubPage === 'menu') {
-      pushNavigationState(`sub-${sub}`);
+    if (sub === 'settings') {
+      navigateForward({
+        activeTab: 'settings',
+        moreSubPage: 'settings',
+        tag: 'tab-settings',
+      });
+      return;
     }
-    setMoreSubPage(sub);
-    scrollMainTop();
+    navigateForward({
+      activeTab: 'more',
+      moreSubPage: sub,
+      tag: `sub-${sub}`,
+    });
   };
 
   const handleOpenQuranFatiha = () => {
-    if (activeTab !== 'quran') {
-      pushNavigationState('tab-quran-fatiha');
-    }
     setQuranDirective({type: 'fatiha', key: Date.now()});
-    setActiveTab('quran');
-    scrollMainTop();
+    navigateForward({
+      activeTab: 'quran',
+      moreSubPage: 'menu',
+      tag: 'tab-quran-fatiha',
+    });
   };
 
   const handleOpenQuranTest = () => {
-    if (activeTab !== 'quran') {
-      pushNavigationState('tab-quran-test');
-    }
-    setQuranDirective({type: 'test', key: Date.now()});
-    setActiveTab('quran');
-    scrollMainTop();
+    setDirectTestOpen(true);
+    void loadOfflineJson<CompactSurah[]>('/data/quran.json')
+      .then((loaded) => {
+        if (Array.isArray(loaded) && loaded.length > 0) {
+          setDirectTestSurahs(loaded);
+        }
+      })
+      .catch(() => {});
   };
+
+  const directTestEntries = useMemo(() => {
+    const targetSurah =
+      directTestSurahs.find((s) => s.n === lastRead.surahNumber) ||
+      directTestSurahs[0];
+    if (!targetSurah) return [];
+    return targetSurah.ayahs.map((ayah) => ({surah: targetSurah, ayah}));
+  }, [directTestSurahs, lastRead.surahNumber]);
 
   const handleOpenMoreSubPage = (
     sub: MoreSubPageId,
     storyCat?: StoryCategoryId,
   ) => {
     if (sub === 'adhan') {
-      pushNavigationState('tab-prayer');
-      setActiveTab('prayer');
-      setMoreSubPage('menu');
-      scrollMainTop();
+      navigateForward({
+        activeTab: 'prayer',
+        moreSubPage: 'menu',
+        tag: 'tab-prayer',
+      });
       return;
     }
     if (sub === 'settings') {
-      pushNavigationState('tab-settings');
-      setActiveTab('settings');
-      setMoreSubPage('settings');
-      scrollMainTop();
+      navigateForward({
+        activeTab: 'settings',
+        moreSubPage: 'settings',
+        tag: 'tab-settings',
+      });
       return;
     }
-    if (storyCat) setStoryCategory(storyCat);
-    pushNavigationState(`sub-${sub}`);
-    setMoreSubPage(sub);
-    setActiveTab('more');
-    scrollMainTop();
+    navigateForward({
+      activeTab: 'more',
+      moreSubPage: sub,
+      storyCategory: storyCat,
+      tag: `sub-${sub}`,
+    });
   };
 
   const showHomePermBanner =
@@ -2291,7 +2424,7 @@ function AppContent({
   return (
     <div className="h-dvh w-full overflow-hidden bg-[#000000]">
       <div
-        className={`relative mx-auto flex h-dvh w-full max-w-[390px] flex-col overflow-hidden sm:border-x sm:border-[#C9A227]/35 ${
+        className={`relative flex h-dvh w-full flex-col overflow-hidden ${
           isForcedBlackGold ? 'bg-[#000000] text-white' : 'bg-white text-slate-900'
         }`}
       >
@@ -2630,6 +2763,9 @@ function AppContent({
                   : moreSubPage
               }
               onSelectSubPage={handleSelectMoreSubPage}
+              onBack={() => {
+                navigateBackFromStack(false);
+              }}
               storyCategory={storyCategory}
               now={now}
               location={location}
@@ -2723,6 +2859,22 @@ function AppContent({
             onPlayPostAzkar={
               settings.postPrayerAzkarEnabled ? playPostPrayerAzkar : undefined
             }
+          />
+        )}
+
+        {directTestOpen && directTestEntries.length > 0 && (
+          <QuranTestModal
+            entries={directTestEntries}
+            allSurahs={directTestSurahs}
+            initialSurahNumber={lastRead.surahNumber || 1}
+            initialAyahNumber={lastRead.ayahNumber || 1}
+            currentPage={lastRead.page || khatma.currentPage || 1}
+            lastRead={lastRead}
+            onUpdateLastRead={handleUpdateLastRead}
+            history={testHistory}
+            preferredReciter={settings.preferredReciter}
+            onSaveResult={handleSaveTestResult}
+            onClose={() => setDirectTestOpen(false)}
           />
         )}
 

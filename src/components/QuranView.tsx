@@ -966,7 +966,7 @@ export const QuranView: React.FC<QuranViewProps> = ({
       {floatingPopup && (
         <div
           data-ayah-popup="true"
-          className="fixed bottom-[72px] left-1/2 z-40 w-[calc(100%-1rem)] max-w-[374px] -translate-x-1/2 rounded-3xl border-2 border-[#C9A227] bg-black/92 p-3 text-white shadow-[0_12px_36px_rgba(0,0,0,0.88)]"
+          className="fixed inset-x-2 bottom-[72px] z-40 rounded-3xl border-2 border-[#C9A227] bg-black/92 p-3 text-white shadow-[0_12px_36px_rgba(0,0,0,0.88)]"
         >
           <div className="mb-2 flex items-center justify-between border-b border-[#C9A227]/35 pb-1.5">
             <span className="truncate text-xs font-bold text-[#FCE38A]">
@@ -1129,9 +1129,9 @@ export const QuranView: React.FC<QuranViewProps> = ({
         </div>
       )}
 
-      {/* TAFSIR & WORD MEANINGS MODAL (390px Mobile Constrained) */}
+      {/* TAFSIR & WORD MEANINGS MODAL */}
       {ayahDetailModal && (
-        <div className="fixed inset-y-0 left-1/2 z-50 flex w-full max-w-[390px] -translate-x-1/2 items-end justify-center bg-black/90">
+        <div className="fixed inset-0 z-50 flex w-full items-end justify-center bg-black/90">
           <div className="animate-sheet-up flex max-h-[90dvh] w-full flex-col overflow-hidden rounded-t-3xl border-t-2 border-x-2 border-[#C9A227] bg-[#050505] text-white">
             <div className="flex items-center justify-between border-b border-[#C9A227]/35 px-4 py-3.5">
               <div>
@@ -1258,9 +1258,9 @@ export const QuranView: React.FC<QuranViewProps> = ({
         </div>
       )}
 
-      {/* SINGLE COMPREHENSIVE "فهرس" DRAWER MODAL (390px Mobile Constrained) */}
+      {/* SINGLE COMPREHENSIVE "فهرس" DRAWER MODAL */}
       {indexOpen && (
-        <div className="fixed inset-y-0 left-1/2 z-50 flex w-full max-w-[390px] -translate-x-1/2 items-end justify-center bg-black/90">
+        <div className="fixed inset-0 z-50 flex w-full items-end justify-center bg-black/90">
           <div className="animate-sheet-up flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-t-3xl border-t-2 border-x-2 border-[#C9A227] bg-[#050505] text-white">
             {/* Header */}
             <div className="flex items-center justify-between border-b border-[#C9A227]/35 px-4 py-3.5">

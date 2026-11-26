@@ -304,8 +304,8 @@ export const QuranTeacherModal: React.FC<QuranTeacherModalProps> = ({
   if (!currentEntry) return null;
 
   return (
-    <div className="fixed inset-y-0 left-1/2 z-50 flex w-full max-w-[390px] -translate-x-1/2 items-center justify-center bg-black/90 p-2">
-      <div className="flex max-h-[94vh] w-full max-w-[390px] flex-col overflow-hidden rounded-3xl border-2 border-[#C9A227] bg-[#050505] text-white shadow-2xl">
+    <div className="fixed inset-0 z-50 flex w-full items-center justify-center bg-black/90 p-2">
+      <div className="flex max-h-[94vh] w-full flex-col overflow-hidden rounded-3xl border-2 border-[#C9A227] bg-[#050505] text-white shadow-2xl">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-[#C9A227]/30 bg-black px-5 py-4 text-white">
           <div>

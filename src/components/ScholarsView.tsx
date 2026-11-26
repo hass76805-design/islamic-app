@@ -1,4 +1,4 @@
-import React, {useMemo, useState} from 'react';
+import React, {useMemo, useRef, useState} from 'react';
 import {
   ArrowRight,
   Bookmark,
@@ -10,12 +10,14 @@ import {
   Search,
   Trash2,
   Video,
+  WifiOff,
 } from 'lucide-react';
 import lectureStageFallback from '../assets/images/islamic_lectures_stage_1795364723996.jpg';
 import {SCHOLARS_30} from '../data/scholarsData';
 import {useLocalStorage} from '../hooks/useLocalStorage';
 import {useOnlineStatus} from '../hooks/useOnlineStatus';
 import {ScholarProfile, ScholarVideo} from '../types';
+import {useHardwareBack} from '../utils/backNavigation';
 import {cacheImageUrl} from '../utils/offlineAudioCache';
 
 interface SavedOfflineLecture {
@@ -100,10 +102,31 @@ export const ScholarsView: React.FC = () => {
     return hits;
   }, [query]);
 
+  const listScrollRef = useRef(0);
+
+  const handleBackToList = () => {
+    setSelectedScholar(null);
+    setActiveVideo(null);
+    const targetTop = listScrollRef.current;
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        document
+          .getElementById('app-main-scroll')
+          ?.scrollTo({top: targetTop, behavior: 'auto'});
+      });
+    });
+  };
+
+  useHardwareBack(Boolean(selectedScholar), handleBackToList);
+
   const handleOpenScholar = (
     scholar: ScholarProfile,
     initialVideo?: ScholarVideo,
   ) => {
+    if (!selectedScholar) {
+      listScrollRef.current =
+        document.getElementById('app-main-scroll')?.scrollTop ?? 0;
+    }
     setSelectedScholar(scholar);
     setActiveVideo(initialVideo || scholar.videos[0] || null);
     document.getElementById('app-main-scroll')?.scrollTo({top: 0, behavior: 'auto'});
@@ -170,10 +193,7 @@ export const ScholarsView: React.FC = () => {
         <div className="flex items-center justify-between gap-2 rounded-2xl border-2 border-[#C9A227] bg-white p-2.5 dark:bg-[#050505]">
           <button
             type="button"
-            onClick={() => {
-              setSelectedScholar(null);
-              setActiveVideo(null);
-            }}
+            onClick={handleBackToList}
             className="inline-flex min-h-[44px] items-center gap-2 rounded-xl border border-[#C9A227]/60 bg-[#C9A227]/10 px-3 text-xs font-bold text-[#9A7415] dark:text-[#FCE38A]"
           >
             <ArrowRight className="h-4 w-4 shrink-0" />
@@ -465,6 +485,20 @@ export const ScholarsView: React.FC = () => {
             </p>
           </div>
         </div>
+
+        {!isOnline && (
+          <div className="mt-3 flex items-start gap-2.5 rounded-2xl border border-[#C9A227] bg-[#141004] p-3 text-xs leading-relaxed text-[#FCE38A]">
+            <WifiOff className="mt-0.5 h-4 w-4 shrink-0 text-[#C9A227]" />
+            <div>
+              <p className="font-extrabold">
+                يتطلب تشغيل فيديو المحاضرات اتصالاً بالإنترنت
+              </p>
+              <p className="mt-0.5 text-[11px] text-zinc-300">
+                يمكنك تصفح قائمة المشايخ والمفضلة المحفوظة، بينما باقي أقسام التطبيق العادية والمحمّلة تعمل بدون إنترنت بشكل طبيعي.
+              </p>
+            </div>
+          </div>
+        )}
 
         {/* Search across all 30 scholars and titles */}
         <div className="relative mt-3">

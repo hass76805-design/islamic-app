@@ -66,6 +66,7 @@ import {WhoIsAllahView} from './WhoIsAllahView';
 interface MoreViewProps {
   subPage: MoreSubPageId;
   onSelectSubPage: (sub: MoreSubPageId) => void;
+  onBack: () => void;
   storyCategory?: StoryCategoryId;
   now: Date;
   location: UserLocation;
@@ -143,6 +144,7 @@ const SUB_ITEMS: Array<{
 export const MoreView: React.FC<MoreViewProps> = ({
   subPage,
   onSelectSubPage,
+  onBack,
   storyCategory,
   now,
   location,
@@ -180,7 +182,9 @@ export const MoreView: React.FC<MoreViewProps> = ({
         >
           <button
             type="button"
-            onClick={() => onSelectSubPage(subPage === 'settings' ? 'menu' : 'settings')}
+            onClick={() =>
+              subPage === 'settings' ? onSelectSubPage('menu') : onBack()
+            }
             className={`inline-flex min-h-[42px] items-center gap-1.5 rounded-xl border border-[#C9A227] px-3 text-xs font-bold active:scale-95 ${
               forceBlackGold
                 ? 'bg-black text-[#F3D56B]'

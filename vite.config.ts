@@ -55,8 +55,8 @@ export default defineConfig(() => {
             'البرنامج الإسلامي الذهبي: القرآن الكريم، اختبر حفظك بالميكروفون، المؤذن الإلكتروني المتكامل، محاضرات 30 شيخًا، الأذكار، الفقه والمسابقة، وقصص الأنبياء والصحابة.',
           theme_color: '#000000',
           background_color: '#000000',
-          display: 'standalone',
-          display_override: ['standalone', 'minimal-ui'],
+          display: 'fullscreen',
+          display_override: ['fullscreen', 'standalone', 'minimal-ui'],
           orientation: 'portrait-primary',
           start_url: '/',
           scope: '/',
@@ -118,10 +118,9 @@ export default defineConfig(() => {
             {
               urlPattern: ({request, sameOrigin}) =>
                 sameOrigin && request.mode === 'navigate',
-              handler: 'NetworkFirst',
+              handler: 'StaleWhileRevalidate',
               options: {
                 cacheName: 'alzahabi-app-shell-v1',
-                networkTimeoutSeconds: 3,
                 cacheableResponse: {
                   statuses: [0, 200],
                 },

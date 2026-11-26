@@ -7,7 +7,7 @@ interface BackEntry {
 
 const backStack: BackEntry[] = [];
 let nextEntryId = 1;
-let ignoringNextPop = false;
+let ignorePopCount = 0;
 let initialized = false;
 let rootBackHandler: (() => boolean) | null = null;
 
@@ -26,8 +26,8 @@ function ensureInitialized() {
   }
 
   window.addEventListener('popstate', () => {
-    if (ignoringNextPop) {
-      ignoringNextPop = false;
+    if (ignorePopCount > 0) {
+      ignorePopCount -= 1;
       return;
     }
 
@@ -58,6 +58,23 @@ export function pushNavigationState(tag: string) {
   }
 }
 
+export function popHistoryEntrySilently() {
+  ensureInitialized();
+  if (typeof window === 'undefined') return;
+  try {
+    const st = window.history.state as {__alzahabiNav?: string} | null;
+    if (st && st.__alzahabiNav) {
+      ignorePopCount += 1;
+      window.history.back();
+      window.setTimeout(() => {
+        if (ignorePopCount > 0) ignorePopCount -= 1;
+      }, 300);
+    }
+  } catch {
+    // ignore
+  }
+}
+
 export function registerBackHandler(onBack: () => void): () => void {
   ensureInitialized();
   const id = nextEntryId++;
@@ -76,11 +93,11 @@ export function registerBackHandler(onBack: () => void): () => void {
       try {
         const st = window.history.state as {__alzahabiModal?: number} | null;
         if (st?.__alzahabiModal === id) {
-          ignoringNextPop = true;
+          ignorePopCount += 1;
           window.history.back();
           window.setTimeout(() => {
-            ignoringNextPop = false;
-          }, 120);
+            if (ignorePopCount > 0) ignorePopCount -= 1;
+          }, 300);
         }
       } catch {
         // ignore
