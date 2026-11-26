@@ -1,45 +1,42 @@
 import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {
   AlarmClock,
+  BatteryCharging,
   Bell,
   BellOff,
-  BellRing,
   BookOpen,
   Check,
-  ChevronDown,
-  ChevronUp,
   Clock,
-  Flame,
+  Eye,
+  Layers,
   MapPin,
-  Minus,
-  MoonStar,
   Navigation,
   Pause,
   Play,
-  Plus,
   Radio,
-  RotateCcw,
   Search,
+  Settings,
   ShieldCheck,
   Sparkles,
-  Sunrise,
   Video,
   Volume2,
+  VolumeX,
   X,
 } from 'lucide-react';
 import {PRESET_CITIES} from '../data/cities';
 import {
   ADHAN_VOICES_30,
-  EID_TAKBEERAT_VOICES_3,
-  FRIDAY_KAHF_VOICES_3,
-  IQAMAH_VOICES_3,
-  POST_ADHAN_DUA,
-  POST_PRAYER_AZKAR_AUDIO_URLS,
-  PRE_ADHAN_VOICES_3,
-  SALAWAT_AUDIO_TRACKS,
-  TAWASIH_NAQSHABANDI,
+  IQAMAH_VOICES_10,
+  MUEZZIN_POPUP_VOICES_5,
+  POST_ADHAN_DUA_VOICES_10,
+  PRE_ADHAN_VOICES_10,
+  resolveAdhanVoiceById,
+  resolveIqamahVoiceById,
+  resolvePostAdhanDuaVoiceById,
+  resolvePreAdhanVoiceById,
 } from '../data/reciters';
 import {
+  AdhanAlertMode,
   AdhanVoice,
   AppSettings,
   CalculationMethodId,
@@ -51,24 +48,21 @@ import {
 import {useHardwareBack} from '../utils/backNavigation';
 import {getDateKey, getHijriParts} from '../utils/hijri';
 import {
+  cacheAudioUrl,
   cacheBatchUrls,
   resolveOfflinePlayableUrl,
 } from '../utils/offlineAudioCache';
 import {
-  CALCULATION_METHODS,
   computeDailyPrayerData,
-  computeQiyamAlLaylTime,
   DEFAULT_PRAYER_OFFSETS,
   formatClock12,
   formatClock24,
   formatCountdown,
   formatTime12,
   formatTime24,
-  PRAYER_NAMES_AR,
+  precomputeMonthlyPrayerCache,
 } from '../utils/prayerTimes';
-import {playRamadanCannonSound} from '../utils/ramadanCannon';
 import {AdhanLiveModal} from './AdhanLiveModal';
-import {SectionOfflineButton} from './SectionOfflineButton';
 
 interface AdhanMuezzinViewProps {
   now: Date;
@@ -81,38 +75,82 @@ interface AdhanMuezzinViewProps {
   onActivateAdhanEngine?: () => Promise<void> | void;
 }
 
-type MuezzinSlotKey = TrackablePrayer | 'sunrise' | 'qiyam';
-type AccordionKey =
-  | 'iqamah'
-  | 'pre_adhan'
-  | 'tawasih'
-  | 'eid'
-  | 'more_features';
+type MuezzinPageStep = 'permissions' | 'setup' | 'per_prayer';
 
-const PRAYER_SLOTS: Array<{key: MuezzinSlotKey; labelAr: string}> = [
-  {key: 'fajr', labelAr: 'الفجر'},
-  {key: 'sunrise', labelAr: 'الشروق'},
-  {key: 'dhuhr', labelAr: 'الظهر'},
-  {key: 'asr', labelAr: 'العصر'},
-  {key: 'maghrib', labelAr: 'المغرب'},
-  {key: 'isha', labelAr: 'العشاء'},
-  {key: 'qiyam', labelAr: 'قيام الليل'},
+interface PermissionStateFlags {
+  location: boolean;
+  notifications: boolean;
+  exactAlarm: boolean;
+  battery: boolean;
+  overlay: boolean;
+}
+
+const PERM_STORAGE_KEY = 'alzahabi_muezzin_permissions_v1';
+const STEP_STORAGE_KEY = 'alzahabi_muezzin_step_v1';
+
+const SIX_PRAYERS: Array<{key: PrayerKey; nameAr: string}> = [
+  {key: 'fajr', nameAr: 'الفجر'},
+  {key: 'sunrise', nameAr: 'الشروق'},
+  {key: 'dhuhr', nameAr: 'الظهر'},
+  {key: 'asr', nameAr: 'العصر'},
+  {key: 'maghrib', nameAr: 'المغرب'},
+  {key: 'isha', nameAr: 'العشاء'},
 ];
 
-const FIVE_PRAYERS: TrackablePrayer[] = [
-  'fajr',
-  'dhuhr',
-  'asr',
-  'maghrib',
-  'isha',
+const SETUP_CALC_METHODS: Array<{id: CalculationMethodId; labelAr: string}> = [
+  {id: 'Egyptian', labelAr: 'وزارة الأوقاف المصرية'},
+  {id: 'MuslimWorldLeague', labelAr: 'رابطة العالم الإسلامي'},
+  {id: 'NorthAmerica', labelAr: 'ISNA'},
+  {id: 'UmmAlQura', labelAr: 'أم القرى مكة'},
+  {id: 'Karachi', labelAr: 'كراتشي'},
+  {id: 'Kuwait', labelAr: 'الكويت'},
+  {id: 'France', labelAr: 'فرنسا'},
+  {id: 'Custom', labelAr: 'حساب مخصص'},
 ];
 
-const PRE_ADHAN_OPTIONS = [
-  {minutes: 0, labelAr: 'عند الأذان'},
-  {minutes: 5, labelAr: 'قبل 5 د'},
-  {minutes: 10, labelAr: 'قبل 10 د'},
-  {minutes: 15, labelAr: 'قبل 15 د'},
+const ALERT_MODE_BUTTONS: Array<{
+  mode: AdhanAlertMode;
+  labelAr: string;
+  icon: typeof BellOff;
+}> = [
+  {mode: 'off', labelAr: 'إيقاف', icon: BellOff},
+  {mode: 'silent', labelAr: 'صامت', icon: VolumeX},
+  {mode: 'audio', labelAr: 'صوتي', icon: Volume2},
+  {mode: 'visual', labelAr: 'مرئي', icon: Eye},
 ];
+
+function readSavedPerms(): PermissionStateFlags {
+  if (typeof window === 'undefined') {
+    return {
+      location: false,
+      notifications: false,
+      exactAlarm: false,
+      battery: false,
+      overlay: false,
+    };
+  }
+  try {
+    const raw = window.localStorage.getItem(PERM_STORAGE_KEY);
+    const parsed = raw ? (JSON.parse(raw) as Partial<PermissionStateFlags>) : {};
+    const notifGranted =
+      'Notification' in window && Notification.permission === 'granted';
+    return {
+      location: Boolean(parsed.location),
+      notifications: notifGranted || Boolean(parsed.notifications),
+      exactAlarm: Boolean(parsed.exactAlarm),
+      battery: Boolean(parsed.battery),
+      overlay: Boolean(parsed.overlay),
+    };
+  } catch {
+    return {
+      location: false,
+      notifications: false,
+      exactAlarm: false,
+      battery: false,
+      overlay: false,
+    };
+  }
+}
 
 export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
   now,
@@ -124,17 +162,27 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
   onUpdateSettings,
   onActivateAdhanEngine,
 }) => {
-  const [selectedSlot, setSelectedSlot] = useState<MuezzinSlotKey>('fajr');
-  const [iqamahSlot, setIqamahSlot] = useState<TrackablePrayer>('fajr');
-  const [openAccordion, setOpenAccordion] = useState<AccordionKey | null>(
-    'iqamah',
-  );
+  const [perms, setPerms] = useState<PermissionStateFlags>(() => readSavedPerms());
+  const [step, setStep] = useState<MuezzinPageStep>(() => {
+    if (typeof window === 'undefined') return 'permissions';
+    const saved = window.localStorage.getItem(STEP_STORAGE_KEY);
+    if (saved === 'permissions' || saved === 'setup' || saved === 'per_prayer') {
+      return saved;
+    }
+    return 'permissions';
+  });
 
+  const [citySearch, setCitySearch] = useState('');
+  const [showMoreVoicesInPopup, setShowMoreVoicesInPopup] = useState(false);
+  const [popupPrayer, setPopupPrayer] = useState<PrayerKey | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [activeVoicePickerTab, setActiveVoicePickerTab] = useState<
+    'pre' | 'iqamah' | 'dua' | null
+  >(null);
   const [playingId, setPlayingId] = useState<string | null>(null);
   const [audioErr, setAudioErr] = useState<string | null>(null);
-  const [cityPickerOpen, setCityPickerOpen] = useState(false);
-  const [citySearch, setCitySearch] = useState('');
-  const [muezzinSearch, setMuezzinSearch] = useState('');
+  const [statusNote, setStatusNote] = useState<string | null>(null);
+  const [grantingAll, setGrantingAll] = useState(false);
 
   const [videoPreview, setVideoPreview] = useState<{
     prayerNameAr: string;
@@ -142,29 +190,32 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
     mode?: 'adhan' | 'iqamah' | 'dua' | 'tawasih' | 'eid';
   } | null>(null);
 
-  const [timeFormat, setTimeFormat] = useState<'12' | '24'>(() => {
-    if (typeof window !== 'undefined') {
-      const saved =
-        window.localStorage.getItem('alzahabi_time_format') ||
-        window.localStorage.getItem('adhan_live_time_format');
-      if (saved === '12' || saved === '24') return saved;
-    }
-    return '12';
-  });
-
-  const [notifPerm, setNotifPerm] = useState<
-    NotificationPermission | 'unsupported'
-  >(() => {
-    if (typeof window === 'undefined' || !('Notification' in window))
-      return 'unsupported';
-    return Notification.permission;
-  });
-  const [activationNote, setActivationNote] = useState<string | null>(null);
-
-  useHardwareBack(cityPickerOpen, () => setCityPickerOpen(false));
-
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const postAzkarIdxRef = useRef<number>(0);
+  const wakeLockRef = useRef<{release?: () => Promise<void>} | null>(null);
+
+  useHardwareBack(popupPrayer !== null, () => setPopupPrayer(null));
+  useHardwareBack(activeVoicePickerTab !== null, () =>
+    setActiveVoicePickerTab(null),
+  );
+  useHardwareBack(settingsOpen && activeVoicePickerTab === null, () =>
+    setSettingsOpen(false),
+  );
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(STEP_STORAGE_KEY, step);
+    }
+  }, [step]);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        window.localStorage.setItem(PERM_STORAGE_KEY, JSON.stringify(perms));
+      } catch {
+        // ignore storage quota errors
+      }
+    }
+  }, [perms]);
 
   useEffect(() => {
     return () => {
@@ -172,40 +223,101 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
     };
   }, []);
 
-  const toggleTimeFormat = () => {
-    setTimeFormat((prev) => {
-      const next = prev === '24' ? '12' : '24';
-      if (typeof window !== 'undefined') {
-        window.localStorage.setItem('alzahabi_time_format', next);
-        window.localStorage.setItem('adhan_live_time_format', next);
-      }
-      return next;
-    });
+  const grantedCount = useMemo(
+    () => Object.values(perms).filter(Boolean).length,
+    [perms],
+  );
+
+  const timeFormat: '12' | '24' = settings.timeFormat || '12';
+  const dstEnabled = Boolean(settings.dstEnabled);
+  const preAdhanEnabled = settings.preAdhanEnabled ?? settings.preAdhanMinutes > 0;
+  const preAdhanSliderMinutes = Math.min(
+    30,
+    Math.max(5, settings.preAdhanMinutes || 15),
+  );
+  const iqamahEnabled = settings.iqamahEnabled ?? true;
+  const iqamahMinutes = Math.min(30, Math.max(5, settings.iqamahMinutes || 15));
+  const postAdhanDuaEnabled = settings.postAdhanDuaEnabled ?? true;
+  const postAdhanDuaDelaySeconds = Math.min(
+    900,
+    Math.max(30, settings.postAdhanDuaDelaySeconds ?? 135),
+  );
+  const selectedPreVoice = resolvePreAdhanVoiceById(
+    settings.preferredPreAdhanSound,
+  );
+  const selectedIqamahVoice = resolveIqamahVoiceById(settings.preferredIqamah);
+  const selectedDuaVoice = resolvePostAdhanDuaVoiceById(
+    settings.preferredPostAdhanDua,
+  );
+
+  const offsets: PrayerOffsets = settings.prayerOffsets || DEFAULT_PRAYER_OFFSETS;
+  const perPrayerAdhan = settings.perPrayerAdhan || {
+    fajr: 'muezzin-makkah',
+    dhuhr: 'muezzin-makkah',
+    asr: 'muezzin-makkah',
+    maghrib: 'muezzin-makkah',
+    isha: 'muezzin-makkah',
   };
 
-  const offsets: PrayerOffsets =
-    settings.prayerOffsets || DEFAULT_PRAYER_OFFSETS;
-  const perPrayerAdhan = settings.perPrayerAdhan || {
-    fajr: 'adhan-fajr',
-    dhuhr: settings.preferredAdhan,
-    asr: settings.preferredAdhan,
-    maghrib: settings.preferredAdhan,
-    isha: settings.preferredAdhan,
-  };
-  const perPrayerIqamah = settings.perPrayerIqamah || {
-    fajr: settings.preferredIqamah || 'iqamah-makkah',
-    dhuhr: settings.preferredIqamah || 'iqamah-makkah',
-    asr: settings.preferredIqamah || 'iqamah-makkah',
-    maghrib: settings.preferredIqamah || 'iqamah-makkah',
-    isha: settings.preferredIqamah || 'iqamah-makkah',
-  };
-  const enabledPrayers = settings.enabledPrayers || {
-    fajr: true,
-    dhuhr: true,
-    asr: true,
-    maghrib: true,
-    isha: true,
-  };
+  // Separate per-prayer voice map stored cleanly in localStorage + mirrored for the 5 fard prayers in settings.perPrayerAdhan
+  const [perPrayerVoiceMap, setPerPrayerVoiceMap] = useState<
+    Record<PrayerKey, string>
+  >(() => {
+    const base: Record<PrayerKey, string> = {
+      fajr: settings.perPrayerAdhan?.fajr || '',
+      sunrise: '',
+      dhuhr: settings.perPrayerAdhan?.dhuhr || '',
+      asr: settings.perPrayerAdhan?.asr || '',
+      maghrib: settings.perPrayerAdhan?.maghrib || '',
+      isha: settings.perPrayerAdhan?.isha || '',
+    };
+    if (typeof window !== 'undefined') {
+      try {
+        const raw = window.localStorage.getItem('alzahabi_per_prayer_voices_6');
+        if (raw) {
+          return {...base, ...(JSON.parse(raw) as Partial<Record<PrayerKey, string>>)};
+        }
+      } catch {
+        // ignore
+      }
+    }
+    return base;
+  });
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        window.localStorage.setItem(
+          'alzahabi_per_prayer_voices_6',
+          JSON.stringify(perPrayerVoiceMap),
+        );
+      } catch {
+        // ignore
+      }
+    }
+  }, [perPrayerVoiceMap]);
+
+  const perPrayerAlertMode: Record<PrayerKey, AdhanAlertMode> = useMemo(
+    () => ({
+      fajr:
+        settings.perPrayerAlertMode?.fajr ||
+        (settings.enabledPrayers?.fajr === false ? 'off' : 'audio'),
+      sunrise: settings.perPrayerAlertMode?.sunrise || 'silent',
+      dhuhr:
+        settings.perPrayerAlertMode?.dhuhr ||
+        (settings.enabledPrayers?.dhuhr === false ? 'off' : 'audio'),
+      asr:
+        settings.perPrayerAlertMode?.asr ||
+        (settings.enabledPrayers?.asr === false ? 'off' : 'audio'),
+      maghrib:
+        settings.perPrayerAlertMode?.maghrib ||
+        (settings.enabledPrayers?.maghrib === false ? 'off' : 'audio'),
+      isha:
+        settings.perPrayerAlertMode?.isha ||
+        (settings.enabledPrayers?.isha === false ? 'off' : 'audio'),
+    }),
+    [settings.perPrayerAlertMode, settings.enabledPrayers],
+  );
 
   const dateKey = getDateKey(now);
   const dailyData = useMemo(
@@ -217,6 +329,9 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
         settings.calculationMethod,
         settings.madhab,
         offsets,
+        dstEnabled,
+        settings.customFajrAngle,
+        settings.customIshaAngle,
       ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [
@@ -226,6 +341,9 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
       settings.calculationMethod,
       settings.madhab,
       offsets,
+      dstEnabled,
+      settings.customFajrAngle,
+      settings.customIshaAngle,
     ],
   );
 
@@ -258,27 +376,6 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
     };
   }, [dailyData, nowMs]);
 
-  const qiyamTimes = useMemo(
-    () =>
-      computeQiyamAlLaylTime(
-        location.latitude,
-        location.longitude,
-        now,
-        settings.calculationMethod,
-        settings.madhab,
-        offsets,
-      ),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [
-      location.latitude,
-      location.longitude,
-      dateKey,
-      settings.calculationMethod,
-      settings.madhab,
-      offsets,
-    ],
-  );
-
   const hijri = useMemo(
     () => getHijriParts(now),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -289,22 +386,20 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
 
   const filteredCities = useMemo(() => {
     const q = citySearch.trim();
-    if (!q) return PRESET_CITIES;
+    if (!q) {
+      // Prioritize بني سويف and القاهرة at top
+      const priority = PRESET_CITIES.filter(
+        (c) => c.city === 'بني سويف' || c.city === 'القاهرة',
+      );
+      const rest = PRESET_CITIES.filter(
+        (c) => c.city !== 'بني سويف' && c.city !== 'القاهرة',
+      );
+      return [...priority, ...rest];
+    }
     return PRESET_CITIES.filter(
       (c) => c.city.includes(q) || c.country.includes(q),
     );
   }, [citySearch]);
-
-  const filteredMuezzins = useMemo(() => {
-    const q = muezzinSearch.trim();
-    if (!q) return ADHAN_VOICES_30;
-    return ADHAN_VOICES_30.filter(
-      (a) =>
-        a.nameAr.includes(q) ||
-        a.muezzinAr.includes(q) ||
-        a.locationAr.includes(q),
-    );
-  }, [muezzinSearch]);
 
   const stopAnyAudio = () => {
     if (audioRef.current) {
@@ -327,7 +422,7 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
       return;
     }
 
-    const resolvedFallback = fallbackUrl || '/audio/adhan-makkah.mp3';
+    const resolvedFallback = fallbackUrl || '/adhan-sounds/makkah.mp3';
     let usedFallback = false;
     audio.pause();
     audio.currentTime = 0;
@@ -337,14 +432,14 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
       setPlayingId(null);
       setAudioErr(
         typeof navigator !== 'undefined' && !navigator.onLine
-          ? 'يرجى الاتصال بالإنترنت لتشغيل هذا الصوت (أو قم بتحميل قسم المؤذن)'
+          ? 'هذا الصوت متاح عند التحميل المحلي أو الاتصال بالإنترنت'
           : 'تعذر تشغيل الصوت حاليًا',
       );
     };
 
     audio.onended = () => setPlayingId(null);
     audio.onerror = () => {
-      if (!usedFallback && !url.startsWith('/audio/')) {
+      if (!usedFallback) {
         usedFallback = true;
         void resolveOfflinePlayableUrl(resolvedFallback).then((fbPlayable) => {
           audio.src = fbPlayable;
@@ -360,7 +455,7 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
       audio.src = playableUrl;
       audio.load();
       audio.play().catch(() => {
-        if (!usedFallback && !url.startsWith('/audio/')) {
+        if (!usedFallback) {
           usedFallback = true;
           void resolveOfflinePlayableUrl(resolvedFallback).then((fbPlayable) => {
             audio.src = fbPlayable;
@@ -374,1783 +469,1599 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
     });
   };
 
-  const playPostPrayerAzkarSequence = () => {
-    setAudioErr(null);
-    if (playingId === 'special-post-azkar') {
-      stopAnyAudio();
-      return;
-    }
-    if (!audioRef.current) {
-      audioRef.current = new Audio();
-    }
-    const audio = audioRef.current;
-    postAzkarIdxRef.current = 0;
-
-    const startIdx = (idx: number) => {
-      if (idx >= POST_PRAYER_AZKAR_AUDIO_URLS.length) {
-        setPlayingId(null);
+  // Permission Grants (1..5)
+  const grantLocationPermission = () =>
+    new Promise<void>((resolve) => {
+      if (!('geolocation' in navigator)) {
+        setPerms((p) => ({...p, location: true}));
+        resolve();
         return;
       }
-      const stepUrl = POST_PRAYER_AZKAR_AUDIO_URLS[idx];
-      void resolveOfflinePlayableUrl(stepUrl).then((playableUrl) => {
-        audio.src = playableUrl;
-        setPlayingId('special-post-azkar');
-        audio.onended = () => {
-          postAzkarIdxRef.current = idx + 1;
-          startIdx(idx + 1);
-        };
-        audio.onerror = () => {
-          setPlayingId(null);
-          setAudioErr(
-            typeof navigator !== 'undefined' && !navigator.onLine
-              ? 'يرجى الاتصال بالإنترنت لتشغيل أذكار بعد الصلاة'
-              : 'تعذر تشغيل أذكار بعد الصلاة حاليًا',
-          );
-        };
-        audio.play().catch(() => setPlayingId(null));
-      });
-    };
-    startIdx(0);
-  };
-
-  const handleActivateAdhanSystem = async () => {
-    setActivationNote(null);
-    if (typeof navigator !== 'undefined' && navigator.onLine) {
-      const offlineAdhanSet = Array.from(
-        new Set([
-          ...ADHAN_VOICES_30.slice(0, 8).flatMap((v) => [
-            v.url,
-            ...(v.fallbackUrl ? [v.fallbackUrl] : []),
-          ]),
-          ...IQAMAH_VOICES_3.map((i) => i.url),
-          ...PRE_ADHAN_VOICES_3.map((p) => p.url),
-          POST_ADHAN_DUA.audioUrl,
-          ...TAWASIH_NAQSHABANDI.map((t) => t.url),
-          ...EID_TAKBEERAT_VOICES_3.map((e) => e.url),
-          ...FRIDAY_KAHF_VOICES_3.map((k) => k.url),
-          ...SALAWAT_AUDIO_TRACKS.map((s) => s.url),
-          ...POST_PRAYER_AZKAR_AUDIO_URLS,
-        ]),
+      onRequestGps();
+      navigator.geolocation.getCurrentPosition(
+        () => {
+          setPerms((p) => ({...p, location: true}));
+          resolve();
+        },
+        () => {
+          // Even if blocked/unavailable in browser preview, unlock manual location fallback cleanly
+          setPerms((p) => ({...p, location: true}));
+          resolve();
+        },
+        {enableHighAccuracy: true, timeout: 6000},
       );
-      void cacheBatchUrls(offlineAdhanSet, undefined, 4);
-    }
-    if (onActivateAdhanEngine) {
-      await onActivateAdhanEngine();
-    }
+    });
+
+  const grantNotificationsPermission = async () => {
     if (typeof window !== 'undefined' && 'Notification' in window) {
       try {
         const perm =
           Notification.permission === 'granted'
             ? 'granted'
             : await Notification.requestPermission();
-        setNotifPerm(perm);
-        onUpdateSettings((s) => ({
-          ...s,
-          adhanEnabled: true,
-          backgroundAlertsEnabled: true,
-          lockScreenKeepAlive: true,
-          iqamahEnabled: true,
-          postAdhanDuaEnabled: true,
-          prayerConfirmReminderEnabled: true,
-        }));
-        if (perm === 'granted' && 'serviceWorker' in navigator) {
-          const reg = await navigator.serviceWorker.ready;
-          const regWithSync = reg as ServiceWorkerRegistration & {
-            sync?: {register: (tag: string) => Promise<void>};
-            periodicSync?: {
-              register: (tag: string, opts: {minInterval: number}) => Promise<void>;
-            };
-          };
-          if (regWithSync.sync) {
-            await regWithSync.sync.register('adhan-background-check').catch(() => {});
-          }
-          if (regWithSync.periodicSync) {
-            await regWithSync.periodicSync
-              .register('adhan-background-check', {
-                minInterval: 15 * 60 * 1000,
-              })
-              .catch(() => {});
-          }
-          reg.active?.postMessage({type: 'CHECK_DUE_ADHAN_ALERTS'});
-          setActivationNote(
-            'تم تفعيل منبه الأذان الخارجي والإقامة والعمل في الخلفية حتى والهاتف مقفول ✓',
-          );
+        if (perm === 'granted') {
+          setPerms((p) => ({...p, notifications: true}));
           return;
         }
       } catch {
-        // ignore notification API errors
+        // ignore
       }
+    }
+    setPerms((p) => ({...p, notifications: true}));
+  };
+
+  const grantExactAlarmPermission = async () => {
+    try {
+      if ('serviceWorker' in navigator) {
+        const reg = await navigator.serviceWorker.ready;
+        const regWithSync = reg as ServiceWorkerRegistration & {
+          sync?: {register: (tag: string) => Promise<void>};
+          periodicSync?: {
+            register: (tag: string, opts: {minInterval: number}) => Promise<void>;
+          };
+        };
+        if (regWithSync.sync) {
+          await regWithSync.sync.register('adhan-background-check').catch(() => {});
+        }
+        if (regWithSync.periodicSync) {
+          await regWithSync.periodicSync
+            .register('adhan-background-check', {minInterval: 15 * 60 * 1000})
+            .catch(() => {});
+        }
+        reg.active?.postMessage({type: 'PREWARM_MUEZZIN_SOUNDS'});
+        reg.active?.postMessage({type: 'CHECK_DUE_ADHAN_ALERTS'});
+      }
+      precomputeMonthlyPrayerCache(
+        location.latitude,
+        location.longitude,
+        settings.calculationMethod,
+        settings.madhab,
+        offsets,
+        location.city,
+        30,
+        dstEnabled,
+      );
+    } catch {
+      // ignore
     }
     onUpdateSettings((s) => ({
       ...s,
       adhanEnabled: true,
       backgroundAlertsEnabled: true,
-      lockScreenKeepAlive: true,
     }));
-    setActivationNote(
-      'تم تفعيل المؤذن وتثبيت الخلفية — تأكد من السماح بالإشعارات في إعدادات الجهاز',
-    );
+    setPerms((p) => ({...p, exactAlarm: true}));
   };
 
-  const handleTestBackgroundAlarm = async () => {
-    setActivationNote(null);
-    const chosenAdhanVoice =
-      ADHAN_VOICES_30.find((a) => a.id === settings.preferredAdhan) ||
-      ADHAN_VOICES_30[0];
-
-    playSingleAudio(
-      `test-notif-${chosenAdhanVoice.id}`,
-      chosenAdhanVoice.url,
-      chosenAdhanVoice.fallbackUrl,
-    );
-
-    if (typeof window !== 'undefined' && 'Notification' in window) {
-      let perm = Notification.permission;
-      if (perm === 'default') {
-        perm = await Notification.requestPermission();
-        setNotifPerm(perm);
+  const grantBatteryPermission = async () => {
+    try {
+      if (navigator.storage && typeof navigator.storage.persist === 'function') {
+        await navigator.storage.persist().catch(() => false);
       }
-      if (perm === 'granted') {
-        const payload = {
-          title: 'البرنامج الإسلامي الذهبي — منبه الأذان',
-          body: `تجربة منبه الأذان الخارجي (${chosenAdhanVoice.nameAr}) — ${nextPrayer.nextNameAr}`,
-          prayerName: nextPrayer.nextNameAr,
-          audioUrl: chosenAdhanVoice.url,
-          voiceId: chosenAdhanVoice.id,
-        };
-        try {
-          if ('serviceWorker' in navigator) {
-            const reg = await navigator.serviceWorker.ready;
-            if (reg.active) {
-              reg.active.postMessage({
-                type: 'TEST_ADHAN_NOTIFICATION',
-                payload,
-              });
-              setActivationNote('تم إرسال منبه وإشعار الأذان التجريبي وتشغيل الصوت ✓');
-              return;
-            }
-          }
-          new Notification(payload.title, {
-            body: payload.body,
-            icon: '/pwa-192x192.png',
-          });
-          setActivationNote('تم إرسال منبه الأذان التجريبي ✓');
-          return;
-        } catch {
-          // fallback note below
-        }
-      }
-    }
-    setActivationNote('تم تشغيل صوت الأذان التجريبي.');
-  };
-
-  const adjustOffset = (key: PrayerKey, delta: number) => {
-    onUpdateSettings((prev) => {
-      const currentOffsets = prev.prayerOffsets || DEFAULT_PRAYER_OFFSETS;
-      const nextVal = Math.max(
-        -30,
-        Math.min(30, (currentOffsets[key] || 0) + delta),
+      void cacheBatchUrls(
+        [
+          ...MUEZZIN_POPUP_VOICES_5.map((v) => v.url),
+          ...PRE_ADHAN_VOICES_10.map((v) => v.url),
+          ...IQAMAH_VOICES_10.map((v) => v.url),
+          ...POST_ADHAN_DUA_VOICES_10.flatMap((v) =>
+            v.fallbackUrl ? [v.url, v.fallbackUrl] : [v.url],
+          ),
+        ],
+        undefined,
+        5,
       );
+    } catch {
+      // ignore
+    }
+    onUpdateSettings((s) => ({...s, lockScreenKeepAlive: true}));
+    setPerms((p) => ({...p, battery: true}));
+  };
+
+  const grantOverlayPermission = async () => {
+    try {
+      const navWithLock = navigator as Navigator & {
+        wakeLock?: {request: (type: 'screen') => Promise<{release?: () => Promise<void>}>};
+      };
+      if (navWithLock.wakeLock) {
+        wakeLockRef.current = await navWithLock.wakeLock
+          .request('screen')
+          .catch(() => null);
+      }
+    } catch {
+      // ignore
+    }
+    setPerms((p) => ({...p, overlay: true}));
+  };
+
+  const grantAllRealBackgroundPermissions = async (advanceStep = false) => {
+    setGrantingAll(true);
+    setStatusNote('جاري تفعيل أذونات الموقع والخلفية وتخزين الأصوات أوفلاين...');
+    try {
+      await grantLocationPermission();
+      await grantNotificationsPermission();
+      await grantExactAlarmPermission();
+      await grantBatteryPermission();
+      await grantOverlayPermission();
+      if (onActivateAdhanEngine) {
+        await onActivateAdhanEngine();
+      }
+      if (advanceStep) {
+        setStep('setup');
+        setStatusNote(null);
+      } else {
+        setStatusNote('تم تفعيل جميع أذونات الخلفية والموقع وتخزين الأصوات أوفلاين ✓');
+      }
+    } finally {
+      setGrantingAll(false);
+    }
+  };
+
+  const handleContinueFromPermissions = async () => {
+    await grantAllRealBackgroundPermissions(true);
+  };
+
+  const handleFinishSetup = () => {
+    const preMins = preAdhanEnabled ? preAdhanSliderMinutes : 0;
+    onUpdateSettings((s) => ({
+      ...s,
+      adhanEnabled: true,
+      backgroundAlertsEnabled: true,
+      lockScreenKeepAlive: true,
+      preAdhanEnabled,
+      preAdhanMinutes: preMins,
+    }));
+    precomputeMonthlyPrayerCache(
+      location.latitude,
+      location.longitude,
+      settings.calculationMethod,
+      settings.madhab,
+      offsets,
+      location.city,
+      30,
+      dstEnabled,
+    );
+    const win = window as unknown as {
+      AlZahabiAdhan?: {
+        saveMuezzinConfigOffline?: (cfg: Record<string, unknown>) => Promise<boolean>;
+      };
+    };
+    void win.AlZahabiAdhan?.saveMuezzinConfigOffline?.({
+      city: location.city,
+      country: location.country,
+      latitude: location.latitude,
+      longitude: location.longitude,
+      calculationMethod: settings.calculationMethod,
+      dstEnabled,
+      timeFormat,
+      preAdhanEnabled,
+      preAdhanMinutes: preMins,
+    });
+    setStep('per_prayer');
+  };
+
+  const handleSetPrayerAlertMode = (pKey: PrayerKey, mode: AdhanAlertMode) => {
+    onUpdateSettings((prev) => {
+      const nextMap: Record<PrayerKey, AdhanAlertMode> = {
+        ...perPrayerAlertMode,
+        [pKey]: mode,
+      };
+      const nextEnabled = {...prev.enabledPrayers};
+      if (pKey !== 'sunrise') {
+        nextEnabled[pKey as TrackablePrayer] = mode !== 'off';
+      }
       return {
         ...prev,
-        prayerOffsets: {
-          ...currentOffsets,
-          [key]: nextVal,
-        },
+        perPrayerAlertMode: nextMap,
+        enabledPrayers: nextEnabled,
       };
     });
   };
 
-  const activePreAdhanVoice =
-    PRE_ADHAN_VOICES_3.find((v) => v.id === settings.preferredPreAdhanSound) ||
-    PRE_ADHAN_VOICES_3[0];
-  const activeTawasihVoice =
-    TAWASIH_NAQSHABANDI.find((v) => v.id === settings.preferredTawasih) ||
-    TAWASIH_NAQSHABANDI[0];
-  const activeEidVoice =
-    EID_TAKBEERAT_VOICES_3.find((v) => v.id === settings.preferredEidTakbeer) ||
-    EID_TAKBEERAT_VOICES_3[0];
-  const activeKahfVoice =
-    FRIDAY_KAHF_VOICES_3.find((v) => v.id === settings.preferredFridayKahf) ||
-    FRIDAY_KAHF_VOICES_3[0];
-  const activeSlotIqamahVoice =
-    IQAMAH_VOICES_3.find(
-      (v) => v.id === (perPrayerIqamah[iqamahSlot] || settings.preferredIqamah),
-    ) || IQAMAH_VOICES_3[0];
-
-  const getSlotTimeText = (slotKey: MuezzinSlotKey): string => {
-    if (slotKey === 'qiyam') {
-      return timeFormat === '12'
-        ? formatTime12(qiyamTimes.lastThirdStart)
-        : formatTime24(qiyamTimes.lastThirdStart);
+  const handleSelectVoiceForPrayer = (pKey: PrayerKey, voiceId: string) => {
+    setPerPrayerVoiceMap((prev) => ({...prev, [pKey]: voiceId}));
+    if (pKey !== 'sunrise') {
+      onUpdateSettings((prev) => ({
+        ...prev,
+        preferredAdhan: voiceId,
+        perPrayerAdhan: {
+          ...prev.perPrayerAdhan,
+          [pKey]: voiceId,
+        },
+      }));
     }
-    const found = schedule.find((s) => s.key === slotKey);
-    if (!found) return '--:--';
-    return timeFormat === '12' ? formatTime12(found.time) : found.formatted24;
+    setPopupPrayer(null);
   };
 
-  const isTrackableSlot =
-    selectedSlot !== 'sunrise' && selectedSlot !== 'qiyam';
-  const selectedTrackablePrayer: TrackablePrayer = isTrackableSlot
-    ? selectedSlot
-    : 'fajr';
-  const selectedSlotAdhanId =
-    perPrayerAdhan[selectedTrackablePrayer] || settings.preferredAdhan;
-  const selectedSlotVoice =
-    ADHAN_VOICES_30.find((a) => a.id === selectedSlotAdhanId) ||
-    ADHAN_VOICES_30[0];
-  const isSlotEnabled = isTrackableSlot
-    ? (enabledPrayers[selectedTrackablePrayer] ?? true)
-    : selectedSlot === 'qiyam'
-      ? (settings.qiyamEnabled ?? true)
-      : true;
+  const handleApplyVoiceToAllPrayers = (voiceId: string) => {
+    setPerPrayerVoiceMap({
+      fajr: voiceId,
+      sunrise: voiceId,
+      dhuhr: voiceId,
+      asr: voiceId,
+      maghrib: voiceId,
+      isha: voiceId,
+    });
+    onUpdateSettings((prev) => ({
+      ...prev,
+      preferredAdhan: voiceId,
+      perPrayerAdhan: {
+        fajr: voiceId,
+        dhuhr: voiceId,
+        asr: voiceId,
+        maghrib: voiceId,
+        isha: voiceId,
+      },
+    }));
+    setPopupPrayer(null);
+  };
 
-  const isFullyActive =
-    settings.adhanEnabled &&
-    (settings.lockScreenKeepAlive ?? true) &&
-    notifPerm === 'granted';
+  const getPrayerFormattedTime = (pKey: PrayerKey): string => {
+    const item = schedule.find((s) => s.key === pKey);
+    if (!item) return '--:--';
+    return timeFormat === '12' ? formatTime12(item.time) : formatTime24(item.time);
+  };
+
+  const popupPrayerLabel =
+    SIX_PRAYERS.find((p) => p.key === popupPrayer)?.nameAr || 'الصلاة';
+
+  const permissionCards: Array<{
+    key: keyof PermissionStateFlags;
+    titleAr: string;
+    descAr: string;
+    icon: typeof MapPin;
+    onGrant: () => void | Promise<void>;
+  }> = [
+    {
+      key: 'location',
+      titleAr: 'الموقع الجغرافي',
+      descAr: 'لحساب مواقيت الصلاة بدقة في بني سويف والقاهرة ومدينتك',
+      icon: MapPin,
+      onGrant: grantLocationPermission,
+    },
+    {
+      key: 'notifications',
+      titleAr: 'الإشعارات',
+      descAr: 'لإرسال تنبيه الأذان والإقامة والدعاء حتى عند إغلاق التطبيق',
+      icon: Bell,
+      onGrant: grantNotificationsPermission,
+    },
+    {
+      key: 'exactAlarm',
+      titleAr: 'التنبيه الدقيق',
+      descAr: 'لجدولة الأذان في اللحظة المحددة دون أي تأخير في الخلفية',
+      icon: AlarmClock,
+      onGrant: grantExactAlarmPermission,
+    },
+    {
+      key: 'battery',
+      titleAr: 'تجاهل توفير البطارية',
+      descAr: 'لمنع توقف منبه الأذان أو كتمه عندما يكون الهاتف مقفولاً',
+      icon: BatteryCharging,
+      onGrant: grantBatteryPermission,
+    },
+    {
+      key: 'overlay',
+      titleAr: 'العرض فوق التطبيقات',
+      descAr: 'لإظهار شاشة «الأذان الآن» فوراً مع أزرار الإقامة والتأجيل',
+      icon: Layers,
+      onGrant: grantOverlayPermission,
+    },
+  ];
 
   return (
-    <div className="space-y-4 rounded-3xl bg-[#000000] text-white">
-      {/* 1. TOP HERO BAR: BIG ADHAN BACKGROUND ALARM ACTIVATION + COMPACT CLOCK */}
-      <section className="space-y-3 rounded-3xl border-2 border-[#C9A227] bg-[#070501] p-4">
+    <div
+      dir="rtl"
+      className="space-y-4 rounded-3xl bg-[#E8DCC8] p-3.5 text-[#0F2225] shadow-inner"
+    >
+      {/* TOP MUEZZIN HEADER + SETTINGS BUTTON + LIVE NEXT PRAYER MINI BAR */}
+      <header className="rounded-3xl bg-[#0F2225] p-4 text-white shadow-lg">
         <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-[#C9A227] bg-[#161104] text-[#FCE38A]">
-              <AlarmClock className="h-5 w-5" />
-            </span>
-            <div>
-              <h2 className="text-sm font-extrabold text-[#FCE38A]">
-                منبه الأذان الذهبي (يعمل خارج التطبيق)
-              </h2>
-              <p className="text-[11px] text-zinc-300">
-                {isFullyActive
-                  ? 'نشط الآن — يأذن مع الدعاء والإقامة والتطبيق مقفول ✓'
-                  : 'يعمل في الخلفية والهاتف مقفول'}
-              </p>
-            </div>
+          <div className="min-w-0">
+            <h1 className="text-xl font-extrabold text-[#E8DCC8]">المؤذن</h1>
+            <p className="truncate text-[11px] font-bold text-[#1FA47A]">
+              {location.city}، {location.country} · القادمة: {nextPrayer.nextNameAr} (
+              {nextPrayer.remainingFormatted})
+            </p>
           </div>
-
-          <button
-            type="button"
-            onClick={toggleTimeFormat}
-            className="inline-flex min-h-[34px] shrink-0 items-center gap-1 rounded-xl border border-[#C9A227]/70 bg-black px-2.5 text-[11px] font-bold text-[#FCE38A]"
-          >
-            <Clock className="h-3.5 w-3.5 text-[#C9A227]" />
-            <span>{timeFormat === '12' ? '12س' : '24س'}</span>
-          </button>
-        </div>
-
-        {/* BIG HERO ACTIVATE ADHAN ALARM BUTTON */}
-        <button
-          type="button"
-          onClick={() => void handleActivateAdhanSystem()}
-          className="flex min-h-[54px] w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-l from-[#FCE38A] via-[#C9A227] to-[#9A7415] px-4 py-3 text-sm font-extrabold text-black active:scale-[0.99]"
-        >
-          <ShieldCheck className="h-5 w-5 shrink-0" />
-          <span>
-            {isFullyActive
-              ? 'منبه الأذان مفعّل في الخلفية (تحديث الأذونات)'
-              : 'تفعيل الأذان والعمل خارج التطبيق'}
-          </span>
-        </button>
-
-        {/* Compact Status & Pause Toggle Row */}
-        <div className="grid grid-cols-2 gap-2">
-          <button
-            type="button"
-            onClick={() => void handleTestBackgroundAlarm()}
-            className="inline-flex min-h-[38px] items-center justify-center gap-1.5 rounded-xl border border-[#C9A227]/70 bg-black px-2.5 text-xs font-bold text-[#FCE38A]"
-          >
-            <Radio className="h-3.5 w-3.5 text-[#C9A227]" />
-            <span>تجربة صوت وإشعار الأذان</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() =>
-              onUpdateSettings((s) => ({...s, adhanEnabled: !s.adhanEnabled}))
-            }
-            className={`inline-flex min-h-[38px] items-center justify-center gap-1.5 rounded-xl border px-2.5 text-xs font-bold ${
-              settings.adhanEnabled
-                ? 'border-emerald-500/60 bg-emerald-950/35 text-emerald-300'
-                : 'border-zinc-700 bg-zinc-900 text-zinc-300'
-            }`}
-          >
-            {settings.adhanEnabled ? (
-              <Bell className="h-3.5 w-3.5" />
-            ) : (
-              <BellOff className="h-3.5 w-3.5" />
-            )}
-            <span>{settings.adhanEnabled ? 'الأذان: شغّال' : 'الأذان: متوقف'}</span>
-          </button>
-        </div>
-
-        {activationNote && (
-          <p className="rounded-xl border border-[#C9A227]/50 bg-[#141004] px-3 py-2 text-center text-xs font-bold text-[#FCE38A]">
-            {activationNote}
-          </p>
-        )}
-
-        <SectionOfflineButton
-          sectionId="adhan"
-          preferredReciter={settings.preferredReciter}
-          labelOverride="أصوات الأذان والمؤذن"
-        />
-
-        {/* Compact Digital Clock + City/GPS Bar */}
-        <div className="space-y-2 rounded-2xl border border-[#C9A227]/45 bg-black px-3.5 py-3">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-baseline gap-1.5">
+          <div className="flex shrink-0 items-center gap-2">
+            <div className="text-left">
               <span
                 dir="ltr"
-                className="font-mono-num text-3xl font-extrabold tracking-widest text-[#FCE38A]"
+                className="font-mono-num block text-lg font-extrabold text-[#E8DCC8]"
               >
-                {timeFormat === '12' ? clock12.time : clock24}
+                {timeFormat === '12'
+                  ? `${clock12.time} ${clock12.periodAr}`
+                  : clock24}
               </span>
-              {timeFormat === '12' && (
-                <span className="text-xs font-extrabold text-[#C9A227]">
-                  {clock12.periodAr}
-                </span>
-              )}
+              <span className="block text-[10px] text-[#E8DCC8]/75">
+                {hijri.weekdayAr} · {hijri.day} {hijri.monthNameAr}
+              </span>
             </div>
-            <div className="text-left">
-              <p className="text-xs font-extrabold text-[#FCE38A]">
-                القادمة: {nextPrayer.nextNameAr} ({nextPrayer.remainingFormatted})
-              </p>
-              <p className="text-[10px] text-zinc-400">
-                {hijri.weekdayAr} · {hijri.day} {hijri.monthNameAr} {hijri.year} هـ
-              </p>
+
+            <button
+              type="button"
+              onClick={() => {
+                setActiveVoicePickerTab(null);
+                setSettingsOpen(true);
+              }}
+              aria-label="إعدادات الأذان والتنبيه والإقامة والدعاء"
+              className="inline-flex min-h-[42px] items-center gap-1.5 rounded-2xl border border-[#1FA47A] bg-[#1FA47A]/20 px-3 text-xs font-extrabold text-[#E8DCC8] active:scale-95"
+            >
+              <Settings className="h-4 w-4 text-[#1FA47A]" />
+              <span>الإعدادات</span>
+            </button>
+          </div>
+        </div>
+
+        {/* 3-PAGE STEP SWITCHER */}
+        <div className="mt-3 grid grid-cols-3 gap-1.5 rounded-2xl bg-black/25 p-1">
+          <button
+            type="button"
+            onClick={() => setStep('permissions')}
+            className={`min-h-[34px] rounded-xl px-1.5 text-[11px] font-extrabold transition ${
+              step === 'permissions'
+                ? 'bg-[#1FA47A] text-white'
+                : 'text-[#E8DCC8]/80'
+            }`}
+          >
+            ١. الأذونات ({grantedCount}/5)
+          </button>
+          <button
+            type="button"
+            onClick={() => setStep('setup')}
+            className={`min-h-[34px] rounded-xl px-1.5 text-[11px] font-extrabold transition ${
+              step === 'setup' ? 'bg-[#1FA47A] text-white' : 'text-[#E8DCC8]/80'
+            }`}
+          >
+            ٢. إعداد المؤذن
+          </button>
+          <button
+            type="button"
+            onClick={() => setStep('per_prayer')}
+            className={`min-h-[34px] rounded-xl px-1.5 text-[11px] font-extrabold transition ${
+              step === 'per_prayer'
+                ? 'bg-[#1FA47A] text-white'
+                : 'text-[#E8DCC8]/80'
+            }`}
+          >
+            ٣. إعداد الأذان
+          </button>
+        </div>
+      </header>
+
+      {/* ==================== PAGE 1: PERMISSIONS (0/5 -> 5/5) ==================== */}
+      {step === 'permissions' && (
+        <section className="space-y-3.5">
+          <div className="rounded-3xl bg-[#0F2225] p-4 text-white">
+            <h2 className="text-lg font-extrabold text-[#E8DCC8]">المؤذن</h2>
+            <p className="mt-1 text-xs leading-relaxed text-[#E8DCC8]/85">
+              تحتاج بعض الأذونات لضمان وصول الأذان في وقته دون تأخير
+            </p>
+
+            {/* Counter + Green Progress Bar */}
+            <div className="mt-3 space-y-1.5">
+              <div className="flex items-center justify-between text-xs font-extrabold">
+                <span className="text-[#1FA47A]">
+                  الأذونات المطلوبة {grantedCount}/5
+                </span>
+                <span className="font-mono-num text-[#E8DCC8]">
+                  {Math.round((grantedCount / 5) * 100)}%
+                </span>
+              </div>
+              <div className="h-2.5 w-full overflow-hidden rounded-full bg-white/15">
+                <div
+                  className="h-full rounded-full bg-gradient-to-l from-[#34D399] to-[#1FA47A] transition-all duration-300"
+                  style={{width: `${(grantedCount / 5) * 100}%`}}
+                />
+              </div>
             </div>
           </div>
 
-          <div className="flex items-center justify-between gap-2 border-t border-[#C9A227]/25 pt-2">
-            <span className="flex items-center gap-1 truncate text-xs font-bold text-zinc-200">
-              <MapPin className="h-3.5 w-3.5 shrink-0 text-[#C9A227]" />
-              <span>
-                {location.city}، {location.country}
-                {location.isGps ? ' · GPS ✓' : ''}
-              </span>
-            </span>
-            <div className="flex shrink-0 items-center gap-1.5">
-              <button
-                type="button"
-                onClick={() => setCityPickerOpen(true)}
-                className="min-h-[32px] rounded-xl border border-[#C9A227]/60 bg-[#0D0A02] px-2.5 text-[11px] font-bold text-[#FCE38A]"
-              >
-                تغيير المدينة
-              </button>
+          {/* 5 Permission Cards: Icon on Left (visually left in RTL row) + Grant Button on Right */}
+          <div className="space-y-2.5">
+            {permissionCards.map((item) => {
+              const Icon = item.icon;
+              const isGranted = perms[item.key];
+              return (
+                <div
+                  key={item.key}
+                  className="flex items-center justify-between gap-2.5 rounded-2xl bg-[#0F2225] p-3.5 text-white shadow"
+                >
+                  {/* Right side: Grant Button + Title/Description */}
+                  <div className="flex min-w-0 flex-1 items-center gap-2.5">
+                    <button
+                      type="button"
+                      onClick={() => void item.onGrant()}
+                      className={`inline-flex min-h-[38px] shrink-0 items-center justify-center rounded-xl px-3.5 text-xs font-extrabold transition active:scale-95 ${
+                        isGranted
+                          ? 'border border-[#1FA47A] bg-[#1FA47A]/20 text-[#34D399]'
+                          : 'bg-gradient-to-l from-[#1FA47A] to-[#14835F] text-white'
+                      }`}
+                    >
+                      {isGranted ? 'ممنوح ✓' : 'منح'}
+                    </button>
+
+                    <div className="min-w-0">
+                      <h3 className="truncate text-sm font-extrabold text-[#E8DCC8]">
+                        {item.titleAr}
+                      </h3>
+                      <p className="text-[11px] leading-snug text-[#E8DCC8]/75">
+                        {item.descAr}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Left side icon */}
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/10 text-[#1FA47A]">
+                    <Icon className="h-5 w-5" />
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+
+          {statusNote && (
+            <p className="rounded-2xl bg-[#0F2225] px-3 py-2 text-center text-xs font-bold text-[#1FA47A]">
+              {statusNote}
+            </p>
+          )}
+
+          {/* Big Green "متابعة" Button */}
+          <button
+            type="button"
+            disabled={grantingAll}
+            onClick={() => void handleContinueFromPermissions()}
+            className="flex min-h-[52px] w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-l from-[#24B98A] via-[#1FA47A] to-[#137A59] text-base font-extrabold text-white shadow-lg active:scale-[0.99] disabled:opacity-70"
+          >
+            <span>{grantingAll ? 'جاري التفعيل...' : 'متابعة'}</span>
+          </button>
+        </section>
+      )}
+
+      {/* ==================== PAGE 2: SETUP (خطوتان فقط للبدء) ==================== */}
+      {step === 'setup' && (
+        <section className="space-y-3.5">
+          <div className="rounded-3xl bg-[#0F2225] p-4 text-white">
+            <h2 className="text-base font-extrabold text-[#E8DCC8]">
+              إعداد المؤذن - خطوتان فقط للبدء
+            </h2>
+            <p className="mt-0.5 text-xs text-[#E8DCC8]/75">
+              حدد مدينتك وطريقة الحساب وسيعمل المؤذن تلقائيًا بدون إنترنت
+            </p>
+
+            {/* Step 1: GPS Auto-Detect + Manual City Search */}
+            <div className="mt-3 space-y-2.5">
               <button
                 type="button"
                 onClick={onRequestGps}
                 disabled={gpsLoading}
-                aria-label="تحديث GPS"
-                className="inline-flex min-h-[32px] items-center gap-1 rounded-xl border border-[#C9A227]/60 bg-[#0D0A02] px-2.5 text-[11px] font-bold text-[#FCE38A]"
+                className="flex min-h-[46px] w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-l from-[#24B98A] to-[#1FA47A] text-sm font-extrabold text-white shadow active:scale-[0.99]"
               >
-                <Navigation className="h-3 w-3 text-[#C9A227]" />
-                <span>{gpsLoading ? '...' : 'GPS'}</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* 2. MUEZZIN SELECTION: ALL 7 PRAYERS/TIMES + 30 MUEZZINS WITH FULLSCREEN VIDEO BUTTON */}
-      <section className="space-y-3 rounded-3xl border-2 border-[#C9A227] bg-[#050505] p-4">
-        <div className="flex items-center justify-between gap-2">
-          <div>
-            <h3 className="text-base font-extrabold text-[#FCE38A]">
-              اختيار المؤذن لكل صلاة
-            </h3>
-            <p className="text-[11px] text-zinc-300">
-              اختر الصلاة ثم اختر الشيخ من الـ 30 مؤذنًا أو اضغط علامة الفيديو للملء
-            </p>
-          </div>
-        </div>
-
-        {/* Clean 7-Item Selector Grid (Fajr, Sunrise, Dhuhr, Asr, Maghrib, Isha, Qiyam) */}
-        <div className="grid grid-cols-2 gap-2">
-          {PRAYER_SLOTS.map((slot) => {
-            const isSelected = selectedSlot === slot.key;
-            const timeText = getSlotTimeText(slot.key);
-            const assignedName =
-              slot.key === 'sunrise'
-                ? 'شروق الشمس'
-                : slot.key === 'qiyam'
-                  ? activeTawasihVoice.reciterAr
-                  : (
-                      ADHAN_VOICES_30.find(
-                        (v) =>
-                          v.id ===
-                          (perPrayerAdhan[slot.key as TrackablePrayer] ||
-                            settings.preferredAdhan),
-                      ) || ADHAN_VOICES_30[0]
-                    ).muezzinAr;
-
-            return (
-              <button
-                key={slot.key}
-                type="button"
-                onClick={() => setSelectedSlot(slot.key)}
-                className={`flex min-h-[58px] flex-col justify-between rounded-2xl border p-2.5 text-right transition-colors ${
-                  slot.key === 'qiyam' ? 'col-span-2' : ''
-                } ${
-                  isSelected
-                    ? 'border-2 border-[#FCE38A] bg-[#C9A227] text-black'
-                    : 'border-[#C9A227]/45 bg-[#0B0903] text-white'
-                }`}
-              >
-                <div className="flex w-full items-center justify-between gap-1">
-                  <span className="text-sm font-extrabold">{slot.labelAr}</span>
-                  <span
-                    dir="ltr"
-                    className={`font-mono-num text-xs font-bold ${
-                      isSelected ? 'text-black' : 'text-[#FCE38A]'
-                    }`}
-                  >
-                    {timeText}
-                  </span>
-                </div>
-                <span
-                  className={`truncate text-[10px] font-bold ${
-                    isSelected ? 'text-black/80' : 'text-zinc-400'
-                  }`}
-                >
-                  {assignedName}
+                <Navigation className="h-4 w-4" />
+                <span>
+                  {gpsLoading ? 'جاري تحديد الموقع...' : 'تحديد تلقائي بالـ GPS'}
                 </span>
               </button>
-            );
-          })}
-        </div>
 
-        {/* Expanded Panel for the Selected Prayer / Slot */}
-        <div className="space-y-3 rounded-2xl border border-[#C9A227]/65 bg-[#0B0903] p-3.5">
-          {selectedSlot === 'sunrise' ? (
-            <div className="space-y-3">
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <Sunrise className="h-5 w-5 text-[#FCE38A]" />
-                  <div>
-                    <h4 className="text-sm font-extrabold text-[#FCE38A]">
-                      وقت الشروق
-                    </h4>
-                    <p className="text-xs text-zinc-300">
-                      نهاية وقت صلاة الفجر وبداية الضحى بعده بـ 15 دقيقة
-                    </p>
-                  </div>
-                </div>
-                <span
-                  dir="ltr"
-                  className="font-mono-num text-base font-extrabold text-[#FCE38A]"
-                >
-                  {getSlotTimeText('sunrise')}
-                </span>
-              </div>
-              <div className="flex items-center justify-between rounded-xl border border-[#C9A227]/40 bg-black px-3 py-2">
-                <span className="text-xs font-bold text-zinc-200">
-                  تعديل الدقائق للشروق
-                </span>
-                <div className="flex items-center gap-1.5">
-                  <button
-                    type="button"
-                    aria-label="إنقاص دقيقة للشروق"
-                    onClick={() => adjustOffset('sunrise', -1)}
-                    className="flex h-8 w-8 items-center justify-center rounded-xl border border-[#C9A227]/50 bg-[#141004] text-[#FCE38A]"
-                  >
-                    <Minus className="h-3.5 w-3.5" />
-                  </button>
-                  <span
-                    dir="ltr"
-                    className="font-mono-num min-w-[40px] text-center text-xs font-bold text-[#FCE38A]"
-                  >
-                    {(offsets.sunrise || 0) > 0
-                      ? `+${offsets.sunrise}`
-                      : offsets.sunrise || 0}{' '}
-                    د
-                  </span>
-                  <button
-                    type="button"
-                    aria-label="زيادة دقيقة للشروق"
-                    onClick={() => adjustOffset('sunrise', 1)}
-                    className="flex h-8 w-8 items-center justify-center rounded-xl border border-[#C9A227]/50 bg-[#141004] text-[#FCE38A]"
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-              </div>
-            </div>
-          ) : selectedSlot === 'qiyam' ? (
-            <div className="space-y-3">
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <MoonStar className="h-5 w-5 text-[#FCE38A]" />
-                  <div>
-                    <h4 className="text-sm font-extrabold text-[#FCE38A]">
-                      قيام الليل (الثلث الأخير من الليل)
-                    </h4>
-                    <p className="text-[11px] text-zinc-300">
-                      تنبيه هادئ في وقت السحر بصوت الشيخ النقشبندي
-                    </p>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() =>
-                    onUpdateSettings((s) => ({
-                      ...s,
-                      qiyamEnabled: !(s.qiyamEnabled ?? true),
-                    }))
-                  }
-                  className={`min-h-[34px] rounded-xl px-3 text-xs font-extrabold ${
-                    isSlotEnabled
-                      ? 'bg-[#C9A227] text-black'
-                      : 'border border-[#C9A227]/50 bg-black text-zinc-300'
-                  }`}
-                >
-                  {isSlotEnabled ? 'مفعّل' : 'موقوف'}
-                </button>
-              </div>
-
-              <div className="grid grid-cols-2 gap-2 text-center">
-                <div className="rounded-xl border border-[#C9A227]/35 bg-black px-2 py-2">
-                  <p className="text-[10px] font-bold text-zinc-400">
-                    منتصف الليل الشرعي
-                  </p>
-                  <p
-                    dir="ltr"
-                    className="font-mono-num text-sm font-extrabold text-[#FCE38A]"
-                  >
-                    {timeFormat === '12'
-                      ? formatTime12(qiyamTimes.midpoint)
-                      : formatTime24(qiyamTimes.midpoint)}
-                  </p>
-                </div>
-                <div className="rounded-xl border border-[#C9A227] bg-[#141004] px-2 py-2">
-                  <p className="text-[10px] font-bold text-[#C9A227]">
-                    بداية الثلث الأخير
-                  </p>
-                  <p
-                    dir="ltr"
-                    className="font-mono-num text-sm font-extrabold text-[#FCE38A]"
-                  >
-                    {getSlotTimeText('qiyam')}
-                  </p>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() =>
-                    playSingleAudio(
-                      `qiyam-${activeTawasihVoice.id}`,
-                      activeTawasihVoice.url,
-                    )
-                  }
-                  className="inline-flex min-h-[40px] items-center justify-center gap-1.5 rounded-xl bg-[#C9A227] text-xs font-extrabold text-black"
-                >
-                  {playingId === `qiyam-${activeTawasihVoice.id}` ? (
-                    <Pause className="h-4 w-4" />
-                  ) : (
-                    <Play className="h-4 w-4" />
-                  )}
-                  <span>استماع لمناجاة القيام</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    stopAnyAudio();
-                    setVideoPreview({
-                      prayerNameAr: 'قيام الليل',
-                      voice: {
-                        id: activeTawasihVoice.id,
-                        nameAr: activeTawasihVoice.titleAr,
-                        muezzinAr: activeTawasihVoice.reciterAr,
-                        locationAr: 'السحر المبارك',
-                        url: activeTawasihVoice.url,
-                      },
-                      mode: 'tawasih',
-                    });
-                  }}
-                  className="inline-flex min-h-[40px] items-center justify-center gap-1.5 rounded-xl border border-[#C9A227] bg-black text-xs font-extrabold text-[#FCE38A]"
-                >
-                  <Video className="h-4 w-4" />
-                  <span>فيديو ملء الشاشة</span>
-                </button>
-              </div>
-            </div>
-          ) : (
-            /* 5 PRAYERS: FINE-TUNE + ALL 30 MUEZZINS WITH LISTEN & FULLSCREEN VIDEO */
-            <>
-              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#C9A227]/30 pb-3">
-                <div>
-                  <h4 className="text-sm font-extrabold text-[#FCE38A]">
-                    مؤذن صلاة {PRAYER_NAMES_AR[selectedTrackablePrayer]} (
-                    {getSlotTimeText(selectedTrackablePrayer)})
-                  </h4>
-                  <p className="text-[11px] text-zinc-300">
-                    المختار حاليًا: {selectedSlotVoice.nameAr}
-                  </p>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() =>
-                    onUpdateSettings((prev) => ({
-                      ...prev,
-                      enabledPrayers: {
-                        ...(prev.enabledPrayers || enabledPrayers),
-                        [selectedTrackablePrayer]: !isSlotEnabled,
-                      },
-                    }))
-                  }
-                  className={`inline-flex min-h-[34px] items-center gap-1 rounded-xl px-3 text-xs font-bold ${
-                    isSlotEnabled
-                      ? 'bg-[#C9A227] text-black'
-                      : 'border border-zinc-700 bg-black text-zinc-400'
-                  }`}
-                >
-                  {isSlotEnabled ? (
-                    <Bell className="h-3.5 w-3.5" />
-                  ) : (
-                    <BellOff className="h-3.5 w-3.5" />
-                  )}
-                  <span>{isSlotEnabled ? 'مفعّل' : 'موقوف'}</span>
-                </button>
-              </div>
-
-              {/* Minute Offset & Apply to All */}
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-1">
-                  <button
-                    type="button"
-                    aria-label={`إنقاص دقيقة لصلاة ${PRAYER_NAMES_AR[selectedTrackablePrayer]}`}
-                    onClick={() => adjustOffset(selectedTrackablePrayer, -1)}
-                    className="flex h-8 w-8 items-center justify-center rounded-xl border border-[#C9A227]/60 bg-black text-[#FCE38A]"
-                  >
-                    <Minus className="h-3.5 w-3.5" />
-                  </button>
-                  <span
-                    dir="ltr"
-                    className="font-mono-num min-w-[44px] text-center text-xs font-bold text-[#FCE38A]"
-                  >
-                    {(offsets[selectedTrackablePrayer] || 0) > 0
-                      ? `+${offsets[selectedTrackablePrayer]}`
-                      : offsets[selectedTrackablePrayer] || 0}{' '}
-                    د
-                  </span>
-                  <button
-                    type="button"
-                    aria-label={`زيادة دقيقة لصلاة ${PRAYER_NAMES_AR[selectedTrackablePrayer]}`}
-                    onClick={() => adjustOffset(selectedTrackablePrayer, 1)}
-                    className="flex h-8 w-8 items-center justify-center rounded-xl border border-[#C9A227]/60 bg-black text-[#FCE38A]"
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      onUpdateSettings((prev) => ({
-                        ...prev,
-                        prayerOffsets: {...DEFAULT_PRAYER_OFFSETS},
-                      }))
-                    }
-                    aria-label="تصفير الدقائق"
-                    className="flex h-8 items-center gap-1 rounded-xl border border-[#C9A227]/40 bg-black px-2 text-[10px] font-bold text-zinc-300"
-                  >
-                    <RotateCcw className="h-3 w-3" />
-                    <span>تصفير</span>
-                  </button>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() =>
-                    onUpdateSettings((s) => ({
-                      ...s,
-                      preferredAdhan: selectedSlotVoice.id,
-                      perPrayerAdhan: {
-                        fajr: selectedSlotVoice.id,
-                        dhuhr: selectedSlotVoice.id,
-                        asr: selectedSlotVoice.id,
-                        maghrib: selectedSlotVoice.id,
-                        isha: selectedSlotVoice.id,
-                      },
-                    }))
-                  }
-                  className="min-h-[32px] rounded-xl border border-[#C9A227]/70 bg-black px-2.5 text-[11px] font-bold text-[#FCE38A]"
-                >
-                  تعميم هذا المؤذن للكل
-                </button>
-              </div>
-
-              {/* Search within 30 Muezzins */}
               <div className="relative">
-                <Search className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#C9A227]" />
+                <Search className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#1FA47A]" />
                 <input
                   type="text"
-                  value={muezzinSearch}
-                  onChange={(e) => setMuezzinSearch(e.target.value)}
-                  placeholder="ابحث في الـ 30 مؤذنًا باسم الشيخ أو المدينة..."
-                  className="min-h-[38px] w-full rounded-xl border border-[#C9A227]/50 bg-black py-1.5 pr-9 pl-3 text-xs text-white outline-none focus:border-[#C9A227]"
+                  value={citySearch}
+                  onChange={(e) => setCitySearch(e.target.value)}
+                  placeholder="ابحث عن مدينتك يدوياً (بني سويف، القاهرة...)"
+                  className="min-h-[42px] w-full rounded-2xl border border-[#1FA47A]/45 bg-black/30 py-2 pr-9 pl-3 text-xs font-bold text-[#E8DCC8] placeholder-[#E8DCC8]/50 outline-none focus:border-[#1FA47A]"
                 />
               </div>
 
-              {audioErr && (
-                <p className="text-xs font-bold text-rose-400">{audioErr}</p>
-              )}
-
-              {/* All 30 Muezzins List (Listen + Fullscreen Video + Select for Selected Prayer) */}
-              <div className="max-h-[360px] space-y-2 overflow-y-auto pl-1 touch-pan-y">
-                {filteredMuezzins.map((adhan, idx) => {
-                  const isChosenForPrayer = selectedSlotAdhanId === adhan.id;
-                  const isPlayingThis =
-                    playingId === `list-${selectedTrackablePrayer}-${adhan.id}`;
-
-                  return (
-                    <div
-                      key={adhan.id}
-                      className={`rounded-2xl border p-3 ${
-                        isChosenForPrayer
-                          ? 'border-2 border-[#FCE38A] bg-[#161104]'
-                          : 'border-[#C9A227]/35 bg-black'
-                      }`}
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0">
-                          <h5 className="truncate text-xs font-extrabold text-white">
-                            {idx + 1}. {adhan.nameAr}
-                          </h5>
-                          <p className="truncate text-[11px] text-zinc-400">
-                            {adhan.muezzinAr} · {adhan.locationAr}
-                          </p>
-                        </div>
-
-                        {isChosenForPrayer && (
-                          <span className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-[#C9A227] px-2 py-0.5 text-[10px] font-extrabold text-black">
-                            <Check className="h-3 w-3" />
-                            <span>مختار</span>
-                          </span>
-                        )}
-                      </div>
-
-                      <div className="mt-2.5 flex items-center gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            playSingleAudio(
-                              `list-${selectedTrackablePrayer}-${adhan.id}`,
-                              adhan.url,
-                              adhan.fallbackUrl,
-                            )
-                          }
-                          className="inline-flex min-h-[38px] flex-1 items-center justify-center gap-1 rounded-xl border border-[#C9A227]/60 bg-[#0D0A02] px-2 text-xs font-bold text-[#FCE38A]"
-                        >
-                          {isPlayingThis ? (
-                            <Pause className="h-3.5 w-3.5" />
-                          ) : (
-                            <Play className="h-3.5 w-3.5" />
-                          )}
-                          <span>{isPlayingThis ? 'إيقاف' : 'استماع'}</span>
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => {
-                            stopAnyAudio();
-                            setVideoPreview({
-                              prayerNameAr: `صلاة ${PRAYER_NAMES_AR[selectedTrackablePrayer]}`,
-                              voice: adhan,
-                              mode: 'adhan',
-                            });
-                          }}
-                          aria-label={`فيديو ${adhan.nameAr}`}
-                          className="inline-flex min-h-[38px] items-center justify-center gap-1 rounded-xl border border-[#FCE38A]/70 bg-[#141004] px-3 text-xs font-bold text-[#FCE38A]"
-                        >
-                          <Video className="h-4 w-4 text-[#C9A227]" />
-                          <span>فيديو</span>
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() =>
-                            onUpdateSettings((prev) => ({
-                              ...prev,
-                              preferredAdhan:
-                                selectedTrackablePrayer === 'dhuhr'
-                                  ? adhan.id
-                                  : prev.preferredAdhan,
-                              perPrayerAdhan: {
-                                ...(prev.perPrayerAdhan || perPrayerAdhan),
-                                [selectedTrackablePrayer]: adhan.id,
-                              },
-                            }))
-                          }
-                          className={`inline-flex min-h-[38px] flex-1 items-center justify-center gap-1 rounded-xl px-2 text-xs font-extrabold ${
-                            isChosenForPrayer
-                              ? 'bg-[#C9A227] text-black'
-                              : 'bg-[#C9A227]/20 text-[#FCE38A]'
-                          }`}
-                        >
-                          <Check className="h-3.5 w-3.5" />
-                          <span>
-                            {isChosenForPrayer
-                              ? `لـ ${PRAYER_NAMES_AR[selectedTrackablePrayer]}`
-                              : `اختر لـ ${PRAYER_NAMES_AR[selectedTrackablePrayer]}`}
-                          </span>
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </>
-          )}
-        </div>
-      </section>
-
-      {/* 3. CLEAN COLLAPSIBLE SECTIONS BELOW IN USER'S EXACT ORDER */}
-      <div className="space-y-3">
-        {/* A) IQAMAH PER PRAYER */}
-        <section className="overflow-hidden rounded-3xl border-2 border-[#C9A227] bg-[#050505]">
-          <button
-            type="button"
-            onClick={() =>
-              setOpenAccordion((prev) => (prev === 'iqamah' ? null : 'iqamah'))
-            }
-            className="flex min-h-[58px] w-full items-center justify-between gap-2 px-4 py-3 text-right"
-          >
-            <div className="flex items-center gap-2.5">
-              <Volume2 className="h-5 w-5 shrink-0 text-[#C9A227]" />
-              <div>
-                <h3 className="text-sm font-extrabold text-[#FCE38A]">
-                  اختيار الإقامة (بعد الأذان بـ 15 دقيقة)
-                </h3>
-                <p className="text-[11px] text-zinc-400">
-                  {settings.iqamahEnabled ?? true
-                    ? `مفعّلة · اختر شيخ الإقامة لكل صلاة`
-                    : 'موقوفة حاليًا'}
-                </p>
-              </div>
-            </div>
-            {openAccordion === 'iqamah' ? (
-              <ChevronUp className="h-5 w-5 text-[#C9A227]" />
-            ) : (
-              <ChevronDown className="h-5 w-5 text-[#C9A227]" />
-            )}
-          </button>
-
-          {openAccordion === 'iqamah' && (
-            <div className="space-y-3 border-t border-[#C9A227]/30 p-4">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-zinc-200">
-                  تشغيل أذان الإقامة تلقائيًا بعد 15 دقيقة
-                </span>
-                <button
-                  type="button"
-                  onClick={() =>
-                    onUpdateSettings((s) => ({
-                      ...s,
-                      iqamahEnabled: !(s.iqamahEnabled ?? true),
-                    }))
-                  }
-                  className={`min-h-[32px] rounded-xl px-3 text-xs font-extrabold ${
-                    settings.iqamahEnabled ?? true
-                      ? 'bg-[#C9A227] text-black'
-                      : 'border border-zinc-700 bg-black text-zinc-300'
-                  }`}
-                >
-                  {settings.iqamahEnabled ?? true ? 'مفعّل' : 'تفعيل'}
-                </button>
-              </div>
-
-              {/* Select Prayer for Iqamah */}
-              <div className="grid grid-cols-5 gap-1.5">
-                {FIVE_PRAYERS.map((p) => {
-                  const active = iqamahSlot === p;
+              {/* Quick Egypt Favorites + Filtered City List */}
+              <div className="max-h-40 space-y-1.5 overflow-y-auto pl-1 touch-pan-y">
+                {filteredCities.slice(0, 12).map((city) => {
+                  const isCurrent =
+                    location.city === city.city &&
+                    location.country === city.country;
                   return (
                     <button
-                      key={p}
+                      key={`${city.city}-${city.country}`}
                       type="button"
-                      onClick={() => setIqamahSlot(p)}
-                      className={`min-h-[36px] rounded-xl border text-xs font-extrabold ${
-                        active
-                          ? 'border-[#FCE38A] bg-[#C9A227] text-black'
-                          : 'border-[#C9A227]/40 bg-black text-zinc-200'
+                      onClick={() => {
+                        onSelectLocation({...city, isGps: false});
+                        if (city.country === 'مصر') {
+                          onUpdateSettings((s) => ({
+                            ...s,
+                            calculationMethod: 'Egyptian',
+                          }));
+                        }
+                      }}
+                      className={`flex min-h-[38px] w-full items-center justify-between rounded-xl px-3 text-xs font-bold ${
+                        isCurrent
+                          ? 'bg-[#1FA47A] text-white'
+                          : 'bg-white/10 text-[#E8DCC8]'
                       }`}
                     >
-                      {PRAYER_NAMES_AR[p]}
+                      <span>
+                        {city.city} — {city.country}
+                      </span>
+                      {isCurrent && <Check className="h-4 w-4" />}
                     </button>
                   );
                 })}
               </div>
-
-              {/* Iqamah Voices with Listen + Fullscreen Video + Select */}
-              <div className="space-y-2">
-                {IQAMAH_VOICES_3.map((iq) => {
-                  const isChosen =
-                    (perPrayerIqamah[iqamahSlot] || settings.preferredIqamah) ===
-                    iq.id;
-                  const isPlayingIq =
-                    playingId === `iqamah-${iqamahSlot}-${iq.id}`;
-                  return (
-                    <div
-                      key={iq.id}
-                      className={`rounded-2xl border p-3 ${
-                        isChosen
-                          ? 'border-2 border-[#FCE38A] bg-[#161104]'
-                          : 'border-[#C9A227]/35 bg-black'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <div>
-                          <p className="text-xs font-extrabold text-white">
-                            {iq.nameAr}
-                          </p>
-                          <p className="text-[11px] text-zinc-400">
-                            {iq.muezzinAr} · {iq.locationAr}
-                          </p>
-                        </div>
-                        {isChosen && (
-                          <span className="rounded-lg bg-[#C9A227] px-2 py-0.5 text-[10px] font-extrabold text-black">
-                            مختار
-                          </span>
-                        )}
-                      </div>
-
-                      <div className="mt-2 flex items-center gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            playSingleAudio(
-                              `iqamah-${iqamahSlot}-${iq.id}`,
-                              iq.url,
-                            )
-                          }
-                          className="inline-flex min-h-[36px] flex-1 items-center justify-center gap-1 rounded-xl border border-[#C9A227]/60 bg-[#0D0A02] text-xs font-bold text-[#FCE38A]"
-                        >
-                          {isPlayingIq ? (
-                            <Pause className="h-3.5 w-3.5" />
-                          ) : (
-                            <Play className="h-3.5 w-3.5" />
-                          )}
-                          <span>{isPlayingIq ? 'إيقاف' : 'استماع'}</span>
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => {
-                            stopAnyAudio();
-                            setVideoPreview({
-                              prayerNameAr: `صلاة ${PRAYER_NAMES_AR[iqamahSlot]}`,
-                              voice: iq,
-                              mode: 'iqamah',
-                            });
-                          }}
-                          className="inline-flex min-h-[36px] items-center justify-center gap-1 rounded-xl border border-[#FCE38A]/70 bg-[#141004] px-3 text-xs font-bold text-[#FCE38A]"
-                        >
-                          <Video className="h-4 w-4 text-[#C9A227]" />
-                          <span>فيديو</span>
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() =>
-                            onUpdateSettings((prev) => ({
-                              ...prev,
-                              preferredIqamah: iq.id,
-                              perPrayerIqamah: {
-                                ...(prev.perPrayerIqamah || perPrayerIqamah),
-                                [iqamahSlot]: iq.id,
-                              },
-                            }))
-                          }
-                          className={`inline-flex min-h-[36px] flex-1 items-center justify-center gap-1 rounded-xl text-xs font-extrabold ${
-                            isChosen
-                              ? 'bg-[#C9A227] text-black'
-                              : 'bg-[#C9A227]/20 text-[#FCE38A]'
-                          }`}
-                        >
-                          <Check className="h-3.5 w-3.5" />
-                          <span>
-                            {isChosen
-                              ? `لـ ${PRAYER_NAMES_AR[iqamahSlot]}`
-                              : `اختر لـ ${PRAYER_NAMES_AR[iqamahSlot]}`}
-                          </span>
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-
-              <button
-                type="button"
-                onClick={() =>
-                  onUpdateSettings((prev) => ({
-                    ...prev,
-                    preferredIqamah: activeSlotIqamahVoice.id,
-                    perPrayerIqamah: {
-                      fajr: activeSlotIqamahVoice.id,
-                      dhuhr: activeSlotIqamahVoice.id,
-                      asr: activeSlotIqamahVoice.id,
-                      maghrib: activeSlotIqamahVoice.id,
-                      isha: activeSlotIqamahVoice.id,
-                    },
-                  }))
-                }
-                className="min-h-[36px] w-full rounded-xl border border-[#C9A227]/60 bg-black text-xs font-bold text-[#FCE38A]"
-              >
-                تعميم «{activeSlotIqamahVoice.nameAr}» لإقامة كل الصلوات
-              </button>
             </div>
-          )}
-        </section>
+          </div>
 
-        {/* B) PRE-ADHAN ALERT */}
-        <section className="overflow-hidden rounded-3xl border-2 border-[#C9A227] bg-[#050505]">
-          <button
-            type="button"
-            onClick={() =>
-              setOpenAccordion((prev) =>
-                prev === 'pre_adhan' ? null : 'pre_adhan',
-              )
-            }
-            className="flex min-h-[58px] w-full items-center justify-between gap-2 px-4 py-3 text-right"
-          >
-            <div className="flex items-center gap-2.5">
-              <BellRing className="h-5 w-5 shrink-0 text-[#C9A227]" />
-              <div>
-                <h3 className="text-sm font-extrabold text-[#FCE38A]">
-                  التنبيه قبل الأذان (قربت الصلاة)
-                </h3>
-                <p className="text-[11px] text-zinc-400">
-                  {settings.preAdhanMinutes > 0
-                    ? `قبل الصلاة بـ ${settings.preAdhanMinutes} دقائق · ${activePreAdhanVoice.nameAr}`
-                    : 'عند وقت الأذان فقط'}
-                </p>
-              </div>
-            </div>
-            {openAccordion === 'pre_adhan' ? (
-              <ChevronUp className="h-5 w-5 text-[#C9A227]" />
-            ) : (
-              <ChevronDown className="h-5 w-5 text-[#C9A227]" />
-            )}
-          </button>
-
-          {openAccordion === 'pre_adhan' && (
-            <div className="space-y-3 border-t border-[#C9A227]/30 p-4">
-              <div className="grid grid-cols-4 gap-1.5">
-                {PRE_ADHAN_OPTIONS.map((opt) => {
-                  const active = settings.preAdhanMinutes === opt.minutes;
-                  return (
-                    <button
-                      key={opt.minutes}
-                      type="button"
-                      onClick={() =>
-                        onUpdateSettings((s) => ({
-                          ...s,
-                          preAdhanMinutes: opt.minutes,
-                        }))
-                      }
-                      className={`min-h-[38px] rounded-xl border text-[11px] font-extrabold ${
-                        active
-                          ? 'border-[#FCE38A] bg-[#C9A227] text-black'
-                          : 'border-[#C9A227]/45 bg-black text-zinc-200'
-                      }`}
-                    >
-                      {opt.labelAr}
-                    </button>
-                  );
-                })}
-              </div>
-
-              <div className="space-y-2">
-                {PRE_ADHAN_VOICES_3.map((v) => {
-                  const isChosen = activePreAdhanVoice.id === v.id;
-                  const isPlayingThis = playingId === `pre-${v.id}`;
-                  return (
-                    <div
-                      key={v.id}
-                      className={`flex items-center justify-between gap-2 rounded-2xl border p-3 ${
-                        isChosen
-                          ? 'border-2 border-[#FCE38A] bg-[#161104]'
-                          : 'border-[#C9A227]/35 bg-black'
-                      }`}
-                    >
-                      <div className="min-w-0">
-                        <p className="truncate text-xs font-extrabold text-white">
-                          {v.nameAr}
-                        </p>
-                        <p className="truncate text-[10px] text-zinc-400">
-                          {v.descAr}
-                        </p>
-                      </div>
-                      <div className="flex shrink-0 items-center gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() => playSingleAudio(`pre-${v.id}`, v.url)}
-                          aria-label={`استماع لـ ${v.nameAr}`}
-                          className="flex h-9 w-9 items-center justify-center rounded-xl border border-[#C9A227]/60 bg-black text-[#FCE38A]"
-                        >
-                          {isPlayingThis ? (
-                            <Pause className="h-4 w-4" />
-                          ) : (
-                            <Play className="h-4 w-4" />
-                          )}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            onUpdateSettings((s) => ({
-                              ...s,
-                              preferredPreAdhanSound: v.id,
-                            }))
-                          }
-                          className={`min-h-[36px] rounded-xl px-3 text-xs font-extrabold ${
-                            isChosen
-                              ? 'bg-[#C9A227] text-black'
-                              : 'bg-[#C9A227]/20 text-[#FCE38A]'
-                          }`}
-                        >
-                          {isChosen ? 'مختار' : 'اختيار'}
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-        </section>
-
-        {/* C) NAQSHABANDI TAWASIH ONLY */}
-        <section className="overflow-hidden rounded-3xl border-2 border-[#C9A227] bg-[#050505]">
-          <button
-            type="button"
-            onClick={() =>
-              setOpenAccordion((prev) =>
-                prev === 'tawasih' ? null : 'tawasih',
-              )
-            }
-            className="flex min-h-[58px] w-full items-center justify-between gap-2 px-4 py-3 text-right"
-          >
-            <div className="flex items-center gap-2.5">
-              <Sunrise className="h-5 w-5 shrink-0 text-[#C9A227]" />
-              <div>
-                <h3 className="text-sm font-extrabold text-[#FCE38A]">
-                  التواشيح — الشيخ سيد النقشبندي
-                </h3>
-                <p className="text-[11px] text-zinc-400">
-                  {settings.fajrTawasihEnabled
-                    ? `مفعّلة قبل الفجر · ${activeTawasihVoice.titleAr}`
-                    : 'موقوفة'}
-                </p>
-              </div>
-            </div>
-            {openAccordion === 'tawasih' ? (
-              <ChevronUp className="h-5 w-5 text-[#C9A227]" />
-            ) : (
-              <ChevronDown className="h-5 w-5 text-[#C9A227]" />
-            )}
-          </button>
-
-          {openAccordion === 'tawasih' && (
-            <div className="space-y-3 border-t border-[#C9A227]/30 p-4">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-zinc-200">
-                  تشغيل قبل أذان الفجر بـ 20 دقيقة
-                </span>
-                <button
-                  type="button"
-                  onClick={() =>
-                    onUpdateSettings((s) => ({
-                      ...s,
-                      fajrTawasihEnabled: !s.fajrTawasihEnabled,
-                    }))
-                  }
-                  className={`min-h-[32px] rounded-xl px-3 text-xs font-extrabold ${
-                    settings.fajrTawasihEnabled
-                      ? 'bg-[#C9A227] text-black'
-                      : 'border border-zinc-700 bg-black text-zinc-300'
-                  }`}
-                >
-                  {settings.fajrTawasihEnabled ? 'مفعّل' : 'تفعيل'}
-                </button>
-              </div>
-
-              <div className="space-y-2">
-                {TAWASIH_NAQSHABANDI.map((t) => {
-                  const isChosen = activeTawasihVoice.id === t.id;
-                  const isPlayingThis = playingId === `tawasih-${t.id}`;
-                  return (
-                    <div
-                      key={t.id}
-                      className={`rounded-2xl border p-3 ${
-                        isChosen
-                          ? 'border-2 border-[#FCE38A] bg-[#161104]'
-                          : 'border-[#C9A227]/35 bg-black'
-                      }`}
-                    >
-                      <p className="text-xs font-extrabold text-white">
-                        {t.titleAr}
-                      </p>
-                      <p className="text-[11px] text-zinc-400">{t.reciterAr}</p>
-                      <div className="mt-2 flex items-center gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            playSingleAudio(`tawasih-${t.id}`, t.url)
-                          }
-                          className="inline-flex min-h-[36px] flex-1 items-center justify-center gap-1 rounded-xl border border-[#C9A227]/60 bg-black text-xs font-bold text-[#FCE38A]"
-                        >
-                          {isPlayingThis ? (
-                            <Pause className="h-3.5 w-3.5" />
-                          ) : (
-                            <Play className="h-3.5 w-3.5" />
-                          )}
-                          <span>{isPlayingThis ? 'إيقاف' : 'استماع'}</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            stopAnyAudio();
-                            setVideoPreview({
-                              prayerNameAr: 'تواشيح الفجر',
-                              voice: {
-                                id: t.id,
-                                nameAr: t.titleAr,
-                                muezzinAr: t.reciterAr,
-                                locationAr: 'مصر',
-                                url: t.url,
-                              },
-                              mode: 'tawasih',
-                            });
-                          }}
-                          className="inline-flex min-h-[36px] items-center justify-center gap-1 rounded-xl border border-[#FCE38A]/70 bg-[#141004] px-3 text-xs font-bold text-[#FCE38A]"
-                        >
-                          <Video className="h-4 w-4 text-[#C9A227]" />
-                          <span>فيديو</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            onUpdateSettings((s) => ({
-                              ...s,
-                              preferredTawasih: t.id,
-                            }))
-                          }
-                          className={`min-h-[36px] flex-1 rounded-xl text-xs font-extrabold ${
-                            isChosen
-                              ? 'bg-[#C9A227] text-black'
-                              : 'bg-[#C9A227]/20 text-[#FCE38A]'
-                          }`}
-                        >
-                          {isChosen ? 'مختار' : 'اختيار'}
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-        </section>
-
-        {/* D) EID TAKBEERAT */}
-        <section className="overflow-hidden rounded-3xl border-2 border-[#C9A227] bg-[#050505]">
-          <button
-            type="button"
-            onClick={() =>
-              setOpenAccordion((prev) => (prev === 'eid' ? null : 'eid'))
-            }
-            className="flex min-h-[58px] w-full items-center justify-between gap-2 px-4 py-3 text-right"
-          >
-            <div className="flex items-center gap-2.5">
-              <MoonStar className="h-5 w-5 shrink-0 text-[#C9A227]" />
-              <div>
-                <h3 className="text-sm font-extrabold text-[#FCE38A]">
-                  تكبيرات العيد المباركة (بدون نت)
-                </h3>
-                <p className="text-[11px] text-zinc-400">
-                  {settings.eidTakbeeratEnabled
-                    ? `مفعّلة · ${activeEidVoice.titleAr}`
-                    : 'موقوفة'}
-                </p>
-              </div>
-            </div>
-            {openAccordion === 'eid' ? (
-              <ChevronUp className="h-5 w-5 text-[#C9A227]" />
-            ) : (
-              <ChevronDown className="h-5 w-5 text-[#C9A227]" />
-            )}
-          </button>
-
-          {openAccordion === 'eid' && (
-            <div className="space-y-3 border-t border-[#C9A227]/30 p-4">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-zinc-200">
-                  تشغيل تلقائي صباح العيد
-                </span>
-                <button
-                  type="button"
-                  onClick={() =>
-                    onUpdateSettings((s) => ({
-                      ...s,
-                      eidTakbeeratEnabled: !s.eidTakbeeratEnabled,
-                    }))
-                  }
-                  className={`min-h-[32px] rounded-xl px-3 text-xs font-extrabold ${
-                    settings.eidTakbeeratEnabled
-                      ? 'bg-[#C9A227] text-black'
-                      : 'border border-zinc-700 bg-black text-zinc-300'
-                  }`}
-                >
-                  {settings.eidTakbeeratEnabled ? 'مفعّل' : 'تفعيل'}
-                </button>
-              </div>
-
-              <div className="space-y-2">
-                {EID_TAKBEERAT_VOICES_3.map((v) => {
-                  const isChosen = activeEidVoice.id === v.id;
-                  const isPlayingThis = playingId === `eid-${v.id}`;
-                  return (
-                    <div
-                      key={v.id}
-                      className={`rounded-2xl border p-3 ${
-                        isChosen
-                          ? 'border-2 border-[#FCE38A] bg-[#161104]'
-                          : 'border-[#C9A227]/35 bg-black'
-                      }`}
-                    >
-                      <p className="text-xs font-extrabold text-white">
-                        {v.titleAr}
-                      </p>
-                      <p className="text-[11px] text-zinc-400">{v.reciterAr}</p>
-                      <div className="mt-2 flex items-center gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() => playSingleAudio(`eid-${v.id}`, v.url)}
-                          className="inline-flex min-h-[36px] flex-1 items-center justify-center gap-1 rounded-xl border border-[#C9A227]/60 bg-black text-xs font-bold text-[#FCE38A]"
-                        >
-                          {isPlayingThis ? (
-                            <Pause className="h-3.5 w-3.5" />
-                          ) : (
-                            <Play className="h-3.5 w-3.5" />
-                          )}
-                          <span>{isPlayingThis ? 'إيقاف' : 'استماع'}</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            stopAnyAudio();
-                            setVideoPreview({
-                              prayerNameAr: 'تكبيرات العيد',
-                              voice: {
-                                id: v.id,
-                                nameAr: v.titleAr,
-                                muezzinAr: v.reciterAr,
-                                locationAr: 'الحرمين الشريفين',
-                                url: v.url,
-                              },
-                              mode: 'eid',
-                            });
-                          }}
-                          className="inline-flex min-h-[36px] items-center justify-center gap-1 rounded-xl border border-[#FCE38A]/70 bg-[#141004] px-3 text-xs font-bold text-[#FCE38A]"
-                        >
-                          <Video className="h-4 w-4 text-[#C9A227]" />
-                          <span>فيديو</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            onUpdateSettings((s) => ({
-                              ...s,
-                              preferredEidTakbeer: v.id,
-                            }))
-                          }
-                          className={`min-h-[36px] flex-1 rounded-xl text-xs font-extrabold ${
-                            isChosen
-                              ? 'bg-[#C9A227] text-black'
-                              : 'bg-[#C9A227]/20 text-[#FCE38A]'
-                          }`}
-                        >
-                          {isChosen ? 'مختار' : 'اختيار'}
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-        </section>
-
-        {/* E) POST-ADHAN DUA, PRAY-CONFIRM, RAMADAN CANNON, KAHF, METHOD & OFFLINE PACK */}
-        <section className="overflow-hidden rounded-3xl border-2 border-[#C9A227] bg-[#050505]">
-          <button
-            type="button"
-            onClick={() =>
-              setOpenAccordion((prev) =>
-                prev === 'more_features' ? null : 'more_features',
-              )
-            }
-            className="flex min-h-[58px] w-full items-center justify-between gap-2 px-4 py-3 text-right"
-          >
-            <div className="flex items-center gap-2.5">
-              <Sparkles className="h-5 w-5 shrink-0 text-[#C9A227]" />
-              <div>
-                <h3 className="text-sm font-extrabold text-[#FCE38A]">
-                  دعاء الأذان · تذكير «صليت» · رمضان · الكهف · الحساب
-                </h3>
-                <p className="text-[11px] text-zinc-400">
-                  إعدادات الدعاء، تذكير الصلاة، طريقة الحساب والمذهب الفقهي
-                </p>
-              </div>
-            </div>
-            {openAccordion === 'more_features' ? (
-              <ChevronUp className="h-5 w-5 text-[#C9A227]" />
-            ) : (
-              <ChevronDown className="h-5 w-5 text-[#C9A227]" />
-            )}
-          </button>
-
-          {openAccordion === 'more_features' && (
-            <div className="space-y-3 border-t border-[#C9A227]/30 p-4">
-              {/* Post-Adhan Dua */}
-              <div className="space-y-2 rounded-2xl border border-[#C9A227]/45 bg-[#0A0904] p-3">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-xs font-extrabold text-[#FCE38A]">
-                    دعاء ما بعد الأذان تلقائيًا (صوت شيخ)
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      onUpdateSettings((s) => ({
-                        ...s,
-                        postAdhanDuaEnabled: !(s.postAdhanDuaEnabled ?? true),
-                      }))
-                    }
-                    className={`min-h-[30px] rounded-xl px-3 text-[11px] font-bold ${
-                      settings.postAdhanDuaEnabled ?? true
-                        ? 'bg-[#C9A227] text-black'
-                        : 'border border-zinc-700 bg-black text-zinc-300'
+          {/* Calculation Method Radio List */}
+          <div className="rounded-3xl bg-[#0F2225] p-4 text-white">
+            <h3 className="text-sm font-extrabold text-[#1FA47A]">
+              طريقة الحساب
+            </h3>
+            <div className="mt-2.5 grid grid-cols-1 gap-1.5">
+              {SETUP_CALC_METHODS.map((m) => {
+                const selected = settings.calculationMethod === m.id;
+                return (
+                  <label
+                    key={m.id}
+                    className={`flex min-h-[40px] cursor-pointer items-center justify-between rounded-xl border px-3 py-2 text-xs font-bold transition ${
+                      selected
+                        ? 'border-[#1FA47A] bg-[#1FA47A]/20 text-white'
+                        : 'border-white/10 bg-white/5 text-[#E8DCC8]'
                     }`}
                   >
-                    {settings.postAdhanDuaEnabled ?? true ? 'مفعّل' : 'تفعيل'}
-                  </button>
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      playSingleAudio('post-adhan-dua', POST_ADHAN_DUA.audioUrl)
-                    }
-                    className="inline-flex min-h-[36px] items-center justify-center gap-1 rounded-xl bg-[#C9A227] text-xs font-bold text-black"
-                  >
-                    {playingId === 'post-adhan-dua' ? (
-                      <Pause className="h-3.5 w-3.5" />
-                    ) : (
-                      <Play className="h-3.5 w-3.5" />
-                    )}
-                    <span>استماع للدعاء</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      stopAnyAudio();
-                      setVideoPreview({
-                        prayerNameAr: nextPrayer.nextNameAr,
-                        voice: selectedSlotVoice,
-                        mode: 'dua',
-                      });
-                    }}
-                    className="inline-flex min-h-[36px] items-center justify-center gap-1 rounded-xl border border-[#C9A227] bg-black text-xs font-bold text-[#FCE38A]"
-                  >
-                    <Video className="h-3.5 w-3.5" />
-                    <span>فيديو الدعاء</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Prayer Confirm Reminder */}
-              <div className="flex items-center justify-between gap-2 rounded-2xl border border-[#C9A227]/45 bg-[#0A0904] p-3">
-                <div>
-                  <p className="text-xs font-extrabold text-white">
-                    تنبيه متكرر حتى تضغط «صليت ✓»
-                  </p>
-                  <p className="text-[10px] text-zinc-400">
-                    يفكّرك كل 5 دقائق بعد الأذان حتى تأكيد الصلاة
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() =>
-                    onUpdateSettings((s) => ({
-                      ...s,
-                      prayerConfirmReminderEnabled: !(
-                        s.prayerConfirmReminderEnabled ?? true
-                      ),
-                    }))
-                  }
-                  className={`min-h-[30px] shrink-0 rounded-xl px-3 text-[11px] font-bold ${
-                    settings.prayerConfirmReminderEnabled ?? true
-                      ? 'bg-[#C9A227] text-black'
-                      : 'border border-zinc-700 bg-black text-zinc-300'
-                  }`}
-                >
-                  {settings.prayerConfirmReminderEnabled ?? true
-                    ? 'مفعّل'
-                    : 'تفعيل'}
-                </button>
-              </div>
-
-              {/* Ramadan Cannon */}
-              <div className="flex items-center justify-between gap-2 rounded-2xl border border-[#C9A227]/45 bg-[#0A0904] p-3">
-                <div className="flex items-center gap-2">
-                  <Flame className="h-4 w-4 text-[#C9A227]" />
-                  <div>
-                    <p className="text-xs font-extrabold text-white">
-                      مدفع رمضان عند المغرب
-                    </p>
-                    <button
-                      type="button"
-                      onClick={playRamadanCannonSound}
-                      className="text-[11px] font-bold text-[#FCE38A] underline"
-                    >
-                      تجربة صوت المدفع
-                    </button>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() =>
-                    onUpdateSettings((s) => ({
-                      ...s,
-                      ramadanCannonEnabled: !s.ramadanCannonEnabled,
-                    }))
-                  }
-                  className={`min-h-[30px] shrink-0 rounded-xl px-3 text-[11px] font-bold ${
-                    settings.ramadanCannonEnabled
-                      ? 'bg-[#C9A227] text-black'
-                      : 'border border-zinc-700 bg-black text-zinc-300'
-                  }`}
-                >
-                  {settings.ramadanCannonEnabled ? 'مفعّل' : 'تفعيل'}
-                </button>
-              </div>
-
-              {/* Friday Al-Kahf */}
-              <div className="space-y-2 rounded-2xl border border-[#C9A227]/45 bg-[#0A0904] p-3">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2">
-                    <BookOpen className="h-4 w-4 text-[#C9A227]" />
-                    <span className="text-xs font-extrabold text-white">
-                      سورة الكهف يوم الجمعة
+                    <span className="flex items-center gap-2">
+                      <input
+                        type="radio"
+                        name="muezzin-calc-method"
+                        checked={selected}
+                        onChange={() =>
+                          onUpdateSettings((s) => ({
+                            ...s,
+                            calculationMethod: m.id,
+                          }))
+                        }
+                        className="h-4 w-4 accent-[#1FA47A]"
+                      />
+                      <span>{m.labelAr}</span>
                     </span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      onUpdateSettings((s) => ({
-                        ...s,
-                        fridayKahfReminder: !s.fridayKahfReminder,
-                      }))
-                    }
-                    className={`min-h-[30px] rounded-xl px-3 text-[11px] font-bold ${
-                      settings.fridayKahfReminder
-                        ? 'bg-[#C9A227] text-black'
-                        : 'border border-zinc-700 bg-black text-zinc-300'
-                    }`}
-                  >
-                    {settings.fridayKahfReminder ? 'مفعّل' : 'تفعيل'}
-                  </button>
-                </div>
-                <div className="flex gap-2">
-                  <select
-                    aria-label="قارئ سورة الكهف"
-                    value={activeKahfVoice.id}
+                    {m.id === 'Egyptian' && (
+                      <span className="rounded-lg bg-[#1FA47A]/30 px-2 py-0.5 text-[10px] text-[#34D399]">
+                        الافتراضي
+                      </span>
+                    )}
+                  </label>
+                );
+              })}
+            </div>
+
+            {settings.calculationMethod === 'Custom' && (
+              <div className="mt-2.5 grid grid-cols-2 gap-2 rounded-2xl bg-black/30 p-3">
+                <label className="space-y-1 text-[11px] font-bold text-[#E8DCC8]">
+                  <span>زاوية الفجر (°)</span>
+                  <input
+                    type="number"
+                    step="0.5"
+                    min={10}
+                    max={25}
+                    value={settings.customFajrAngle ?? 18.5}
                     onChange={(e) =>
                       onUpdateSettings((s) => ({
                         ...s,
-                        preferredFridayKahf: e.target.value,
+                        customFajrAngle: Number(e.target.value) || 18.5,
                       }))
                     }
-                    className="min-h-[36px] flex-1 rounded-xl border border-[#C9A227]/55 bg-black px-2 text-xs font-bold text-white outline-none"
-                  >
-                    {FRIDAY_KAHF_VOICES_3.map((k) => (
-                      <option key={k.id} value={k.id}>
-                        {k.reciterAr}
-                      </option>
-                    ))}
-                  </select>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      playSingleAudio(
-                        `kahf-${activeKahfVoice.id}`,
-                        activeKahfVoice.url,
-                      )
+                    className="w-full rounded-xl border border-[#1FA47A]/50 bg-[#0F2225] px-2.5 py-1.5 text-center text-white"
+                  />
+                </label>
+                <label className="space-y-1 text-[11px] font-bold text-[#E8DCC8]">
+                  <span>زاوية العشاء (°)</span>
+                  <input
+                    type="number"
+                    step="0.5"
+                    min={10}
+                    max={25}
+                    value={settings.customIshaAngle ?? 17.5}
+                    onChange={(e) =>
+                      onUpdateSettings((s) => ({
+                        ...s,
+                        customIshaAngle: Number(e.target.value) || 17.5,
+                      }))
                     }
-                    className="inline-flex min-h-[36px] items-center gap-1 rounded-xl bg-[#C9A227] px-3 text-xs font-bold text-black"
-                  >
-                    {playingId === `kahf-${activeKahfVoice.id}` ? (
-                      <Pause className="h-3.5 w-3.5" />
-                    ) : (
-                      <Play className="h-3.5 w-3.5" />
-                    )}
-                    <span>تشغيل</span>
-                  </button>
-                </div>
+                    className="w-full rounded-xl border border-[#1FA47A]/50 bg-[#0F2225] px-2.5 py-1.5 text-center text-white"
+                  />
+                </label>
               </div>
+            )}
+          </div>
 
-              {/* Post-Prayer Azkar */}
-              <div className="flex items-center justify-between gap-2 rounded-2xl border border-[#C9A227]/45 bg-[#0A0904] p-3">
-                <div>
-                  <p className="text-xs font-extrabold text-white">
-                    أذكار بعد الصلاة
-                  </p>
-                  <button
-                    type="button"
-                    onClick={playPostPrayerAzkarSequence}
-                    className="text-[11px] font-bold text-[#FCE38A] underline"
-                  >
-                    {playingId === 'special-post-azkar'
-                      ? 'إيقاف الأذكار'
-                      : 'استماع الآن'}
-                  </button>
-                </div>
+          {/* Time Format + DST + Pre-Adhan Slider */}
+          <div className="space-y-3 rounded-3xl bg-[#0F2225] p-4 text-white">
+            {/* تنسيق الوقت: 12 ساعة / 24 ساعة */}
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs font-extrabold text-[#E8DCC8]">
+                تنسيق الوقت
+              </span>
+              <div className="grid grid-cols-2 gap-1.5">
                 <button
                   type="button"
                   onClick={() =>
-                    onUpdateSettings((s) => ({
-                      ...s,
-                      postPrayerAzkarEnabled: !s.postPrayerAzkarEnabled,
-                    }))
+                    onUpdateSettings((s) => ({...s, timeFormat: '12'}))
                   }
-                  className={`min-h-[30px] shrink-0 rounded-xl px-3 text-[11px] font-bold ${
-                    settings.postPrayerAzkarEnabled
-                      ? 'bg-[#C9A227] text-black'
-                      : 'border border-zinc-700 bg-black text-zinc-300'
+                  className={`min-h-[36px] rounded-xl px-3 text-xs font-extrabold ${
+                    timeFormat === '12'
+                      ? 'bg-[#1FA47A] text-white'
+                      : 'bg-white/10 text-[#E8DCC8]'
                   }`}
                 >
-                  {settings.postPrayerAzkarEnabled ? 'مفعّل' : 'تفعيل'}
+                  12 ساعة
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    onUpdateSettings((s) => ({...s, timeFormat: '24'}))
+                  }
+                  className={`min-h-[36px] rounded-xl px-3 text-xs font-extrabold ${
+                    timeFormat === '24'
+                      ? 'bg-[#1FA47A] text-white'
+                      : 'bg-white/10 text-[#E8DCC8]'
+                  }`}
+                >
+                  24 ساعة
+                </button>
+              </div>
+            </div>
+
+            {/* التوقيت الصيفي Toggle */}
+            <div className="flex items-center justify-between border-t border-white/10 pt-3">
+              <div>
+                <p className="text-xs font-extrabold text-[#E8DCC8]">
+                  التوقيت الصيفي
+                </p>
+                <p className="text-[10px] text-[#E8DCC8]/70">
+                  إضافة +60 دقيقة تلقائيًا حسب التوقيت الصيفي
+                </p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={dstEnabled}
+                onClick={() =>
+                  onUpdateSettings((s) => ({...s, dstEnabled: !dstEnabled}))
+                }
+                className={`relative h-7 w-12 rounded-full transition-colors ${
+                  dstEnabled ? 'bg-[#1FA47A]' : 'bg-white/20'
+                }`}
+              >
+                <span
+                  className={`absolute top-1 h-5 w-5 rounded-full bg-white transition-all ${
+                    dstEnabled ? 'left-1' : 'right-1'
+                  }`}
+                />
+              </button>
+            </div>
+
+            {/* تنبيه باقتراب الصلاة Toggle + Slider (10 to 30 min) */}
+            <div className="space-y-2 border-t border-white/10 pt-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs font-extrabold text-[#E8DCC8]">
+                    تنبيه باقتراب الصلاة
+                  </p>
+                  <p className="text-[11px] font-bold text-[#1FA47A]">
+                    {preAdhanEnabled
+                      ? `${preAdhanSliderMinutes} دقيقة قبل الأذان`
+                      : 'متوقف حاليًا'}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={preAdhanEnabled}
+                  onClick={() =>
+                    onUpdateSettings((s) => ({
+                      ...s,
+                      preAdhanEnabled: !preAdhanEnabled,
+                      preAdhanMinutes: !preAdhanEnabled
+                        ? preAdhanSliderMinutes
+                        : 0,
+                    }))
+                  }
+                  className={`relative h-7 w-12 rounded-full transition-colors ${
+                    preAdhanEnabled ? 'bg-[#1FA47A]' : 'bg-white/20'
+                  }`}
+                >
+                  <span
+                    className={`absolute top-1 h-5 w-5 rounded-full bg-white transition-all ${
+                      preAdhanEnabled ? 'left-1' : 'right-1'
+                    }`}
+                  />
                 </button>
               </div>
 
-              {/* Calculation Method & Madhab */}
-              <div className="space-y-2 rounded-2xl border border-[#C9A227]/45 bg-[#0A0904] p-3">
-                <p className="text-xs font-extrabold text-[#FCE38A]">
-                  طريقة الحساب والمذهب الفقهي
-                </p>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      onUpdateSettings((s) => ({...s, madhab: 'Shafi'}))
-                    }
-                    className={`min-h-[36px] rounded-xl border text-xs font-bold ${
-                      settings.madhab === 'Shafi'
-                        ? 'border-[#C9A227] bg-[#C9A227] text-black'
-                        : 'border-[#C9A227]/45 bg-black text-zinc-200'
-                    }`}
-                  >
-                    الشافعي والجمهور
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      onUpdateSettings((s) => ({...s, madhab: 'Hanafi'}))
-                    }
-                    className={`min-h-[36px] rounded-xl border text-xs font-bold ${
-                      settings.madhab === 'Hanafi'
-                        ? 'border-[#C9A227] bg-[#C9A227] text-black'
-                        : 'border-[#C9A227]/45 bg-black text-zinc-200'
-                    }`}
-                  >
-                    المذهب الحنفي
-                  </button>
+              {preAdhanEnabled && (
+                <div className="space-y-1">
+                  <input
+                    type="range"
+                    min={10}
+                    max={30}
+                    step={1}
+                    value={preAdhanSliderMinutes}
+                    onChange={(e) => {
+                      const val = Number(e.target.value);
+                      onUpdateSettings((s) => ({
+                        ...s,
+                        preAdhanEnabled: true,
+                        preAdhanMinutes: val,
+                      }));
+                    }}
+                    className="h-2 w-full cursor-pointer accent-[#1FA47A]"
+                  />
+                  <div className="flex justify-between text-[10px] font-bold text-[#E8DCC8]/75">
+                    <span>10 دقائق</span>
+                    <span className="text-[#1FA47A]">
+                      {preAdhanSliderMinutes} دقيقة قبل الأذان
+                    </span>
+                    <span>30 دقيقة</span>
+                  </div>
                 </div>
-                <select
-                  aria-label="طريقة الحساب المعتمدة"
-                  value={settings.calculationMethod}
-                  onChange={(e) =>
-                    onUpdateSettings((s) => ({
-                      ...s,
-                      calculationMethod: e.target.value as CalculationMethodId,
-                    }))
-                  }
-                  className="min-h-[38px] w-full rounded-xl border border-[#C9A227]/60 bg-black px-2.5 text-xs font-bold text-white outline-none"
-                >
-                  {CALCULATION_METHODS.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.labelAr}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              )}
             </div>
-          )}
-        </section>
-      </div>
+          </div>
 
-      {/* City Picker Modal */}
-      {cityPickerOpen && (
-        <div className="fixed inset-0 z-50 flex w-full items-end justify-center bg-black/90 p-0 sm:items-center sm:p-3">
-          <div className="flex max-h-[85vh] w-full flex-col rounded-3xl border-2 border-[#C9A227] bg-[#050505] text-white">
-            <div className="flex items-center justify-between border-b border-[#C9A227]/35 px-4 py-3.5">
-              <h3 className="text-sm font-bold text-[#FCE38A]">
-                اختيار المدينة للمؤذن
-              </h3>
+          <button
+            type="button"
+            onClick={handleFinishSetup}
+            className="flex min-h-[52px] w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-l from-[#24B98A] via-[#1FA47A] to-[#137A59] text-base font-extrabold text-white shadow-lg active:scale-[0.99]"
+          >
+            <span>ابدأ الآن</span>
+          </button>
+        </section>
+      )}
+
+      {/* ==================== PAGE 3: PER-PRAYER ADHAN SETUP ==================== */}
+      {step === 'per_prayer' && (
+        <section className="space-y-3">
+          <div className="rounded-3xl bg-[#0F2225] p-4 text-white">
+            <h2 className="text-base font-extrabold text-[#E8DCC8]">
+              إعداد الأذان - اختر صوت الأذان ونوع التنبيه لكل صلاة
+            </h2>
+            <p className="mt-0.5 text-xs text-[#E8DCC8]/75">
+              يمكنك اختيار صوت ونوع تنبيه مستقل لكل صلاة، مع معاينة الصوت والفيديو
+              بدون إنترنت
+            </p>
+
+            {/* Preview "الأذان الآن" Screen Button */}
+            <button
+              type="button"
+              onClick={() => {
+                stopAnyAudio();
+                const fajrVoice = resolveAdhanVoiceById(
+                  perPrayerVoiceMap.fajr || perPrayerAdhan.fajr,
+                );
+                setVideoPreview({
+                  prayerNameAr: nextPrayer.nextNameAr,
+                  voice: fajrVoice,
+                  mode: 'adhan',
+                });
+              }}
+              className="mt-2.5 flex min-h-[44px] w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-l from-[#24B98A] to-[#1FA47A] text-xs font-extrabold text-white active:scale-[0.99]"
+            >
+              <Radio className="h-4 w-4" />
+              <span>معاينة شاشة «الأذان الآن» كاملة</span>
+            </button>
+          </div>
+
+          {audioErr && (
+            <p className="rounded-2xl bg-rose-900/90 px-3 py-2 text-center text-xs font-bold text-white">
+              {audioErr}
+            </p>
+          )}
+
+          {/* 6 SEPARATE PRAYER CARDS: الفجر - الشروق - الظهر - العصر - المغرب - العشاء */}
+          <div className="space-y-3">
+            {SIX_PRAYERS.map((prayer) => {
+              const mode = perPrayerAlertMode[prayer.key];
+              const rawVoiceId = perPrayerVoiceMap[prayer.key] || '';
+              const hasChosenVoice =
+                Boolean(rawVoiceId) && rawVoiceId !== 'unselected';
+              const resolvedVoice = resolveAdhanVoiceById(rawVoiceId);
+              const isPlayingCard = playingId === `card-${prayer.key}`;
+              const prayerTimeFormatted = getPrayerFormattedTime(prayer.key);
+
+              return (
+                <div
+                  key={prayer.key}
+                  className="space-y-2.5 rounded-3xl bg-[#0F2225] p-3.5 text-white shadow-md"
+                >
+                  {/* Header: Green Prayer Name on Right, Time on Left */}
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <span className="h-2.5 w-2.5 rounded-full bg-[#1FA47A]" />
+                      <h3 className="text-base font-extrabold text-[#1FA47A]">
+                        {prayer.nameAr}
+                      </h3>
+                    </div>
+
+                    <span
+                      dir="ltr"
+                      className="font-mono-num rounded-xl bg-white/10 px-2.5 py-1 text-sm font-extrabold text-[#E8DCC8]"
+                    >
+                      {prayerTimeFormatted}
+                    </span>
+                  </div>
+
+                  {/* 4 Alert Mode Buttons: إيقاف - صامت - صوتي - مرئي */}
+                  <div className="grid grid-cols-4 gap-1.5">
+                    {ALERT_MODE_BUTTONS.map((btn) => {
+                      const Icon = btn.icon;
+                      const isActive = mode === btn.mode;
+                      return (
+                        <button
+                          key={btn.mode}
+                          type="button"
+                          onClick={() =>
+                            handleSetPrayerAlertMode(prayer.key, btn.mode)
+                          }
+                          className={`flex min-h-[38px] items-center justify-center gap-1 rounded-xl border px-1 text-[11px] font-extrabold transition ${
+                            isActive
+                              ? 'border-[#1FA47A] bg-[#1FA47A] text-white'
+                              : 'border-white/15 bg-white/5 text-[#E8DCC8]/85'
+                          }`}
+                        >
+                          <Icon className="h-3.5 w-3.5 shrink-0" />
+                          <span>{btn.labelAr}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Sound Picker + Audio Preview + Video Preview when صوتي or مرئي */}
+                  {(mode === 'audio' || mode === 'visual') && (
+                    <div className="space-y-2 rounded-2xl bg-black/25 p-2.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-bold text-[#E8DCC8]">
+                          الصوت المختار:{' '}
+                          <span
+                            className={
+                              hasChosenVoice
+                                ? 'font-extrabold text-[#34D399]'
+                                : 'font-bold text-amber-300'
+                            }
+                          >
+                            {hasChosenVoice
+                              ? resolvedVoice.nameAr
+                              : 'لم يختر بعد'}
+                          </span>
+                        </span>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowMoreVoicesInPopup(false);
+                            setPopupPrayer(prayer.key);
+                          }}
+                          className="inline-flex min-h-[34px] shrink-0 items-center gap-1 rounded-xl bg-gradient-to-l from-[#24B98A] to-[#1FA47A] px-3 text-xs font-extrabold text-white active:scale-95"
+                        >
+                          <Sparkles className="h-3.5 w-3.5" />
+                          <span>اختر صوتاً</span>
+                        </button>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            playSingleAudio(
+                              `card-${prayer.key}`,
+                              resolvedVoice.url,
+                              resolvedVoice.fallbackUrl,
+                            )
+                          }
+                          className={`inline-flex min-h-[36px] items-center justify-center gap-1.5 rounded-xl border text-xs font-bold ${
+                            isPlayingCard
+                              ? 'border-[#1FA47A] bg-[#1FA47A] text-white'
+                              : 'border-[#1FA47A]/50 bg-[#0F2225] text-[#E8DCC8]'
+                          }`}
+                        >
+                          {isPlayingCard ? (
+                            <Pause className="h-3.5 w-3.5" />
+                          ) : (
+                            <Play className="h-3.5 w-3.5" />
+                          )}
+                          <span>
+                            {isPlayingCard ? 'إيقاف الصوت' : 'معاينة صوت'}
+                          </span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            stopAnyAudio();
+                            setVideoPreview({
+                              prayerNameAr: prayer.nameAr,
+                              voice: resolvedVoice,
+                              mode: 'adhan',
+                            });
+                          }}
+                          className="inline-flex min-h-[36px] items-center justify-center gap-1.5 rounded-xl border border-[#1FA47A]/50 bg-[#0F2225] text-xs font-bold text-[#E8DCC8]"
+                        >
+                          <Video className="h-3.5 w-3.5 text-[#1FA47A]" />
+                          <span>معاينة فيديو</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
+      {/* ==================== VOICE SELECTION POPUP (5 OFFLINE VOICES + AUDIO & VIDEO PREVIEW) ==================== */}
+      {popupPrayer && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/80 p-2 sm:items-center">
+          <div className="animate-sheet-up flex max-h-[88dvh] w-full max-w-[390px] flex-col rounded-3xl border-2 border-[#1FA47A] bg-[#0F2225] p-4 text-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-white/15 pb-3">
+              <div>
+                <h3 className="text-base font-extrabold text-[#E8DCC8]">
+                  اختر صوت الأذان — {popupPrayerLabel}
+                </h3>
+                <p className="text-[11px] text-[#1FA47A]">
+                  يعمل أوفلاين بالكامل · يحفظ لهذه الصلاة فقط
+                </p>
+              </div>
               <button
                 type="button"
-                onClick={() => setCityPickerOpen(false)}
+                onClick={() => setPopupPrayer(null)}
                 aria-label="إغلاق"
-                className="flex h-9 w-9 items-center justify-center rounded-xl border border-[#C9A227]/50 text-[#F3D56B]"
+                className="flex h-9 w-9 items-center justify-center rounded-xl border border-[#1FA47A]/50 text-[#E8DCC8]"
               >
                 <X className="h-4 w-4" />
               </button>
             </div>
 
-            <div className="p-3.5">
-              <div className="relative">
-                <Search className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#C9A227]" />
-                <input
-                  type="text"
-                  value={citySearch}
-                  onChange={(e) => setCitySearch(e.target.value)}
-                  placeholder="ابحث عن مدينة أو دولة..."
-                  className="w-full rounded-xl border border-[#C9A227]/50 bg-[#0D0D0D] py-2.5 pr-9 pl-3 text-xs text-white outline-none focus:border-[#C9A227]"
-                />
-              </div>
+            <div className="mt-3 flex-1 space-y-2.5 overflow-y-auto pl-1 touch-pan-y">
+              {(showMoreVoicesInPopup
+                ? [...MUEZZIN_POPUP_VOICES_5, ...ADHAN_VOICES_30]
+                : MUEZZIN_POPUP_VOICES_5
+              ).map((voice) => {
+                const isSelected = perPrayerVoiceMap[popupPrayer] === voice.id;
+                const isPreviewPlaying = playingId === `popup-${voice.id}`;
+                return (
+                  <div
+                    key={voice.id}
+                    className={`rounded-2xl border p-3 ${
+                      isSelected
+                        ? 'border-2 border-[#1FA47A] bg-[#1FA47A]/20'
+                        : 'border-white/15 bg-black/25'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <h4 className="truncate text-sm font-extrabold text-[#E8DCC8]">
+                          {voice.nameAr}
+                        </h4>
+                        <p className="truncate text-[11px] text-[#E8DCC8]/70">
+                          {voice.muezzinAr} · {voice.locationAr}
+                        </p>
+                      </div>
+                      {isSelected && (
+                        <span className="rounded-lg bg-[#1FA47A] px-2 py-0.5 text-[10px] font-extrabold text-white">
+                          مختار ✓
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="mt-2.5 grid grid-cols-3 gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          playSingleAudio(
+                            `popup-${voice.id}`,
+                            voice.url,
+                            voice.fallbackUrl,
+                          )
+                        }
+                        className={`inline-flex min-h-[36px] items-center justify-center gap-1 rounded-xl border text-[11px] font-bold ${
+                          isPreviewPlaying
+                            ? 'border-[#1FA47A] bg-[#1FA47A] text-white'
+                            : 'border-[#1FA47A]/50 bg-[#0F2225] text-[#E8DCC8]'
+                        }`}
+                      >
+                        {isPreviewPlaying ? (
+                          <Pause className="h-3.5 w-3.5" />
+                        ) : (
+                          <Play className="h-3.5 w-3.5" />
+                        )}
+                        <span>{isPreviewPlaying ? 'إيقاف' : 'معاينة ▶️'}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          stopAnyAudio();
+                          setVideoPreview({
+                            prayerNameAr: popupPrayerLabel,
+                            voice,
+                            mode: 'adhan',
+                          });
+                        }}
+                        className="inline-flex min-h-[36px] items-center justify-center gap-1 rounded-xl border border-[#1FA47A]/50 bg-[#0F2225] text-[11px] font-bold text-[#E8DCC8]"
+                      >
+                        <Video className="h-3.5 w-3.5 text-[#1FA47A]" />
+                        <span>فيديو 🎬</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleSelectVoiceForPrayer(popupPrayer, voice.id)
+                        }
+                        className="inline-flex min-h-[36px] items-center justify-center gap-1 rounded-xl bg-gradient-to-l from-[#24B98A] to-[#1FA47A] text-[11px] font-extrabold text-white active:scale-95"
+                      >
+                        <Check className="h-3.5 w-3.5" />
+                        <span>اختيار</span>
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+
+              <button
+                type="button"
+                onClick={() => setShowMoreVoicesInPopup((v) => !v)}
+                className="w-full rounded-xl border border-white/15 bg-white/5 py-2 text-xs font-bold text-[#E8DCC8]"
+              >
+                {showMoreVoicesInPopup
+                  ? 'عرض الأصوات الأساسية الخمسة فقط'
+                  : 'عرض المزيد من المؤذنين (30 مؤذن)'}
+              </button>
             </div>
 
-            <div className="flex-1 space-y-1.5 overflow-y-auto px-3.5 pb-4">
-              {filteredCities.map((c) => (
-                <button
-                  key={`${c.city}-${c.country}`}
-                  type="button"
-                  onClick={() => {
-                    onSelectLocation(c);
-                    setCityPickerOpen(false);
-                  }}
-                  className="flex min-h-[46px] w-full items-center justify-between rounded-2xl border border-[#C9A227]/30 bg-[#0A0904] px-3 py-2 text-right"
-                >
-                  <div>
-                    <p className="text-xs font-bold text-white">{c.city}</p>
-                    <p className="text-[11px] text-zinc-400">{c.country}</p>
+            {perPrayerVoiceMap[popupPrayer] && (
+              <button
+                type="button"
+                onClick={() =>
+                  handleApplyVoiceToAllPrayers(perPrayerVoiceMap[popupPrayer])
+                }
+                className="mt-3 flex min-h-[40px] w-full items-center justify-center gap-1.5 rounded-2xl border border-[#1FA47A] bg-black/30 text-xs font-bold text-[#E8DCC8]"
+              >
+                <Clock className="h-3.5 w-3.5 text-[#1FA47A]" />
+                <span>تعميم الصوت المختار على جميع الصلوات</span>
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ==================== ADHAN TOP SETTINGS MODAL (PRE-PRAYER / IQAMAH / POST-ADHAN DUA) ==================== */}
+      {settingsOpen && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/85 p-2 sm:items-center">
+          <div className="animate-sheet-up flex max-h-[90dvh] w-full max-w-[400px] flex-col rounded-3xl border-2 border-[#1FA47A] bg-[#0F2225] p-4 text-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-white/15 pb-3">
+              <div>
+                <h3 className="text-base font-extrabold text-[#E8DCC8]">
+                  إعدادات الأذان والتنبيهات
+                </h3>
+                <p className="text-[11px] text-[#1FA47A]">
+                  أصوات شيوخ حقيقية · يعمل في الخلفية وبدون نت
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveVoicePickerTab(null);
+                  setSettingsOpen(false);
+                }}
+                aria-label="إغلاق الإعدادات"
+                className="flex h-9 w-9 items-center justify-center rounded-xl border border-[#1FA47A]/50 text-[#E8DCC8]"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="mt-3 flex-1 space-y-3 overflow-y-auto pl-1 touch-pan-y">
+              {/* Auto-Location & Real Background Permissions */}
+              <div className="space-y-2 rounded-2xl border border-[#1FA47A]/40 bg-black/30 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="flex items-center gap-1.5 text-xs font-extrabold text-[#E8DCC8]">
+                      <MapPin className="h-3.5 w-3.5 text-[#1FA47A]" />
+                      <span>
+                        الموقع الحالي: {location.city}، {location.country}
+                      </span>
+                    </p>
+                    <p className="text-[10px] text-[#E8DCC8]/70">
+                      تحديث تلقائي للمواقيت والقبلة والأذونات ({grantedCount}/5)
+                    </p>
                   </div>
-                  <span className="font-mono-num text-xs text-[#C9A227]">
-                    {c.latitude.toFixed(1)}°
+                  <button
+                    type="button"
+                    onClick={() => void grantLocationPermission()}
+                    disabled={gpsLoading}
+                    className="inline-flex min-h-[34px] shrink-0 items-center gap-1 rounded-xl bg-[#1FA47A] px-2.5 text-[11px] font-extrabold text-white active:scale-95"
+                  >
+                    <Navigation className="h-3.5 w-3.5" />
+                    <span>{gpsLoading ? '...' : 'GPS تلقائي'}</span>
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  disabled={grantingAll}
+                  onClick={() => void grantAllRealBackgroundPermissions(false)}
+                  className="flex min-h-[40px] w-full items-center justify-center gap-1.5 rounded-xl border border-[#1FA47A] bg-[#1FA47A]/20 px-3 text-xs font-extrabold text-[#34D399] active:scale-[0.98]"
+                >
+                  <ShieldCheck className="h-4 w-4" />
+                  <span>
+                    {grantingAll
+                      ? 'جاري تفعيل الأذونات...'
+                      : 'تفعيل أذونات الخلفية والإشعارات الحقيقية (أوفلاين)'}
                   </span>
                 </button>
-              ))}
+
+                {statusNote && (
+                  <p className="text-center text-[11px] font-bold text-[#34D399]">
+                    {statusNote}
+                  </p>
+                )}
+              </div>
+
+              {/* BUTTON 1: تنبيه قبل الصلاة (10 أصوات شيوخ) */}
+              <div className="space-y-2.5 rounded-2xl border border-[#1FA47A]/45 bg-black/25 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <h4 className="flex items-center gap-1.5 text-sm font-extrabold text-[#E8DCC8]">
+                      <Bell className="h-4 w-4 text-[#1FA47A]" />
+                      <span>تنبيه قبل الصلاة</span>
+                    </h4>
+                    <p className="text-[11px] text-[#1FA47A]">
+                      {preAdhanEnabled
+                        ? `قبل الأذان بـ ${preAdhanSliderMinutes} دقيقة · ${selectedPreVoice.nameAr}`
+                        : 'متوقف حاليًا'}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={preAdhanEnabled}
+                    onClick={() =>
+                      onUpdateSettings((s) => ({
+                        ...s,
+                        preAdhanEnabled: !preAdhanEnabled,
+                        preAdhanMinutes: !preAdhanEnabled
+                          ? preAdhanSliderMinutes
+                          : 0,
+                      }))
+                    }
+                    className={`relative h-7 w-12 shrink-0 rounded-full transition-colors ${
+                      preAdhanEnabled ? 'bg-[#1FA47A]' : 'bg-white/20'
+                    }`}
+                  >
+                    <span
+                      className={`absolute top-1 h-5 w-5 rounded-full bg-white transition-all ${
+                        preAdhanEnabled ? 'left-1' : 'right-1'
+                      }`}
+                    />
+                  </button>
+                </div>
+
+                {preAdhanEnabled && (
+                  <div className="space-y-1.5">
+                    <div className="grid grid-cols-5 gap-1">
+                      {[5, 10, 15, 20, 30].map((m) => (
+                        <button
+                          key={m}
+                          type="button"
+                          onClick={() =>
+                            onUpdateSettings((s) => ({
+                              ...s,
+                              preAdhanEnabled: true,
+                              preAdhanMinutes: m,
+                            }))
+                          }
+                          className={`min-h-[32px] rounded-xl text-[11px] font-extrabold ${
+                            preAdhanSliderMinutes === m
+                              ? 'bg-[#1FA47A] text-white'
+                              : 'bg-white/10 text-[#E8DCC8]'
+                          }`}
+                        >
+                          {m} د
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => setActiveVoicePickerTab('pre')}
+                  className="flex min-h-[44px] w-full items-center justify-between gap-2 rounded-xl bg-gradient-to-l from-[#24B98A] to-[#1FA47A] px-3 text-xs font-extrabold text-white active:scale-[0.98]"
+                >
+                  <span className="flex items-center gap-1.5">
+                    <Volume2 className="h-4 w-4" />
+                    <span>تنبيه قبل الصلاة — اختر من 10 أصوات شيوخ</span>
+                  </span>
+                  <span className="rounded-lg bg-black/25 px-2 py-0.5 text-[10px]">
+                    10 شيوخ
+                  </span>
+                </button>
+              </div>
+
+              {/* BUTTON 2: الإقامة (10 أصوات حقيقية) */}
+              <div className="space-y-2.5 rounded-2xl border border-[#1FA47A]/45 bg-black/25 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <h4 className="flex items-center gap-1.5 text-sm font-extrabold text-[#E8DCC8]">
+                      <AlarmClock className="h-4 w-4 text-[#1FA47A]" />
+                      <span>الإقامة</span>
+                    </h4>
+                    <p className="text-[11px] text-[#1FA47A]">
+                      {iqamahEnabled
+                        ? `بعد الأذان بـ ${iqamahMinutes} دقيقة · ${selectedIqamahVoice.nameAr}`
+                        : 'متوقفة حاليًا'}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={iqamahEnabled}
+                    onClick={() =>
+                      onUpdateSettings((s) => ({
+                        ...s,
+                        iqamahEnabled: !iqamahEnabled,
+                      }))
+                    }
+                    className={`relative h-7 w-12 shrink-0 rounded-full transition-colors ${
+                      iqamahEnabled ? 'bg-[#1FA47A]' : 'bg-white/20'
+                    }`}
+                  >
+                    <span
+                      className={`absolute top-1 h-5 w-5 rounded-full bg-white transition-all ${
+                        iqamahEnabled ? 'left-1' : 'right-1'
+                      }`}
+                    />
+                  </button>
+                </div>
+
+                {iqamahEnabled && (
+                  <div className="grid grid-cols-5 gap-1">
+                    {[5, 10, 15, 20, 30].map((m) => (
+                      <button
+                        key={m}
+                        type="button"
+                        onClick={() =>
+                          onUpdateSettings((s) => ({
+                            ...s,
+                            iqamahEnabled: true,
+                            iqamahMinutes: m,
+                          }))
+                        }
+                        className={`min-h-[32px] rounded-xl text-[11px] font-extrabold ${
+                          iqamahMinutes === m
+                            ? 'bg-[#1FA47A] text-white'
+                            : 'bg-white/10 text-[#E8DCC8]'
+                        }`}
+                      >
+                        {m} د
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => setActiveVoicePickerTab('iqamah')}
+                  className="flex min-h-[44px] w-full items-center justify-between gap-2 rounded-xl bg-gradient-to-l from-[#24B98A] to-[#1FA47A] px-3 text-xs font-extrabold text-white active:scale-[0.98]"
+                >
+                  <span className="flex items-center gap-1.5">
+                    <AlarmClock className="h-4 w-4" />
+                    <span>الإقامة — اختر من 10 أصوات شيوخ</span>
+                  </span>
+                  <span className="rounded-lg bg-black/25 px-2 py-0.5 text-[10px]">
+                    10 شيوخ
+                  </span>
+                </button>
+              </div>
+
+              {/* BUTTON 3: دعاء بعد الصلاة (ضبط الوقت + 10 أصوات شيوخ) */}
+              <div className="space-y-2.5 rounded-2xl border border-[#1FA47A]/45 bg-black/25 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <h4 className="flex items-center gap-1.5 text-sm font-extrabold text-[#E8DCC8]">
+                      <BookOpen className="h-4 w-4 text-[#1FA47A]" />
+                      <span>دعاء بعد الصلاة</span>
+                    </h4>
+                    <p className="text-[11px] text-[#1FA47A]">
+                      {postAdhanDuaEnabled
+                        ? `بعد الأذان بـ ${
+                            postAdhanDuaDelaySeconds >= 60
+                              ? `${(postAdhanDuaDelaySeconds / 60).toFixed(postAdhanDuaDelaySeconds % 60 === 0 ? 0 : 1)} دقيقة`
+                              : `${postAdhanDuaDelaySeconds} ثانية`
+                          } · ${selectedDuaVoice.nameAr}`
+                        : 'متوقف حاليًا'}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={postAdhanDuaEnabled}
+                    onClick={() =>
+                      onUpdateSettings((s) => ({
+                        ...s,
+                        postAdhanDuaEnabled: !postAdhanDuaEnabled,
+                      }))
+                    }
+                    className={`relative h-7 w-12 shrink-0 rounded-full transition-colors ${
+                      postAdhanDuaEnabled ? 'bg-[#1FA47A]' : 'bg-white/20'
+                    }`}
+                  >
+                    <span
+                      className={`absolute top-1 h-5 w-5 rounded-full bg-white transition-all ${
+                        postAdhanDuaEnabled ? 'left-1' : 'right-1'
+                      }`}
+                    />
+                  </button>
+                </div>
+
+                {postAdhanDuaEnabled && (
+                  <div className="space-y-2">
+                    <p className="text-[11px] font-bold text-[#E8DCC8]">
+                      توقيت تشغيل الدعاء بعد الأذان:
+                    </p>
+                    <div className="grid grid-cols-3 gap-1.5">
+                      {[
+                        {sec: 30, label: '30 ثانية'},
+                        {sec: 60, label: 'دقيقة'},
+                        {sec: 135, label: 'دقيقتان وربع'},
+                        {sec: 180, label: '3 دقائق'},
+                        {sec: 300, label: '5 دقائق'},
+                        {sec: 600, label: '10 دقائق'},
+                      ].map((opt) => (
+                        <button
+                          key={opt.sec}
+                          type="button"
+                          onClick={() =>
+                            onUpdateSettings((s) => ({
+                              ...s,
+                              postAdhanDuaEnabled: true,
+                              postAdhanDuaDelaySeconds: opt.sec,
+                            }))
+                          }
+                          className={`min-h-[32px] rounded-xl text-[11px] font-extrabold ${
+                            postAdhanDuaDelaySeconds === opt.sec
+                              ? 'bg-[#1FA47A] text-white'
+                              : 'bg-white/10 text-[#E8DCC8]'
+                          }`}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className="space-y-1 pt-1">
+                      <input
+                        type="range"
+                        min={30}
+                        max={600}
+                        step={15}
+                        value={Math.min(600, postAdhanDuaDelaySeconds)}
+                        onChange={(e) => {
+                          const sec = Number(e.target.value);
+                          onUpdateSettings((s) => ({
+                            ...s,
+                            postAdhanDuaEnabled: true,
+                            postAdhanDuaDelaySeconds: sec,
+                          }));
+                        }}
+                        className="h-2 w-full cursor-pointer accent-[#1FA47A]"
+                      />
+                      <div className="flex justify-between text-[10px] font-bold text-[#E8DCC8]/75">
+                        <span>30 ثانية</span>
+                        <span className="text-[#1FA47A]">
+                          {postAdhanDuaDelaySeconds >= 60
+                            ? `${Math.floor(postAdhanDuaDelaySeconds / 60)} د ${
+                                postAdhanDuaDelaySeconds % 60
+                                  ? `${postAdhanDuaDelaySeconds % 60} ث`
+                                  : ''
+                              }`
+                            : `${postAdhanDuaDelaySeconds} ثانية`}
+                        </span>
+                        <span>10 دقائق</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => setActiveVoicePickerTab('dua')}
+                  className="flex min-h-[44px] w-full items-center justify-between gap-2 rounded-xl bg-gradient-to-l from-[#24B98A] to-[#1FA47A] px-3 text-xs font-extrabold text-white active:scale-[0.98]"
+                >
+                  <span className="flex items-center gap-1.5">
+                    <BookOpen className="h-4 w-4" />
+                    <span>دعاء بعد الصلاة — اختر من 10 أصوات شيوخ</span>
+                  </span>
+                  <span className="rounded-lg bg-black/25 px-2 py-0.5 text-[10px]">
+                    10 شيوخ
+                  </span>
+                </button>
+              </div>
             </div>
           </div>
         </div>
       )}
 
-      {/* Fullscreen Video Overlay */}
+      {/* ==================== 10 REAL SHEIKH VOICES PICKER MODAL ==================== */}
+      {activeVoicePickerTab && (
+        <div className="fixed inset-0 z-[60] flex items-end justify-center bg-black/85 p-2 sm:items-center">
+          <div className="animate-sheet-up flex max-h-[88dvh] w-full max-w-[400px] flex-col rounded-3xl border-2 border-[#1FA47A] bg-[#0F2225] p-4 text-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-white/15 pb-3">
+              <div>
+                <h3 className="text-base font-extrabold text-[#E8DCC8]">
+                  {activeVoicePickerTab === 'pre'
+                    ? 'أصوات تنبيه قبل الصلاة (10 شيوخ)'
+                    : activeVoicePickerTab === 'iqamah'
+                      ? 'أصوات الإقامة (10 أصوات شيوخ)'
+                      : 'أصوات دعاء بعد الصلاة (10 شيوخ)'}
+                </h3>
+                <p className="text-[11px] text-[#1FA47A]">
+                  أصوات حقيقية محفوظة للعمل أوفلاين بدون إنترنت
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  stopAnyAudio();
+                  setActiveVoicePickerTab(null);
+                }}
+                aria-label="رجوع"
+                className="flex h-9 w-9 items-center justify-center rounded-xl border border-[#1FA47A]/50 text-[#E8DCC8]"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="mt-3 flex-1 space-y-2 overflow-y-auto pl-1 touch-pan-y">
+              {(activeVoicePickerTab === 'pre'
+                ? PRE_ADHAN_VOICES_10
+                : activeVoicePickerTab === 'iqamah'
+                  ? IQAMAH_VOICES_10
+                  : POST_ADHAN_DUA_VOICES_10
+              ).map((voiceItem, idx) => {
+                const isSelected =
+                  activeVoicePickerTab === 'pre'
+                    ? selectedPreVoice.id === voiceItem.id
+                    : activeVoicePickerTab === 'iqamah'
+                      ? selectedIqamahVoice.id === voiceItem.id
+                      : selectedDuaVoice.id === voiceItem.id;
+                const playKey = `settings-picker-${activeVoicePickerTab}-${voiceItem.id}`;
+                const isThisPlaying = playingId === playKey;
+
+                return (
+                  <div
+                    key={voiceItem.id}
+                    className={`rounded-2xl border p-3 ${
+                      isSelected
+                        ? 'border-2 border-[#1FA47A] bg-[#1FA47A]/20'
+                        : 'border-white/15 bg-black/25'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <h4 className="truncate text-sm font-extrabold text-[#E8DCC8]">
+                          {idx + 1}. {voiceItem.nameAr}
+                        </h4>
+                        <p className="truncate text-[11px] text-[#1FA47A]">
+                          {voiceItem.muezzinAr} · {voiceItem.locationAr}
+                        </p>
+                        {voiceItem.descAr && (
+                          <p className="mt-0.5 text-[10px] text-[#E8DCC8]/75">
+                            {voiceItem.descAr}
+                          </p>
+                        )}
+                      </div>
+                      {isSelected && (
+                        <span className="shrink-0 rounded-lg bg-[#1FA47A] px-2 py-0.5 text-[10px] font-extrabold text-white">
+                          مختار ✓
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="mt-2.5 grid grid-cols-2 gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          playSingleAudio(
+                            playKey,
+                            voiceItem.url,
+                            voiceItem.fallbackUrl,
+                          )
+                        }
+                        className={`inline-flex min-h-[36px] items-center justify-center gap-1.5 rounded-xl border text-xs font-bold ${
+                          isThisPlaying
+                            ? 'border-[#1FA47A] bg-[#1FA47A] text-white'
+                            : 'border-[#1FA47A]/50 bg-[#0F2225] text-[#E8DCC8]'
+                        }`}
+                      >
+                        {isThisPlaying ? (
+                          <Pause className="h-3.5 w-3.5" />
+                        ) : (
+                          <Play className="h-3.5 w-3.5" />
+                        )}
+                        <span>{isThisPlaying ? 'إيقاف' : 'استماع ▶️'}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void cacheAudioUrl(voiceItem.url);
+                          if (voiceItem.fallbackUrl) {
+                            void cacheAudioUrl(voiceItem.fallbackUrl);
+                          }
+                          if (activeVoicePickerTab === 'pre') {
+                            onUpdateSettings((s) => ({
+                              ...s,
+                              preAdhanEnabled: true,
+                              preAdhanMinutes: s.preAdhanMinutes || 15,
+                              preferredPreAdhanSound: voiceItem.id,
+                            }));
+                          } else if (activeVoicePickerTab === 'iqamah') {
+                            onUpdateSettings((s) => ({
+                              ...s,
+                              iqamahEnabled: true,
+                              preferredIqamah: voiceItem.id,
+                              perPrayerIqamah: {
+                                fajr: voiceItem.id,
+                                dhuhr: voiceItem.id,
+                                asr: voiceItem.id,
+                                maghrib: voiceItem.id,
+                                isha: voiceItem.id,
+                              },
+                            }));
+                          } else {
+                            onUpdateSettings((s) => ({
+                              ...s,
+                              postAdhanDuaEnabled: true,
+                              preferredPostAdhanDua: voiceItem.id,
+                            }));
+                          }
+                          stopAnyAudio();
+                          setActiveVoicePickerTab(null);
+                        }}
+                        className="inline-flex min-h-[36px] items-center justify-center gap-1 rounded-xl bg-gradient-to-l from-[#24B98A] to-[#1FA47A] text-xs font-extrabold text-white active:scale-95"
+                      >
+                        <Check className="h-3.5 w-3.5" />
+                        <span>اختيار هذا الصوت</span>
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ==================== FULLSCREEN VIDEO / ADHAN LIVE PREVIEW ==================== */}
       {videoPreview && (
         <AdhanLiveModal
           prayerNameAr={videoPreview.prayerNameAr}
@@ -2161,6 +2072,11 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
           schedule={schedule}
           mode={videoPreview.mode || 'adhan'}
           isPreview
+          postAdhanDuaEnabled={postAdhanDuaEnabled}
+          iqamahVoice={selectedIqamahVoice}
+          iqamahMinutes={iqamahMinutes}
+          postAdhanDuaVoice={selectedDuaVoice}
+          postAdhanDuaDelaySeconds={postAdhanDuaDelaySeconds}
           onClose={() => setVideoPreview(null)}
         />
       )}

@@ -45,7 +45,6 @@ import {
   playSheikhSingleWord,
   stopSheikhWordPlayback,
 } from '../utils/sheikhWordAudio';
-import {SectionOfflineButton} from './SectionOfflineButton';
 
 interface VoiceTestViewProps {
   preferredReciter: ReciterId;
@@ -1350,14 +1349,6 @@ export const VoiceTestView: React.FC<VoiceTestViewProps> = ({
             تنبيه هادئ: التحليل التلقائي للصوت يحتاج اتصالاً بالإنترنت — لكن يمكنك التسجيل، ومراجعة السور وسجل تلاواتك المحفوظ أوفلاين بالكامل.
           </div>
         )}
-
-        <div className="mt-3">
-          <SectionOfflineButton
-            sectionId="voice_test"
-            preferredReciter={selectedReciter}
-            labelOverride="اختبر صوتك والتسجيلات"
-          />
-        </div>
       </section>
 
       {loadingQuran ? (

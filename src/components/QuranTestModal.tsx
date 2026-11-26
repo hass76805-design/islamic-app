@@ -3,7 +3,6 @@ import {
   ArrowRight,
   Award,
   Check,
-  CheckCircle2,
   Clock,
   List,
   Mic,
@@ -338,6 +337,7 @@ export const QuranTestModal: React.FC<QuranTestModalProps> = ({
   }, [activeEntries]);
 
   const [tasmeeStarted, setTasmeeStarted] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
   const [ayahIdx, setAyahIdx] = useState(0);
   const [wordIdx, setWordIdx] = useState(0);
   const [revealedMap, setRevealedMap] = useState<
@@ -368,6 +368,8 @@ export const QuranTestModal: React.FC<QuranTestModalProps> = ({
 
   const recRef = useRef<SpeechRecLike | null>(null);
   const listeningRef = useRef(false);
+  const pausedByUserRef = useRef(false);
+  const shouldKeepListeningRef = useRef(false);
   const processedPerResultRef = useRef<Record<number, number>>({});
   const wordsBoxScrollRef = useRef<HTMLDivElement | null>(null);
 
@@ -380,6 +382,7 @@ export const QuranTestModal: React.FC<QuranTestModalProps> = ({
     haltedMistake: null as HaltedMistakeState | null,
     hintsUsed: 0,
     finishedScore: null as number | null,
+    isPaused: false,
   });
 
   stateRef.current = {
@@ -391,6 +394,7 @@ export const QuranTestModal: React.FC<QuranTestModalProps> = ({
     haltedMistake,
     hintsUsed,
     finishedScore,
+    isPaused,
   };
 
   const currentAyah = preparedAyahs[ayahIdx] || preparedAyahs[0];
@@ -465,6 +469,7 @@ export const QuranTestModal: React.FC<QuranTestModalProps> = ({
   }, [revealedCount, haltedMistake]);
 
   const releaseMic = useCallback(() => {
+    shouldKeepListeningRef.current = false;
     listeningRef.current = false;
     ignoreMicAudioRef.current = false;
     setListening(false);
@@ -476,16 +481,18 @@ export const QuranTestModal: React.FC<QuranTestModalProps> = ({
   }, []);
 
   useEffect(() => {
-    if (!tasmeeStarted || finishedScore !== null) return;
+    if (!tasmeeStarted || isPaused || finishedScore !== null) return;
     const id = window.setInterval(() => {
       setElapsedSec((s) => s + 1);
     }, 1000);
     return () => window.clearInterval(id);
-  }, [tasmeeStarted, finishedScore]);
+  }, [tasmeeStarted, isPaused, finishedScore]);
 
   useEffect(() => {
+    pausedByUserRef.current = false;
     releaseMic();
     setTasmeeStarted(false);
+    setIsPaused(false);
     setAyahIdx(0);
     setWordIdx(0);
     setRevealedMap({});
@@ -509,13 +516,15 @@ export const QuranTestModal: React.FC<QuranTestModalProps> = ({
     };
   }, [releaseMic]);
 
-  // Only ends when the user explicitly clicks "إنهاء القراءة"
+  // Only ends when the user explicitly clicks "انهاء الاختبار"
   const finishTest = useCallback(
     (
       finalMistakes: MistakeLog[],
       finalHints: number,
       finalMap: Record<string, 'correct' | 'hint' | 'wrong'>,
     ) => {
+      pausedByUserRef.current = true;
+      setIsPaused(false);
       releaseMic();
 
       const entriesCount = Object.keys(finalMap).length;
@@ -554,13 +563,14 @@ export const QuranTestModal: React.FC<QuranTestModalProps> = ({
     [currentPage, onSaveResult, preparedAyahs, releaseMic],
   );
 
-  // Word-by-word matcher: halts immediately on mistake, keeps mic open, and never advances ayah until resolved
+  // Word-by-word continuous matcher: marks mistakes red & keeps continuing seamlessly without stopping
   const processWords = useCallback(
     (spokenTokens: string[]) => {
       const snap = stateRef.current;
       if (
         preparedAyahs.length === 0 ||
         snap.finishedScore !== null ||
+        snap.isPaused ||
         ignoreMicAudioRef.current
       ) {
         return;
@@ -571,48 +581,20 @@ export const QuranTestModal: React.FC<QuranTestModalProps> = ({
       const nextMap = {...snap.revealedMap};
       const nextMistakes = [...snap.mistakes];
       let lastErr: MistakeLog | null = snap.latestMistake;
-      let nextHalted: HaltedMistakeState | null = snap.haltedMistake;
       let finishedAll = false;
-      let startTokenOffset = 0;
 
-      // If currently halted on a wrong word, wait until user says that word right (or presses "تكملة")
-      if (nextHalted) {
-        const haltedEntry = preparedAyahs[nextHalted.ayahIdx];
-        const haltedExpected = haltedEntry?.tokens[nextHalted.wordIdx];
-        if (!haltedEntry || !haltedExpected) {
-          nextHalted = null;
-        } else {
-          let resolvedAt = -1;
-          for (let idx = 0; idx < spokenTokens.length; idx++) {
-            const check = compareArabicWords(
-              spokenTokens[idx],
-              haltedExpected.norm,
-              haltedExpected.hamzaNorm,
-              haltedExpected.altVariants,
-            );
-            if (check.isMatch) {
-              resolvedAt = idx;
-              break;
-            }
-          }
-          if (resolvedAt === -1) {
-            // Stay halted right on this red word without advancing or closing mic
-            return;
-          }
-          nextMap[nextHalted.key] = 'correct';
-          lastErr = null;
-          aIdx = nextHalted.ayahIdx;
-          wIdx = nextHalted.wordIdx + 1;
-          if (wIdx >= haltedEntry.tokens.length) {
-            aIdx++;
-            wIdx = 0;
-          }
-          nextHalted = null;
-          startTokenOffset = resolvedAt + 1;
+      const advanceCursor = () => {
+        wIdx++;
+        while (
+          aIdx < preparedAyahs.length &&
+          wIdx >= preparedAyahs[aIdx].tokens.length
+        ) {
+          aIdx++;
+          wIdx = 0;
         }
-      }
+      };
 
-      for (let tIdx = startTokenOffset; tIdx < spokenTokens.length; tIdx++) {
+      for (let tIdx = 0; tIdx < spokenTokens.length; tIdx++) {
         const spoken = spokenTokens[tIdx];
         while (
           aIdx < preparedAyahs.length &&
@@ -639,44 +621,86 @@ export const QuranTestModal: React.FC<QuranTestModalProps> = ({
         if (check.isMatch) {
           nextMap[key] = 'correct';
           lastErr = null;
-          wIdx++;
-          if (wIdx >= targetAyah.tokens.length) {
-            aIdx++;
-            wIdx = 0;
-          }
+          advanceCursor();
         } else {
-          // Highlight word in red and HALT right here (never advance ayah until corrected or user taps "تكملة")
-          nextMap[key] = 'wrong';
-          const errItem: MistakeLog = {
-            ayahNumber: targetAyah.ayah.n,
-            expectedWord: expected.raw,
-            spokenWord: spoken,
-            hint: check.wrongLetterHint,
-          };
-          nextMistakes.push(errItem);
-          lastErr = errItem;
-          nextHalted = {
-            ayahIdx: aIdx,
-            wordIdx: wIdx,
-            key,
-            ayahEntry: targetAyah,
-            expectedWord: expected.raw,
-            spokenWord: spoken,
-            hint: check.wrongLetterHint,
-          };
-          break;
+          // Check up to 2 words ahead so if the reader skipped a word, we mark skipped word red and stay in sync
+          let lookaheadMatched = false;
+          let probeA = aIdx;
+          let probeW = wIdx;
+          const skippedCoords: Array<{a: number; w: number}> = [];
+
+          for (let step = 1; step <= 2; step++) {
+            probeW++;
+            while (
+              probeA < preparedAyahs.length &&
+              probeW >= preparedAyahs[probeA].tokens.length
+            ) {
+              probeA++;
+              probeW = 0;
+            }
+            if (probeA >= preparedAyahs.length) break;
+
+            const prevA = step === 1 ? aIdx : skippedCoords[step - 2]?.a ?? aIdx;
+            const prevW = step === 1 ? wIdx : skippedCoords[step - 2]?.w ?? wIdx;
+            skippedCoords.push({a: prevA, w: prevW});
+
+            const aheadToken = preparedAyahs[probeA].tokens[probeW];
+            const aheadCheck = compareArabicWords(
+              spoken,
+              aheadToken.norm,
+              aheadToken.hamzaNorm,
+              aheadToken.altVariants,
+            );
+            if (aheadCheck.isMatch) {
+              for (const sc of skippedCoords) {
+                const sAyah = preparedAyahs[sc.a];
+                const sTok = sAyah?.tokens[sc.w];
+                const sKey = `${sc.a}-${sc.w}`;
+                if (sAyah && sTok && !nextMap[sKey]) {
+                  nextMap[sKey] = 'wrong';
+                  nextMistakes.push({
+                    ayahNumber: sAyah.ayah.n,
+                    expectedWord: sTok.raw,
+                    spokenWord: '—',
+                    hint: 'سقطت الكلمة أثناء القراءة',
+                  });
+                }
+              }
+              nextMap[`${probeA}-${probeW}`] = 'correct';
+              aIdx = probeA;
+              wIdx = probeW;
+              advanceCursor();
+              lastErr = null;
+              lookaheadMatched = true;
+              break;
+            }
+          }
+
+          if (!lookaheadMatched) {
+            // Mark word red and KEEP GOING so the reader continues uninterrupted
+            nextMap[key] = 'wrong';
+            const errItem: MistakeLog = {
+              ayahNumber: targetAyah.ayah.n,
+              expectedWord: expected.raw,
+              spokenWord: spoken,
+              hint: check.wrongLetterHint,
+            };
+            nextMistakes.push(errItem);
+            lastErr = errItem;
+            advanceCursor();
+          }
         }
       }
 
-      if (aIdx >= preparedAyahs.length && !nextHalted) {
+      if (aIdx >= preparedAyahs.length) {
         finishedAll = true;
       }
 
       setRevealedMap(nextMap);
       setMistakes(nextMistakes);
       setLatestMistake(lastErr);
-      setHaltedMistake(nextHalted);
-      if (!lastErr && !nextHalted) {
+      setHaltedMistake(null);
+      if (!lastErr) {
         setCorrectionDetail(null);
       }
       setAyahIdx(Math.min(aIdx, Math.max(0, preparedAyahs.length - 1)));
@@ -690,6 +714,8 @@ export const QuranTestModal: React.FC<QuranTestModalProps> = ({
 
   const startContinuousRecognition = useCallback(() => {
     setMicError(null);
+    pausedByUserRef.current = false;
+    shouldKeepListeningRef.current = true;
 
     const SpeechRec =
       (window as unknown as {SpeechRecognition?: new () => SpeechRecLike})
@@ -706,7 +732,6 @@ export const QuranTestModal: React.FC<QuranTestModalProps> = ({
       return;
     }
 
-    // Keep single continuous open session (never stop/restart to avoid mic beep)
     if (listeningRef.current && recRef.current) {
       return;
     }
@@ -734,8 +759,7 @@ export const QuranTestModal: React.FC<QuranTestModalProps> = ({
         const tokens = segText.trim().split(/\s+/).filter(Boolean);
         const already = processedPerResultRef.current[i] || 0;
 
-        // While Sheikh correction MP3 is playing, consume indices without evaluating Sheikh's voice
-        if (ignoreMicAudioRef.current) {
+        if (ignoreMicAudioRef.current || pausedByUserRef.current) {
           processedPerResultRef.current[i] = tokens.length;
           continue;
         }
@@ -755,7 +779,7 @@ export const QuranTestModal: React.FC<QuranTestModalProps> = ({
           if (
             tokens.length > currentAlready &&
             snap.finishedScore === null &&
-            !snap.haltedMistake
+            !snap.isPaused
           ) {
             const targetAyah = preparedAyahs[snap.ayahIdx];
             const expected = targetAyah?.tokens[snap.wordIdx];
@@ -786,6 +810,7 @@ export const QuranTestModal: React.FC<QuranTestModalProps> = ({
         err.error === 'network' ||
         (typeof navigator !== 'undefined' && !navigator.onLine)
       ) {
+        shouldKeepListeningRef.current = false;
         setShowTypingBar(true);
         setMicError(
           'يرجى الاتصال بالإنترنت للتعرف التلقائي على الصوت، أو اكتب الآية أدناه للتصحيح.',
@@ -796,6 +821,7 @@ export const QuranTestModal: React.FC<QuranTestModalProps> = ({
         err.error === 'not-allowed' ||
         err.error === 'service-not-allowed'
       ) {
+        shouldKeepListeningRef.current = false;
         setMicPermissionState('denied');
         setShowTypingBar(true);
         setMicError('يرجى السماح بالميكروفون أو الكتابة أدناه للتصحيح.');
@@ -806,10 +832,34 @@ export const QuranTestModal: React.FC<QuranTestModalProps> = ({
       }
     };
 
-    // Single continuous session: never auto-restart in onend (prevents mic beep sound)
+    // Keep continuous mic open even after pauses unless user clicked Stop
     rec.onend = () => {
       listeningRef.current = false;
       setListening(false);
+      if (
+        shouldKeepListeningRef.current &&
+        !pausedByUserRef.current &&
+        stateRef.current.finishedScore === null
+      ) {
+        window.setTimeout(() => {
+          if (
+            shouldKeepListeningRef.current &&
+            !pausedByUserRef.current &&
+            stateRef.current.finishedScore === null &&
+            !listeningRef.current
+          ) {
+            try {
+              processedPerResultRef.current = {};
+              listeningRef.current = true;
+              setListening(true);
+              rec.start();
+            } catch {
+              listeningRef.current = false;
+              setListening(false);
+            }
+          }
+        }, 120);
+      }
     };
 
     try {
@@ -826,13 +876,35 @@ export const QuranTestModal: React.FC<QuranTestModalProps> = ({
     }
   }, [preparedAyahs, processWords]);
 
-  // Silent start: open continuous mic immediately with ZERO cue/beep sound
+  // Silent start: open continuous mic immediately
   const handleStartSilently = useCallback(() => {
     setMicError(null);
     setAudioErr(null);
+    setIsPaused(false);
+    pausedByUserRef.current = false;
     setTasmeeStarted(true);
     startContinuousRecognition();
   }, [startContinuousRecognition]);
+
+  const handleTogglePauseResume = useCallback(() => {
+    if (!stateRef.current.isPaused) {
+      // Switch to Stop / Paused
+      pausedByUserRef.current = true;
+      shouldKeepListeningRef.current = false;
+      setIsPaused(true);
+      releaseMic();
+    } else {
+      // Stop any correction audio and resume from exact paused position
+      stopSheikhWordPlayback();
+      audioRef.current?.pause();
+      ignoreMicAudioRef.current = false;
+      setIsPlayingCorrection(false);
+      setCorrectingNotice(null);
+      pausedByUserRef.current = false;
+      setIsPaused(false);
+      startContinuousRecognition();
+    }
+  }, [releaseMic, startContinuousRecognition]);
 
   // Tap red word or "الشيخ يصححلي" -> Plays real Sheikh MP3 without closing/restarting mic (NO mic beep!)
   const playCorrectionAyah = (
@@ -977,41 +1049,6 @@ export const QuranTestModal: React.FC<QuranTestModalProps> = ({
     });
   };
 
-  // User clicks "تكملة" beside the red word: stops Sheikh playback cleanly, unmutes mic, and continues the ayah
-  const handleContinueAfterMistake = useCallback(() => {
-    stopSheikhWordPlayback();
-    audioRef.current?.pause();
-    ignoreMicAudioRef.current = false;
-    setIsPlayingCorrection(false);
-    setCorrectingNotice(null);
-    setCorrectionDetail(null);
-
-    const halted = stateRef.current.haltedMistake;
-    if (halted) {
-      let nextAyah = halted.ayahIdx;
-      let nextWord = halted.wordIdx + 1;
-      const entry = preparedAyahs[nextAyah];
-      if (entry && nextWord >= entry.tokens.length) {
-        nextAyah++;
-        nextWord = 0;
-      }
-      setHaltedMistake(null);
-      setLatestMistake(null);
-      if (nextAyah >= preparedAyahs.length) {
-        setCompletedAllSurah(true);
-        setAyahIdx(Math.max(0, preparedAyahs.length - 1));
-        setWordIdx(0);
-      } else {
-        setAyahIdx(nextAyah);
-        setWordIdx(nextWord);
-      }
-    }
-
-    if (!listeningRef.current) {
-      startContinuousRecognition();
-    }
-  }, [preparedAyahs, startContinuousRecognition]);
-
   const handleSheikhCorrectMe = () => {
     const targetMistake =
       haltedMistake ||
@@ -1063,6 +1100,7 @@ export const QuranTestModal: React.FC<QuranTestModalProps> = ({
   };
 
   const resetTest = () => {
+    pausedByUserRef.current = false;
     releaseMic();
     stopSheikhWordPlayback();
     audioRef.current?.pause();
@@ -1070,6 +1108,7 @@ export const QuranTestModal: React.FC<QuranTestModalProps> = ({
     setCorrectingNotice(null);
     setCorrectionDetail(null);
     setTasmeeStarted(false);
+    setIsPaused(false);
     setAyahIdx(0);
     setWordIdx(0);
     setRevealedMap({});
@@ -1205,133 +1244,203 @@ export const QuranTestModal: React.FC<QuranTestModalProps> = ({
       {/* FULL-SCREEN STEADY TEST BOX (مربع الاختبار يملي الشاشة كلها) */}
       <div className="m-2 flex min-h-0 flex-1 flex-col overflow-hidden rounded-3xl border-2 border-[#C9A227] bg-[#040301]">
         {finishedScore !== null ? (
-          /* RESULTS + ALL MISTAKES SCREEN */
-          <div className="flex min-h-0 flex-1 flex-col justify-between overflow-y-auto touch-pan-y p-4">
-            <div className="flex flex-col items-center text-center">
-              <div className="flex h-16 w-16 items-center justify-center rounded-full border-2 border-[#C9A227] bg-[#C9A227]/15">
-                <Award className="h-8 w-8 text-[#FCE38A]" />
-              </div>
-              <p className="mt-2.5 text-xs font-bold text-[#C9A227]">
-                نتيجة اختبار الحفظ — {currentSurahObj?.name}
-              </p>
-              <p className="font-mono-num mt-1 text-5xl font-bold text-[#F3D56B]">
-                {finishedScore}
-                <span className="text-xl text-[#C9A227]">/100</span>
-              </p>
+          /* RESULTS SPLIT INTO TWO SECTIONS: GREEN (CORRECT AYAHS) & RED (WRONG AYAHS + LISTEN BUTTON) */
+          (() => {
+            const evaluatedAyahSummary = preparedAyahs
+              .map((entry, a) => {
+                const words = entry.tokens.map((tok, w) => ({
+                  key: `${a}-${w}`,
+                  raw: tok.raw,
+                  status: revealedMap[`${a}-${w}`] || null,
+                }));
+                const touchedCount = words.filter((w) => w.status !== null).length;
+                if (touchedCount === 0) return null;
+                const wrongWordsInAyah = words.filter((w) => w.status === 'wrong');
+                const isFullyCorrect =
+                  wrongWordsInAyah.length === 0 &&
+                  touchedCount === entry.tokens.length;
+                return {
+                  ayahIdx: a,
+                  entry,
+                  words,
+                  isCorrect: isFullyCorrect,
+                };
+              })
+              .filter(Boolean) as Array<{
+              ayahIdx: number;
+              entry: (typeof preparedAyahs)[number];
+              words: Array<{
+                key: string;
+                raw: string;
+                status: 'correct' | 'hint' | 'wrong' | null;
+              }>;
+              isCorrect: boolean;
+            }>;
 
-              <div className="mt-3 flex flex-wrap items-center justify-center gap-4 text-xs text-zinc-200">
-                <span>
-                  كلمات صحيحة:{' '}
-                  <strong className="font-mono-num text-emerald-400">
-                    {correctWordsCount}
-                  </strong>
-                </span>
-                <span>
-                  الأخطاء:{' '}
-                  <strong className="font-mono-num text-rose-400">
-                    {mistakes.length}
-                  </strong>
-                </span>
-                <span>
-                  المدة:{' '}
-                  <strong className="font-mono-num text-[#F3D56B]">
-                    {formatTimerMMSS(elapsedSec)}
-                  </strong>
-                </span>
-              </div>
+            const correctAyahsList = evaluatedAyahSummary.filter(
+              (item) => item.isCorrect,
+            );
+            const wrongAyahsList = evaluatedAyahSummary.filter(
+              (item) => !item.isCorrect,
+            );
 
-              {mistakes.length > 0 ? (
-                <div className="mt-5 w-full space-y-2 border-t border-[#C9A227]/35 pt-3.5 text-right">
-                  <h3 className="text-xs font-bold text-rose-400">
-                    قائمة الغلطات ({mistakes.length}) — اضغط «استمع» لسماع الشيخ:
-                  </h3>
-                  {mistakes.map((m, idx) => {
-                    const targetEntry = preparedAyahs.find(
-                      (a) => a.ayah.n === m.ayahNumber,
-                    );
-                    return (
-                      <div
-                        key={idx}
-                        className="flex items-center justify-between gap-2 rounded-2xl border border-rose-500/45 bg-[#0C0505] px-3 py-2.5"
-                      >
-                        <div className="min-w-0">
-                          <p className="text-xs">
-                            <span className="text-zinc-400">
-                              آية {toArabicDigits(m.ayahNumber)}:{' '}
-                            </span>
-                            <span className="font-bold text-rose-400 line-through">
-                              {m.spokenWord}
-                            </span>{' '}
-                            ←{' '}
-                            <span className="font-quran text-lg font-bold text-emerald-400">
-                              {m.expectedWord}
-                            </span>
-                          </p>
-                          {m.hint && (
-                            <p className="mt-0.5 text-[10px] font-semibold text-rose-300">
-                              {m.hint}
-                            </p>
-                          )}
-                        </div>
-                        {targetEntry && (
-                          <button
-                            type="button"
-                            onClick={() =>
-                              playCorrectionAyah(
-                                correctionSheikh,
-                                targetEntry,
-                                m.expectedWord,
-                              )
-                            }
-                            className="inline-flex min-h-[34px] shrink-0 items-center gap-1 rounded-xl border border-[#C9A227] px-2.5 py-1 text-[11px] font-bold text-[#FCE38A]"
+            return (
+              <div className="flex min-h-0 flex-1 flex-col justify-between overflow-y-auto touch-pan-y p-4">
+                <div className="space-y-4">
+                  {/* Top Summary Header */}
+                  <div className="flex flex-col items-center text-center">
+                    <div className="flex h-14 w-14 items-center justify-center rounded-full border-2 border-[#C9A227] bg-[#C9A227]/15">
+                      <Award className="h-7 w-7 text-[#FCE38A]" />
+                    </div>
+                    <p className="mt-2 text-xs font-bold text-[#C9A227]">
+                      نتيجة اختبار الحفظ — {currentSurahObj?.name}
+                    </p>
+                    <p className="font-mono-num mt-1 text-5xl font-bold text-[#F3D56B]">
+                      {finishedScore}%
+                    </p>
+                  </div>
+
+                  {/* GREEN SECTION: الايات اللي قريتها صح */}
+                  <section className="rounded-2xl border-2 border-emerald-500/60 bg-emerald-950/25 p-3 text-right">
+                    <h3 className="text-xs font-extrabold text-emerald-300">
+                      الايات اللي قريتها صح ✅ ({toArabicDigits(correctAyahsList.length)})
+                    </h3>
+                    {correctAyahsList.length === 0 ? (
+                      <p className="mt-2 text-[11px] text-zinc-400">
+                        لم تكتمل آيات صحيحة بالكامل في هذه المحاولة
+                      </p>
+                    ) : (
+                      <div className="mt-2 space-y-2">
+                        {correctAyahsList.map((item) => (
+                          <div
+                            key={`ok-${item.entry.ayah.id}`}
+                            className="rounded-xl border border-emerald-500/35 bg-black/50 px-3 py-2"
                           >
-                            <Volume2 className="h-3.5 w-3.5" />
-                            <span>استمع</span>
-                          </button>
-                        )}
+                            <p className="font-quran text-lg leading-loose text-emerald-300">
+                              {item.entry.ayah.t}{' '}
+                              <span className="font-mono-num inline-flex h-6 min-w-6 items-center justify-center rounded-full border border-emerald-400/60 px-1 text-[11px] text-emerald-300">
+                                {toArabicDigits(item.entry.ayah.n)}
+                              </span>
+                            </p>
+                          </div>
+                        ))}
                       </div>
-                    );
-                  })}
-                </div>
-              ) : (
-                <div className="mt-6 inline-flex items-center gap-2 rounded-2xl border border-emerald-500/40 bg-emerald-950/25 px-4 py-3 text-sm font-bold text-emerald-400">
-                  <CheckCircle2 className="h-5 w-5" />
-                  <span>ما شاء الله! قراءة متقنة بدون أي أخطاء</span>
-                </div>
-              )}
+                    )}
+                  </section>
 
-              {history.length > 0 && (
-                <p className="mt-4 text-[11px] text-zinc-500">
-                  آخر الدرجات:{' '}
-                  {history
-                    .slice(0, 3)
-                    .map((h) => `${h.surahName} (${h.score}%)`)
-                    .join(' · ')}
-                </p>
-              )}
-            </div>
+                  {/* RED SECTION: الايات اللي غلطت فيها */}
+                  <section className="rounded-2xl border-2 border-rose-500/60 bg-rose-950/25 p-3 text-right">
+                    <h3 className="text-xs font-extrabold text-rose-300">
+                      الايات اللي غلطت فيها ❌ ({toArabicDigits(wrongAyahsList.length)})
+                    </h3>
+                    {wrongAyahsList.length === 0 ? (
+                      <p className="mt-2 text-[11px] font-bold text-emerald-300">
+                        ما شاء الله! لا توجد أي أخطاء
+                      </p>
+                    ) : (
+                      <div className="mt-2 space-y-2.5">
+                        {wrongAyahsList.map((item) => (
+                          <div
+                            key={`err-${item.entry.ayah.id}`}
+                            className="rounded-xl border border-rose-500/45 bg-[#0C0505] p-3"
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <p className="font-quran flex-1 text-lg leading-loose text-white">
+                                {item.words.map((w) => (
+                                  <span
+                                    key={w.key}
+                                    className={
+                                      w.status === 'wrong'
+                                        ? 'mx-0.5 rounded bg-rose-600/35 px-1 font-bold text-rose-400 underline decoration-rose-400'
+                                        : w.status === 'correct'
+                                          ? 'text-emerald-300'
+                                          : 'text-zinc-500'
+                                    }
+                                  >
+                                    {w.raw}{' '}
+                                  </span>
+                                ))}
+                                <span className="font-mono-num inline-flex h-6 min-w-6 items-center justify-center rounded-full border border-rose-400/60 px-1 text-[11px] text-rose-300">
+                                  {toArabicDigits(item.entry.ayah.n)}
+                                </span>
+                              </p>
 
-            <div className="mt-4 grid shrink-0 grid-cols-2 gap-2.5 pt-3">
-              <button
-                type="button"
-                onClick={resetTest}
-                className="flex min-h-[48px] items-center justify-center gap-1.5 rounded-2xl border-2 border-[#C9A227] bg-black text-sm font-bold text-[#F3D56B]"
-              >
-                <RotateCcw className="h-4 w-4" />
-                <span>إعادة الاختبار</span>
-              </button>
-              <button
-                type="button"
-                onClick={goNextPassage}
-                className="flex min-h-[48px] items-center justify-center gap-1.5 rounded-2xl bg-[#C9A227] text-sm font-extrabold text-black"
-              >
-                <Sparkles className="h-4 w-4" />
-                <span>السورة التالية</span>
-              </button>
-            </div>
-          </div>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  playCorrectionAyah(
+                                    correctionSheikh,
+                                    item.entry,
+                                  )
+                                }
+                                className="inline-flex min-h-[36px] shrink-0 items-center gap-1 rounded-xl border border-[#C9A227] bg-[#141004] px-2.5 py-1 text-[11px] font-extrabold text-[#FCE38A]"
+                              >
+                                <Volume2 className="h-3.5 w-3.5 text-[#C9A227]" />
+                                <span>🔊 اسمعها صح</span>
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </section>
+
+                  {/* Bottom Metrics Summary */}
+                  <div className="grid grid-cols-3 gap-2 rounded-2xl border border-[#C9A227]/45 bg-[#0B0802] p-3 text-center">
+                    <div>
+                      <p className="text-[10px] font-bold text-zinc-400">عدد الصح</p>
+                      <p className="font-mono-num text-base font-extrabold text-emerald-400">
+                        {correctWordsCount} كلمة ({correctAyahsList.length} آية)
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-bold text-zinc-400">عدد الغلط</p>
+                      <p className="font-mono-num text-base font-extrabold text-rose-400">
+                        {mistakes.length} كلمة ({wrongAyahsList.length} آية)
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-bold text-zinc-400">النسبة %</p>
+                      <p className="font-mono-num text-base font-extrabold text-[#FCE38A]">
+                        {finishedScore}%
+                      </p>
+                    </div>
+                  </div>
+
+                  {history.length > 0 && (
+                    <p className="text-center text-[11px] text-zinc-500">
+                      آخر الدرجات:{' '}
+                      {history
+                        .slice(0, 3)
+                        .map((h) => `${h.surahName} (${h.score}%)`)
+                        .join(' · ')}
+                    </p>
+                  )}
+                </div>
+
+                <div className="mt-4 grid shrink-0 grid-cols-2 gap-2.5 pt-3">
+                  <button
+                    type="button"
+                    onClick={resetTest}
+                    className="flex min-h-[48px] items-center justify-center gap-1.5 rounded-2xl border-2 border-[#C9A227] bg-black text-sm font-bold text-[#F3D56B]"
+                  >
+                    <RotateCcw className="h-4 w-4" />
+                    <span>إعادة الاختبار</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={goNextPassage}
+                    className="flex min-h-[48px] items-center justify-center gap-1.5 rounded-2xl bg-[#C9A227] text-sm font-extrabold text-black"
+                  >
+                    <Sparkles className="h-4 w-4" />
+                    <span>السورة التالية</span>
+                  </button>
+                </div>
+              </div>
+            );
+          })()
         ) : !tasmeeStarted ? (
-          /* PRE-START: BIG CENTER GOLD "ابدأ" BUTTON (SILENT MIC — ZERO BEEP) */
+          /* PRE-START: BIG CENTER GOLD "ابدأ القراءة" BUTTON */
           <div className="flex flex-1 flex-col items-center justify-between p-5 text-center">
             <div className="w-full space-y-1.5 border-b border-[#C9A227]/30 pb-3">
               <p className="font-quran text-2xl font-bold text-[#FCE38A]">
@@ -1339,7 +1448,7 @@ export const QuranTestModal: React.FC<QuranTestModalProps> = ({
               </p>
               <p className="text-xs font-semibold text-zinc-300">
                 اقرأ من الآية {toArabicDigits(startAyahNum)} باستمرار حتى تضغط
-                «إنهاء القراءة»
+                «انهاء الاختبار»
               </p>
               {!isOnline && (
                 <p className="mt-2 rounded-xl border border-[#C9A227]/55 bg-[#120E04] px-3 py-1.5 text-[11px] font-bold text-[#FCE38A]">
@@ -1348,7 +1457,7 @@ export const QuranTestModal: React.FC<QuranTestModalProps> = ({
               )}
             </div>
 
-            {/* HUGE CENTER GOLD "ابدأ" BUTTON */}
+            {/* HUGE CENTER GOLD "ابدأ القراءة" BUTTON */}
             <div className="flex flex-1 flex-col items-center justify-center gap-4">
               <button
                 type="button"
@@ -1356,16 +1465,16 @@ export const QuranTestModal: React.FC<QuranTestModalProps> = ({
                 className="flex h-44 w-44 flex-col items-center justify-center gap-2 rounded-full border-4 border-[#FCE38A] bg-gradient-to-b from-[#FCE38A] via-[#C9A227] to-[#9A7415] text-black shadow-[0_0_45px_rgba(201,162,39,0.5)] active:scale-95"
               >
                 <Mic className="h-12 w-12 stroke-[2.4]" />
-                <span className="text-3xl font-extrabold leading-none">
-                  ابدأ
+                <span className="text-2xl font-extrabold leading-none">
+                  ابدأ القراءة
                 </span>
                 <span className="text-[11px] font-bold text-black/85">
-                  اضغط لفتح الميكروفون بصمت
+                  الميكروفون يستمر معك بدون انقطاع
                 </span>
               </button>
               <p className="max-w-[270px] text-xs font-semibold leading-relaxed text-zinc-300">
-                عند الضغط يُفتح الميكروفون بصمت تام وتظهر الآيات أمامك بنظام
-                المصحف الشريف على سرعة تلاوتك
+                تظهر الآيات كلمة بكلمة مع صوتك، وإن أخطأت تتلون الكلمة بالأحمر
+                ويستمر الاختبار دون توقف
               </p>
             </div>
 
@@ -1385,20 +1494,20 @@ export const QuranTestModal: React.FC<QuranTestModalProps> = ({
             </div>
           </div>
         ) : (
-          /* ACTIVE CONTINUOUS RECITATION: MEDINAN MUSHAF CONTINUOUS FLOW + MISTAKE HALT */
+          /* ACTIVE CONTINUOUS RECITATION: MEDINAN MUSHAF CONTINUOUS FLOW + CENTER STOP/LISTEN/RESUME */
           <div className="flex min-h-0 flex-1 flex-col">
             {/* Top Status Strip inside Box */}
             <div className="flex shrink-0 items-center justify-between border-b border-[#C9A227]/35 bg-[#0A0802] px-3.5 py-2 text-xs">
               <div className="flex items-center gap-2 font-bold">
-                {haltedMistake ? (
-                  <span className="flex items-center gap-1.5 text-rose-400">
-                    <Volume2 className="h-4 w-4" />
-                    <span>توقفت القراءة عند الخطأ — استمع أو اضغط تكملة</span>
+                {isPaused ? (
+                  <span className="flex items-center gap-1.5 text-[#FCE38A]">
+                    <Pause className="h-4 w-4 text-[#C9A227]" />
+                    <span>إيقاف مؤقت — اسمع الآية صح أو اضغط كمل</span>
                   </span>
                 ) : listening ? (
                   <span className="flex items-center gap-1.5 text-emerald-400">
                     <Mic className="h-4 w-4" />
-                    <span>أسمعك الآن — اقرأ باستمرار</span>
+                    <span>أسمعك باستمرار — اقرأ متواصلاً</span>
                   </span>
                 ) : (
                   <button
@@ -1418,7 +1527,7 @@ export const QuranTestModal: React.FC<QuranTestModalProps> = ({
               </span>
             </div>
 
-            {/* Medinan Mushaf Continuous Inline Stream (NO separated boxes; inline golden ayah circles) */}
+            {/* Medinan Mushaf Continuous Inline Stream */}
             <div
               ref={wordsBoxScrollRef}
               className="min-h-0 flex-1 overflow-y-auto touch-pan-y p-3.5"
@@ -1429,8 +1538,8 @@ export const QuranTestModal: React.FC<QuranTestModalProps> = ({
                     ابدأ القراءة الآن بصوت واضح
                   </p>
                   <p className="mt-2 max-w-[270px] text-xs leading-relaxed text-zinc-400">
-                    تظهر الآيات أمامك متصلة على شكل المصحف الشريف حسب سرعة صوتك،
-                    وإذا أخطأت يتعلم الخطأ بالأحمر لتستمع له ثم تضغط «تكملة»
+                    تظهر الآيات كلمة بكلمة مع صوتك؛ وإذا وقفت أو أخطأت يستمر
+                    الميكروفون مفتوحاً ويعلم الخطأ بالأحمر
                   </p>
                 </div>
               ) : (
@@ -1442,7 +1551,7 @@ export const QuranTestModal: React.FC<QuranTestModalProps> = ({
                     </span>
                   </div>
 
-                  {/* Continuous Justified Quranic Paragraph (NO square boxes around words) */}
+                  {/* Continuous Justified Quranic Paragraph */}
                   <p
                     dir="rtl"
                     className="font-quran text-justify text-[25px] leading-[2.45] tracking-normal text-white sm:text-[27px]"
@@ -1450,7 +1559,6 @@ export const QuranTestModal: React.FC<QuranTestModalProps> = ({
                     {revealedAyahGroups.map((group) => (
                       <span key={`ayah-grp-${group.ayahEntry.ayah.id}`}>
                         {group.words.map((w) => {
-                          const isHaltedWord = haltedMistake?.key === w.key;
                           if (w.status === 'wrong') {
                             return (
                               <span
@@ -1467,45 +1575,14 @@ export const QuranTestModal: React.FC<QuranTestModalProps> = ({
                                       group.ayahEntry,
                                       w.wordIdx,
                                       w.raw,
-                                      isHaltedWord
-                                        ? haltedMistake?.hint
-                                        : undefined,
-                                      isHaltedWord
-                                        ? haltedMistake?.spokenWord
-                                        : undefined,
                                     )
                                   }
                                   title="نطق الكلمة الصح فقط بصوت الشيخ"
                                   aria-label={`نطق كلمة ${w.raw} بصوت الشيخ`}
                                   className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-[#FCE38A] bg-[#141004] text-[#FCE38A] shadow"
                                 >
-                                  <Mic className="h-3.5 w-3.5" />
+                                  <Volume2 className="h-3.5 w-3.5" />
                                 </button>
-                                {isHaltedWord && (
-                                  <>
-                                    <button
-                                      type="button"
-                                      onClick={() =>
-                                        playCorrectionAyah(
-                                          correctionSheikh,
-                                          group.ayahEntry,
-                                        )
-                                      }
-                                      className="inline-flex items-center gap-1 rounded-lg border border-[#C9A227] bg-black px-2 py-0.5 font-sans text-xs font-bold text-[#FCE38A]"
-                                    >
-                                      <Volume2 className="h-3 w-3" />
-                                      <span>استمع</span>
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={handleContinueAfterMistake}
-                                      className="inline-flex items-center gap-1 rounded-lg bg-[#C9A227] px-2 py-0.5 font-sans text-xs font-extrabold text-black shadow"
-                                    >
-                                      <Play className="h-3 w-3 fill-black" />
-                                      <span>تكملة</span>
-                                    </button>
-                                  </>
-                                )}
                               </span>
                             );
                           }
@@ -1530,79 +1607,47 @@ export const QuranTestModal: React.FC<QuranTestModalProps> = ({
 
               {completedAllSurah && (
                 <div className="mt-4 rounded-2xl border border-[#C9A227] bg-[#141004] p-3 text-center text-xs font-bold text-[#FCE38A]">
-                  ما شاء الله! أتممت السورة — اضغط «إنهاء القراءة» لعرض
-                  النتيجة والغلطات
+                  ما شاء الله! أتممت السورة — اضغط «انهاء الاختبار» لعرض
+                  النتيجة الكاملة
                 </div>
               )}
             </div>
 
-            {/* Live Instant Mistake / Sheikh Correction Footer Inside Box */}
-            <div className="shrink-0 space-y-2 border-t border-[#C9A227]/35 bg-[#080602] px-3.5 py-2.5">
-              {haltedMistake && (
-                <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border-2 border-rose-500/70 bg-rose-950/35 px-3 py-2">
-                  <div className="min-w-0 flex-1 text-right">
-                    <p className="text-xs font-bold text-rose-300">
-                      خطأ في الآية {toArabicDigits(haltedMistake.ayahEntry.ayah.n)} — اضغط الميكروفون الصغير لنطق الكلمة الصح بصوت الشيخ
-                    </p>
-                    <p className="mt-0.5 text-xs text-white">
-                      الصحيح:{' '}
-                      <span className="font-quran text-base font-bold text-emerald-400">
-                        «{haltedMistake.expectedWord}»
-                      </span>
-                      {haltedMistake.hint && (
-                        <span className="block text-[10px] text-[#FCE38A]">
-                          {haltedMistake.hint}
-                        </span>
-                      )}
-                    </p>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const targetGroup = preparedAyahs[haltedMistake.ayahIdx];
-                        if (targetGroup) {
-                          playSingleCorrectWord(
-                            targetGroup,
-                            haltedMistake.wordIdx,
-                            haltedMistake.expectedWord,
-                            haltedMistake.hint,
-                            haltedMistake.spokenWord,
-                          );
-                        }
-                      }}
-                      title="نطق الكلمة الصح فقط"
-                      aria-label="نطق الكلمة الصح بصوت الشيخ"
-                      className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-[#FCE38A] bg-[#141004] text-[#FCE38A]"
-                    >
-                      <Mic className="h-4 w-4" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        playCorrectionAyah(
-                          correctionSheikh,
-                          haltedMistake.ayahEntry,
-                        )
-                      }
-                      className="inline-flex min-h-[36px] items-center gap-1 rounded-xl border border-[#C9A227] bg-black px-2.5 text-xs font-bold text-[#FCE38A]"
-                    >
-                      <Volume2 className="h-3.5 w-3.5" />
-                      <span>استمع</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleContinueAfterMistake}
-                      className="inline-flex min-h-[36px] items-center gap-1 rounded-xl bg-[#C9A227] px-3 text-xs font-extrabold text-black"
-                    >
-                      <Play className="h-3.5 w-3.5 fill-black" />
-                      <span>تكملة</span>
-                    </button>
-                  </div>
-                </div>
-              )}
+            {/* CENTER TOGGLE CONTROL BAR: إيقاف مؤقت / Stop  <->  اسمع الاية صح + كمل */}
+            <div className="shrink-0 space-y-2 border-t border-[#C9A227]/45 bg-[#080602] px-3.5 py-2.5">
+              <div className="flex items-center justify-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleTogglePauseResume}
+                  className={`inline-flex min-h-[44px] flex-1 items-center justify-center gap-2 rounded-2xl border-2 px-4 text-sm font-extrabold transition-all active:scale-95 ${
+                    isPaused
+                      ? 'border-emerald-400 bg-emerald-600 text-white'
+                      : 'border-[#C9A227] bg-[#161104] text-[#FCE38A]'
+                  }`}
+                >
+                  <span>
+                    {isPaused ? '▶️ كمل' : '⏸️ إيقاف مؤقت / Stop'}
+                  </span>
+                </button>
 
-              {correctionDetail && !haltedMistake && (
+                {isPaused && currentAyah && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      playCorrectionAyah(correctionSheikh, currentAyah)
+                    }
+                    className="inline-flex min-h-[44px] flex-1 items-center justify-center gap-1.5 rounded-2xl border-2 border-[#FCE38A] bg-gradient-to-l from-[#FCE38A] via-[#C9A227] to-[#9A7415] px-3 text-xs font-extrabold text-black active:scale-95"
+                  >
+                    <span>
+                      {isPlayingCorrection
+                        ? '⏸️ إيقاف الصوت'
+                        : '🔊 اسمع الاية صح'}
+                    </span>
+                  </button>
+                )}
+              </div>
+
+              {correctionDetail && (
                 <div className="rounded-2xl border-2 border-[#C9A227] bg-[#120E04] px-3 py-2 text-center">
                   <div className="flex items-center justify-between gap-2 text-[11px] font-bold text-[#C9A227]">
                     <span>
@@ -1631,13 +1676,13 @@ export const QuranTestModal: React.FC<QuranTestModalProps> = ({
                 </div>
               )}
 
-              {correctingNotice && !correctionDetail && !haltedMistake && (
+              {correctingNotice && !correctionDetail && (
                 <p className="rounded-xl border border-[#C9A227] bg-[#141004] px-3 py-1.5 text-center text-xs font-bold text-[#FCE38A]">
                   {correctingNotice}
                 </p>
               )}
 
-              {liveTranscript && listening && !haltedMistake && (
+              {liveTranscript && listening && !isPaused && (
                 <p className="truncate text-center text-[11px] text-zinc-400">
                   المسموع: «{liveTranscript}»
                 </p>
@@ -1686,7 +1731,7 @@ export const QuranTestModal: React.FC<QuranTestModalProps> = ({
         )}
       </div>
 
-      {/* FIXED BOTTOM ACTION: ONLY SHOWS "إنهاء القراءة" DURING ACTIVE TEST */}
+      {/* FIXED BOTTOM ACTION: "انهاء الاختبار" DURING ACTIVE TEST */}
       {finishedScore === null && tasmeeStarted && (
         <footer className="shrink-0 border-t border-[#C9A227]/60 bg-[#050401] px-3 py-2.5">
           <button
@@ -1695,7 +1740,7 @@ export const QuranTestModal: React.FC<QuranTestModalProps> = ({
             className="flex min-h-[50px] w-full items-center justify-center gap-2 rounded-2xl bg-[#C9A227] text-base font-extrabold text-black shadow-[0_0_24px_rgba(201,162,39,0.35)]"
           >
             <Check className="h-5 w-5 stroke-[2.5]" />
-            <span>إنهاء القراءة</span>
+            <span>انهاء الاختبار</span>
           </button>
         </footer>
       )}

@@ -6,10 +6,12 @@ import {
   FRIDAY_KAHF_VOICES_3,
   getAyahAudioUrl,
   getSurahAudioUrl,
-  IQAMAH_VOICES_3,
+  IQAMAH_VOICES_10,
+  MUEZZIN_POPUP_VOICES_5,
   POST_ADHAN_DUA,
+  POST_ADHAN_DUA_VOICES_10,
   POST_PRAYER_AZKAR_AUDIO_URLS,
-  PRE_ADHAN_VOICES_3,
+  PRE_ADHAN_VOICES_10,
   RECITERS_30,
   SALAWAT_AUDIO_TRACKS,
   TAWASIH_NAQSHABANDI,
@@ -80,6 +82,11 @@ export const CORE_LOCAL_AUDIO_ASSETS = [
   '/audio/kahf-alafasy.mp3',
   '/audio/kahf-muaiqly.mp3',
   '/audio/sheikh-start-reading.mp3',
+  '/adhan-sounds/makkah.mp3',
+  '/adhan-sounds/ahmed-naina.mp3',
+  '/adhan-sounds/khalid-aljalil.mp3',
+  '/adhan-sounds/mishary-alafasy.mp3',
+  '/adhan-sounds/egyptian.mp3',
 ];
 
 const SHORT_SURAHS_OFFLINE_AYAHS: Array<[number, number]> = [
@@ -238,10 +245,14 @@ const APP_SECTIONS_MAP: Record<OfflineSectionId, AppSectionDefinition> = {
     estimatedMb: 65,
     estimatedMinutes: 2,
     getOfflineUrls: () => [
+      ...MUEZZIN_POPUP_VOICES_5.map((a) => a.url),
       ...ADHAN_VOICES_30.map((a) => a.url),
-      ...IQAMAH_VOICES_3.map((i) => i.url),
-      ...PRE_ADHAN_VOICES_3.map((p) => p.url),
+      ...IQAMAH_VOICES_10.map((i) => i.url),
+      ...PRE_ADHAN_VOICES_10.map((p) => p.url),
       POST_ADHAN_DUA.audioUrl,
+      ...POST_ADHAN_DUA_VOICES_10.flatMap((d) =>
+        d.fallbackUrl ? [d.url, d.fallbackUrl] : [d.url],
+      ),
       ...TAWASIH_NAQSHABANDI.map((t) => t.url),
       ...EID_TAKBEERAT_VOICES_3.map((e) => e.url),
       ...FRIDAY_KAHF_VOICES_3.map((k) => k.url),
@@ -413,7 +424,7 @@ const APP_SECTIONS_MAP: Record<OfflineSectionId, AppSectionDefinition> = {
     descAr: 'تحميل المحاضرات، القرآن الصوتي، الأناشيد والخطب للاستماع بدون نت',
     moreDescAr: 'إدارة التحميلات الصوتية (audio-cache-v1) ومساحة التخزين بدون نت',
     iconKey: 'download',
-    inMoreMenu: true,
+    inMoreMenu: false,
     estimatedMb: 45,
     estimatedMinutes: 2,
   },
@@ -445,7 +456,6 @@ const APP_SECTION_ORDER: OfflineSectionId[] = [
 ];
 
 const MORE_MENU_ORDER: MoreMenuSectionId[] = [
-  'downloads',
   'adhan',
   'books',
   'rafiqi',

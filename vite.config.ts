@@ -17,6 +17,13 @@ export default defineConfig(() => {
           'audio/azan.mp3',
           'audio/pre-chime.mp3',
           'audio/post-adhan-dua.mp3',
+          'adhan.js',
+          'adhan-sw.js',
+          'adhan-sounds/makkah.mp3',
+          'adhan-sounds/ahmed-naina.mp3',
+          'adhan-sounds/khalid-aljalil.mp3',
+          'adhan-sounds/mishary-alafasy.mp3',
+          'adhan-sounds/egyptian.mp3',
         ],
         workbox: {
           maximumFileSizeToCacheInBytes: 25 * 1024 * 1024,
@@ -48,7 +55,7 @@ export default defineConfig(() => {
           cleanupOutdatedCaches: true,
           skipWaiting: true,
           clientsClaim: true,
-          importScripts: ['/adhan-sw-ext.js'],
+          importScripts: ['/adhan-sw-ext.js', '/adhan-sw.js'],
           runtimeCaching: [
             {
               urlPattern: ({request, sameOrigin, url}) =>
@@ -116,7 +123,9 @@ export default defineConfig(() => {
             },
             {
               urlPattern: ({sameOrigin, url}) =>
-                sameOrigin && url.pathname.startsWith('/audio/'),
+                sameOrigin &&
+                (url.pathname.startsWith('/audio/') ||
+                  url.pathname.startsWith('/adhan-sounds/')),
               handler: 'CacheFirst',
               options: {
                 cacheName: 'audio-cache-v1',
@@ -136,6 +145,7 @@ export default defineConfig(() => {
                 !url.pathname.startsWith('/api/') &&
                 !url.pathname.startsWith('/data/') &&
                 !url.pathname.startsWith('/audio/') &&
+                !url.pathname.startsWith('/adhan-sounds/') &&
                 !url.pathname.startsWith('/fonts/'),
               handler: 'StaleWhileRevalidate',
               options: {

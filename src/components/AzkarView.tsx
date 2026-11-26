@@ -3,7 +3,6 @@ import {Check, Pause, Play, RotateCcw, Sparkles} from 'lucide-react';
 import {AZKAR_CATEGORIES} from '../data/azkar';
 import {AzkarCategoryId, DhikrItem} from '../types';
 import {resolveOfflinePlayableUrl} from '../utils/offlineAudioCache';
-import {SectionOfflineButton} from './SectionOfflineButton';
 
 interface AzkarViewProps {
   counts: Record<string, number>;
@@ -152,12 +151,6 @@ export const AzkarView: React.FC<AzkarViewProps> = ({
           </button>
         </div>
       </div>
-
-      <SectionOfflineButton
-        sectionId="azkar"
-        preferredReciter="alafasy"
-        labelOverride="الأذكار والصوتيات"
-      />
 
       {audioErr && (
         <div className="rounded-2xl border-2 border-[#C9A227] bg-[#FFFDF6] px-4 py-3 text-xs font-bold text-[#9A7415] dark:bg-[#0D0A02] dark:text-[#F3D56B]">

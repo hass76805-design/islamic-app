@@ -50,7 +50,6 @@ import {AyahReciterSheet} from './AyahReciterSheet';
 import {SurahHeaderFrame} from './IslamicOrnament';
 import {QuranTeacherModal} from './QuranTeacherModal';
 import {QuranTestModal} from './QuranTestModal';
-import {SectionOfflineButton} from './SectionOfflineButton';
 
 export interface QuranLaunchDirective {
   type: 'fatiha' | 'test';
@@ -753,15 +752,9 @@ export const QuranView: React.FC<QuranViewProps> = ({
         </span>
       </div>
 
-      <SectionOfflineButton
-        sectionId="quran"
-        preferredReciter={preferredReciter}
-        labelOverride="المصحف والتلاوات"
-      />
-
       {seedOnlyMode && (
         <div className="rounded-2xl border border-[#C9A227]/60 bg-[#120E04] px-3 py-2 text-center text-[11px] font-bold leading-relaxed text-[#FCE38A]">
-          وضع الأوفلاين المبدئي: السور الأساسية والقصار متاحة من الذاكرة المحلية — اتصل بالنت أو اضغط «تحميل المحتوى» لحفظ الـ 604 صفحة كاملة.
+          وضع الأوفلاين المبدئي: السور الأساسية والقصار متاحة من الذاكرة المحلية — اتصل بالنت أو اضغط «تحميل محتوى التطبيق» من الرئيسية لحفظ الـ 604 صفحة كاملة.
         </div>
       )}
 

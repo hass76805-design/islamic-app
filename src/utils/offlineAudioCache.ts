@@ -61,17 +61,21 @@ export interface OfflineSectionOption {
 }
 
 export function getAvailableOfflineSections(): OfflineSectionOption[] {
-  return getAllAppSections().map((sec) => ({
-    id: sec.id,
-    labelAr: sec.labelAr,
-    descAr: sec.descAr,
-    estimatedMb: sec.estimatedMb,
-    estimatedMinutes: sec.estimatedMinutes,
-  }));
+  return getAllAppSections()
+    .filter((sec) => sec.id !== 'downloads')
+    .map((sec) => ({
+      id: sec.id,
+      labelAr: sec.labelAr,
+      descAr: sec.descAr,
+      estimatedMb: sec.estimatedMb,
+      estimatedMinutes: sec.estimatedMinutes,
+    }));
 }
 
 export function getAllOfflineSectionIds(): OfflineSectionId[] {
-  return getAllAppSections().map((sec) => sec.id);
+  return getAllAppSections()
+    .filter((sec) => sec.id !== 'downloads')
+    .map((sec) => sec.id);
 }
 
 export const OFFLINE_SECTION_OPTIONS: OfflineSectionOption[] =
@@ -210,9 +214,11 @@ export async function resolveOfflinePlayableUrl(url: string): Promise<string> {
     try {
       const primaryAudioCache = await caches.open('audio-cache-v1');
       const legacyAudioCache = await caches.open(AUDIO_CACHE_NAME);
+      const adhanSoundsCache = await caches.open('adhan-sounds-v1');
       const cached =
         (await primaryAudioCache.match(url)) ||
         (await legacyAudioCache.match(url)) ||
+        (await adhanSoundsCache.match(url)) ||
         (await caches.match(url));
       if (cached && cached.type !== 'opaque' && cached.ok) {
         const blob = await cached.clone().blob();
@@ -457,6 +463,14 @@ export async function cacheAssetInBucket(
         }
         if (typeof caches !== 'undefined') {
           const cache = await caches.open(bucketName);
+          if (bucketName === AUDIO_CACHE_NAME) {
+            try {
+              const primaryCache = await caches.open('audio-cache-v1');
+              await primaryCache.put(url, res.clone());
+            } catch {
+              // ignore primary mirror error
+            }
+          }
           await cache.put(url, res);
         }
         return true;
@@ -477,6 +491,14 @@ export async function cacheAssetInBucket(
         }
         if (typeof caches !== 'undefined') {
           const cache = await caches.open(bucketName);
+          if (bucketName === AUDIO_CACHE_NAME) {
+            try {
+              const primaryCache = await caches.open('audio-cache-v1');
+              await primaryCache.put(url, corsRes.clone());
+            } catch {
+              // ignore primary mirror error
+            }
+          }
           await cache.put(url, corsRes);
         }
         return true;
@@ -494,6 +516,14 @@ export async function cacheAssetInBucket(
       try {
         const noCorsRes = await fetchWithTimeout(url, {mode: 'no-cors'}, 15000);
         const cache = await caches.open(bucketName);
+        if (bucketName === AUDIO_CACHE_NAME) {
+          try {
+            const primaryCache = await caches.open('audio-cache-v1');
+            await primaryCache.put(url, noCorsRes.clone());
+          } catch {
+            // ignore primary mirror error
+          }
+        }
         await cache.put(url, noCorsRes);
         return true;
       } catch {

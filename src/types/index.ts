@@ -77,6 +77,7 @@ export interface AdhanVoice {
   locationAr: string;
   url: string;
   fallbackUrl?: string;
+  descAr?: string;
 }
 
 export interface FamousSurahItem {
@@ -180,7 +181,9 @@ export type CalculationMethodId =
   | 'NorthAmerica'
   | 'Dubai'
   | 'Kuwait'
-  | 'Qatar';
+  | 'Qatar'
+  | 'France'
+  | 'Custom';
 
 export type AsrMadhab = 'Shafi' | 'Hanafi';
 
@@ -296,6 +299,8 @@ export type DailyPrayerLog = Record<string, Record<TrackablePrayer, PrayerTrackS
 
 export type PerPrayerAdhanMap = Record<TrackablePrayer, string>;
 export type PerPrayerEnabledMap = Record<TrackablePrayer, boolean>;
+export type AdhanAlertMode = 'off' | 'silent' | 'audio' | 'visual';
+export type PerPrayerAlertModeMap = Record<PrayerKey, AdhanAlertMode>;
 
 export interface AppSettings {
   calculationMethod: CalculationMethodId;
@@ -309,7 +314,10 @@ export interface AppSettings {
   preferredIqamah: string;
   perPrayerIqamah?: PerPrayerAdhanMap;
   iqamahEnabled: boolean;
+  iqamahMinutes?: number;
   postAdhanDuaEnabled: boolean;
+  preferredPostAdhanDua?: string;
+  postAdhanDuaDelaySeconds?: number;
   qiyamEnabled: boolean;
   preferredPreAdhanSound: string;
   preferredTawasih: string;
@@ -317,8 +325,14 @@ export interface AppSettings {
   preferredFridayKahf: string;
   perPrayerAdhan: PerPrayerAdhanMap;
   enabledPrayers: PerPrayerEnabledMap;
+  perPrayerAlertMode?: PerPrayerAlertModeMap;
   adhanEnabled: boolean;
-  preAdhanMinutes: number; // 0, 5, 10, 15
+  preAdhanEnabled?: boolean;
+  preAdhanMinutes: number; // 0, 5, 10..30
+  dstEnabled?: boolean;
+  timeFormat?: '12' | '24';
+  customFajrAngle?: number;
+  customIshaAngle?: number;
   prayerOffsets: PrayerOffsets;
   ramadanCannonEnabled: boolean;
   fajrTawasihEnabled: boolean;
@@ -330,4 +344,5 @@ export interface AppSettings {
   prayerConfirmReminderEnabled?: boolean;
   salawatReminderEnabled?: boolean;
   salawatIntervalMinutes?: 10 | 30 | 60;
+  preferredSalawatTrack?: string;
 }

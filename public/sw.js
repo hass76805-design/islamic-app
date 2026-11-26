@@ -24,6 +24,12 @@ const PRECACHE_URLS = [
   '/audio/azan.mp3',
   '/audio/post-adhan-dua.mp3',
   '/audio/pre-chime.mp3',
+  '/adhan.js',
+  '/adhan-sounds/makkah.mp3',
+  '/adhan-sounds/ahmed-naina.mp3',
+  '/adhan-sounds/khalid-aljalil.mp3',
+  '/adhan-sounds/mishary-alafasy.mp3',
+  '/adhan-sounds/egyptian.mp3',
 ];
 
 const OPTIONAL_SHELL_ASSETS = [
@@ -35,7 +41,7 @@ const OPTIONAL_SHELL_ASSETS = [
 ];
 
 try {
-  importScripts('/adhan-sw-ext.js');
+  importScripts('/adhan-sw-ext.js', '/adhan-sw.js');
 } catch {
   // extension loaded when available
 }
@@ -185,17 +191,23 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Audio: prefer audio-cache-v1 -> legacy audio cache -> network
+  // Audio: prefer adhan-sounds-v1 -> audio-cache-v1 -> legacy audio cache -> network
   if (
     req.destination === 'audio' ||
     /\.(?:mp3|m4a|wav|ogg)$/i.test(url.pathname) ||
-    url.pathname.startsWith('/audio/')
+    url.pathname.startsWith('/audio/') ||
+    url.pathname.startsWith('/adhan-sounds/')
   ) {
     event.respondWith(
       (async () => {
         const userAudioCache = await caches.open(AUDIO_USER_CACHE);
         const userHit = await userAudioCache.match(req);
         if (userHit) return userHit;
+
+        const muezzinHit = await caches
+          .open('adhan-sounds-v1')
+          .then((c) => c.match(req));
+        if (muezzinHit) return muezzinHit;
 
         const legacyHit =
           (await caches.open(AUDIO_LEGACY_CACHE).then((c) => c.match(req))) ||

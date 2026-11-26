@@ -29,7 +29,6 @@ import {
   generatePersonalizedSheikhReply,
   resolveSheikhHumanVoiceUrl,
 } from '../utils/rafiqiVoice';
-import {SectionOfflineButton} from './SectionOfflineButton';
 
 interface RafiqiViewProps {
   preferredReciter: ReciterId;
@@ -474,14 +473,6 @@ export const RafiqiView: React.FC<RafiqiViewProps> = ({preferredReciter}) => {
             أنت بدون إنترنت: التعرف الصوتي المباشر وتوليد الردود الجديدة يتطلبان اتصالاً بالإنترنت — أما الـ 30 كلمة الذهبية وقراءة الآيات والأصوات المحفوظة مسبقًا فتعمل معك أوفلاين.
           </div>
         )}
-
-        <div className="mt-3">
-          <SectionOfflineButton
-            sectionId="rafiqi"
-            preferredReciter={selectedReciter}
-            labelOverride="رفيقي وأصوات الشيخ"
-          />
-        </div>
 
         {/* Talk to Companion Controls */}
         <div className="mt-4 flex flex-col items-center rounded-2xl border border-[#C9A227]/45 bg-[#0A0904] p-4 text-center">

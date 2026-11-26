@@ -32,17 +32,24 @@ export const DEFAULT_PRAYER_OFFSETS: PrayerOffsets = {
 };
 
 export const CALCULATION_METHODS: Array<{id: CalculationMethodId; labelAr: string}> = [
-  {id: 'UmmAlQura', labelAr: 'أم القرى (مكة المكرمة)'},
-  {id: 'Egyptian', labelAr: 'الهيئة المصرية العامة للمساحة'},
+  {id: 'Egyptian', labelAr: 'وزارة الأوقاف المصرية (الهيئة العامة للمساحة)'},
   {id: 'MuslimWorldLeague', labelAr: 'رابطة العالم الإسلامي'},
+  {id: 'NorthAmerica', labelAr: 'الجمعية الإسلامية لأمريكا الشمالية (ISNA)'},
+  {id: 'UmmAlQura', labelAr: 'أم القرى (مكة المكرمة)'},
+  {id: 'Karachi', labelAr: 'جامعة العلوم الإسلامية بكراتشي'},
+  {id: 'Kuwait', labelAr: 'الكويت'},
+  {id: 'France', labelAr: 'فرنسا (UOIF)'},
   {id: 'Dubai', labelAr: 'دبي / الإمارات'},
   {id: 'Qatar', labelAr: 'قطر'},
-  {id: 'Kuwait', labelAr: 'الكويت'},
-  {id: 'Karachi', labelAr: 'جامعة العلوم الإسلامية بكراتشي'},
-  {id: 'NorthAmerica', labelAr: 'الجمعية الإسلامية لأمريكا الشمالية (ISNA)'},
+  {id: 'Custom', labelAr: 'حساب مخصص'},
 ];
 
-function getMethodParams(methodId: CalculationMethodId, madhab: AsrMadhab): CalculationParameters {
+function getMethodParams(
+  methodId: CalculationMethodId,
+  madhab: AsrMadhab,
+  customFajrAngle = 18.5,
+  customIshaAngle = 17.5,
+): CalculationParameters {
   let params: CalculationParameters;
   switch (methodId) {
     case 'UmmAlQura':
@@ -65,6 +72,12 @@ function getMethodParams(methodId: CalculationMethodId, madhab: AsrMadhab): Calc
       break;
     case 'Qatar':
       params = CalculationMethod.Qatar();
+      break;
+    case 'France':
+      params = new CalculationParameters('Other', 12, 12);
+      break;
+    case 'Custom':
+      params = new CalculationParameters('Other', customFajrAngle, customIshaAngle);
       break;
     case 'MuslimWorldLeague':
     default:
@@ -154,12 +167,15 @@ export function computeDailyPrayerData(
   methodId: CalculationMethodId,
   madhab: AsrMadhab,
   offsets: PrayerOffsets = DEFAULT_PRAYER_OFFSETS,
+  dstEnabled = false,
+  customFajrAngle = 18.5,
+  customIshaAngle = 17.5,
 ): {
   schedule: PrayerScheduleItem[];
   nextPrayer: NextPrayerState;
 } {
   const coords = new Coordinates(latitude, longitude);
-  const params = getMethodParams(methodId, madhab);
+  const params = getMethodParams(methodId, madhab, customFajrAngle, customIshaAngle);
   const todayTimes = new PrayerTimes(coords, now, params);
 
   const tomorrow = new Date(now);
@@ -170,14 +186,15 @@ export function computeDailyPrayerData(
   yesterday.setDate(now.getDate() - 1);
   const yesterdayTimes = new PrayerTimes(coords, yesterday, params);
 
+  const dstMinutes = dstEnabled ? 60 : 0;
   const keys: PrayerKey[] = ['fajr', 'sunrise', 'dhuhr', 'asr', 'maghrib', 'isha'];
   const timesMap: Record<PrayerKey, Date> = {
-    fajr: addMinutes(todayTimes.fajr, offsets.fajr || 0),
-    sunrise: addMinutes(todayTimes.sunrise, offsets.sunrise || 0),
-    dhuhr: addMinutes(todayTimes.dhuhr, offsets.dhuhr || 0),
-    asr: addMinutes(todayTimes.asr, offsets.asr || 0),
-    maghrib: addMinutes(todayTimes.maghrib, offsets.maghrib || 0),
-    isha: addMinutes(todayTimes.isha, offsets.isha || 0),
+    fajr: addMinutes(todayTimes.fajr, (offsets.fajr || 0) + dstMinutes),
+    sunrise: addMinutes(todayTimes.sunrise, (offsets.sunrise || 0) + dstMinutes),
+    dhuhr: addMinutes(todayTimes.dhuhr, (offsets.dhuhr || 0) + dstMinutes),
+    asr: addMinutes(todayTimes.asr, (offsets.asr || 0) + dstMinutes),
+    maghrib: addMinutes(todayTimes.maghrib, (offsets.maghrib || 0) + dstMinutes),
+    isha: addMinutes(todayTimes.isha, (offsets.isha || 0) + dstMinutes),
   };
 
   // Determine next prayer strictly among Fajr, Dhuhr, Asr, Maghrib, Isha (and Sunrise if before Sunrise)
@@ -198,12 +215,15 @@ export function computeDailyPrayerData(
     resolvedNextKey = nextKey;
     nextTime = timesMap[nextKey];
     const idx = keys.indexOf(nextKey);
-    prevTime = idx > 0 ? timesMap[keys[idx - 1]] : yesterdayTimes.isha;
+    prevTime =
+      idx > 0
+        ? timesMap[keys[idx - 1]]
+        : addMinutes(yesterdayTimes.isha, (offsets.isha || 0) + dstMinutes);
   } else {
     // After Isha -> next is tomorrow's Fajr
     resolvedNextKey = 'fajr';
-    nextTime = tomorrowTimes.fajr;
-    prevTime = todayTimes.isha;
+    nextTime = addMinutes(tomorrowTimes.fajr, (offsets.fajr || 0) + dstMinutes);
+    prevTime = timesMap.isha;
   }
 
   const totalSpan = Math.max(1, nextTime.getTime() - prevTime.getTime());
@@ -270,6 +290,7 @@ export function computeQiyamAlLaylTime(
   methodId: CalculationMethodId,
   madhab: AsrMadhab,
   offsets: PrayerOffsets = DEFAULT_PRAYER_OFFSETS,
+  dstEnabled = false,
 ): {lastThirdStart: Date; midpoint: Date; maghrib: Date; nextFajr: Date} {
   const coords = new Coordinates(latitude, longitude);
   const params = getMethodParams(methodId, madhab);
@@ -288,8 +309,9 @@ export function computeQiyamAlLaylTime(
   const todayTimes = new PrayerTimes(coords, dayAnchor, params);
   const tomorrowTimes = new PrayerTimes(coords, nextAnchor, params);
 
-  const maghrib = addMinutes(todayTimes.maghrib, offsets.maghrib || 0);
-  const nextFajr = addMinutes(tomorrowTimes.fajr, offsets.fajr || 0);
+  const dstMin = dstEnabled ? 60 : 0;
+  const maghrib = addMinutes(todayTimes.maghrib, (offsets.maghrib || 0) + dstMin);
+  const nextFajr = addMinutes(tomorrowTimes.fajr, (offsets.fajr || 0) + dstMin);
 
   const nightMs = Math.max(1, nextFajr.getTime() - maghrib.getTime());
   const midpoint = new Date(maghrib.getTime() + nightMs * 0.5);
@@ -316,6 +338,7 @@ export interface SavedMonthlyPrayerCache {
   madhab: AsrMadhab;
   days: SavedMonthlyPrayerDay[];
   cairoDays: SavedMonthlyPrayerDay[];
+  beniSuefDays?: SavedMonthlyPrayerDay[];
 }
 
 function formatLocalDayKey(d: Date): string {
@@ -332,12 +355,14 @@ function buildMonthArray(
   madhab: AsrMadhab,
   offsets: PrayerOffsets,
   totalDays: number,
+  dstEnabled = false,
 ): SavedMonthlyPrayerDay[] {
   const coords = new Coordinates(latitude, longitude);
   const params = getMethodParams(methodId, madhab);
   const keys: PrayerKey[] = ['fajr', 'sunrise', 'dhuhr', 'asr', 'maghrib', 'isha'];
   const baseDate = new Date();
   const list: SavedMonthlyPrayerDay[] = [];
+  const dstMin = dstEnabled ? 60 : 0;
 
   for (let i = 0; i < totalDays; i++) {
     const target = new Date(
@@ -353,7 +378,7 @@ function buildMonthArray(
     const formatted24 = {} as Record<PrayerKey, string>;
 
     for (const k of keys) {
-      const adjusted = addMinutes(pt[k], offsets[k] || 0);
+      const adjusted = addMinutes(pt[k], (offsets[k] || 0) + dstMin);
       timesMs[k] = adjusted.getTime();
       formatted24[k] = formatTime24(adjusted);
     }
@@ -365,6 +390,7 @@ function buildMonthArray(
       methodId,
       madhab,
       offsets,
+      dstEnabled,
     );
 
     list.push({
@@ -379,8 +405,8 @@ function buildMonthArray(
 }
 
 /**
- * Precomputes and saves 30 days ahead of Prayer Times for both the user's city
- * and Cairo (القاهرة) in localStorage + CacheStorage so a full month is always stored offline.
+ * Precomputes and saves 30 days ahead of Prayer Times for the user's city,
+ * Cairo (القاهرة), and Beni Suef (بني سويف) in localStorage + IndexedDB + CacheStorage.
  */
 export function precomputeMonthlyPrayerCache(
   latitude: number,
@@ -390,8 +416,9 @@ export function precomputeMonthlyPrayerCache(
   offsets: PrayerOffsets = DEFAULT_PRAYER_OFFSETS,
   cityLabel = 'القاهرة',
   totalDays = 30,
+  dstEnabled = false,
 ): SavedMonthlyPrayerCache {
-  const days = buildMonthArray(latitude, longitude, methodId, madhab, offsets, totalDays);
+  const days = buildMonthArray(latitude, longitude, methodId, madhab, offsets, totalDays, dstEnabled);
   const cairoDays = buildMonthArray(
     30.0444,
     31.2357,
@@ -399,6 +426,16 @@ export function precomputeMonthlyPrayerCache(
     madhab,
     offsets,
     totalDays,
+    dstEnabled,
+  );
+  const beniSuefDays = buildMonthArray(
+    29.0661,
+    31.0994,
+    'Egyptian',
+    madhab,
+    offsets,
+    totalDays,
+    dstEnabled,
   );
 
   const payload: SavedMonthlyPrayerCache = {
@@ -410,6 +447,7 @@ export function precomputeMonthlyPrayerCache(
     madhab,
     days,
     cairoDays,
+    beniSuefDays,
   };
 
   if (typeof window !== 'undefined') {

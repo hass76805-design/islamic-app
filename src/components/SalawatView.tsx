@@ -12,9 +12,16 @@ import {
   Volume2,
   VolumeX,
 } from 'lucide-react';
-import {SALAWAT_AUDIO_TRACKS} from '../data/reciters';
+import {
+  resolveSalawatTrackById,
+  SALAWAT_AUDIO_TRACKS,
+} from '../data/reciters';
 import {useLocalStorage} from '../hooks/useLocalStorage';
 import {AppSettings} from '../types';
+import {
+  cacheAudioUrl,
+  resolveOfflinePlayableUrl,
+} from '../utils/offlineAudioCache';
 
 interface SalawatViewProps {
   settings: AppSettings;
@@ -129,7 +136,10 @@ export const SalawatView: React.FC<SalawatViewProps> = ({
     },
   );
   const [selectedTrackId, setSelectedTrackId] = useState<string>(
-    SALAWAT_AUDIO_TRACKS[0].id,
+    () =>
+      settings.preferredSalawatTrack
+        ? resolveSalawatTrackById(settings.preferredSalawatTrack).id
+        : SALAWAT_AUDIO_TRACKS[0].id,
   );
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [sheikhTapVoiceEnabled, setSheikhTapVoiceEnabled] = useState(false);
@@ -145,9 +155,7 @@ export const SalawatView: React.FC<SalawatViewProps> = ({
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   const activeTrack = useMemo(
-    () =>
-      SALAWAT_AUDIO_TRACKS.find((t) => t.id === selectedTrackId) ||
-      SALAWAT_AUDIO_TRACKS[0],
+    () => resolveSalawatTrackById(selectedTrackId),
     [selectedTrackId],
   );
 
@@ -183,9 +191,7 @@ export const SalawatView: React.FC<SalawatViewProps> = ({
   }, [reminderEnabled, intervalMinutes]);
 
   const playSheikhTrack = (trackId: string, restartIfSame = false) => {
-    const track =
-      SALAWAT_AUDIO_TRACKS.find((t) => t.id === trackId) ||
-      SALAWAT_AUDIO_TRACKS[0];
+    const track = resolveSalawatTrackById(trackId);
     if (!audioRef.current) {
       audioRef.current = new Audio();
     }
@@ -199,11 +205,48 @@ export const SalawatView: React.FC<SalawatViewProps> = ({
 
     audio.pause();
     audio.currentTime = 0;
-    audio.src = track.url;
     setPlayingTrackId(track.id);
     audio.onended = () => setPlayingTrackId(null);
     audio.onerror = () => setPlayingTrackId(null);
-    audio.play().catch(() => setPlayingTrackId(null));
+    void cacheAudioUrl(track.url);
+    void resolveOfflinePlayableUrl(track.url).then((playableUrl) => {
+      audio.src = playableUrl;
+      audio.load();
+      audio.play().catch(() => setPlayingTrackId(null));
+    });
+  };
+
+  const handleSelectTrack = (trackId: string) => {
+    const track = resolveSalawatTrackById(trackId);
+    setSelectedTrackId(track.id);
+    void cacheAudioUrl(track.url);
+    onUpdateSettings((prev) => ({
+      ...prev,
+      preferredSalawatTrack: track.id,
+    }));
+  };
+
+  const handleMainPlaySalawatButton = async () => {
+    const track = resolveSalawatTrackById(selectedTrackId);
+    const isCurrentlyPlaying = playingTrackId === track.id;
+    playSheikhTrack(track.id);
+
+    if (!isCurrentlyPlaying) {
+      await ensureNotificationPermission();
+      writeSalawatAnchor(intervalMinutes, Date.now());
+      onUpdateSettings((prev) => ({
+        ...prev,
+        preferredSalawatTrack: track.id,
+        salawatReminderEnabled: true,
+        salawatIntervalMinutes: prev.salawatIntervalMinutes || 10,
+        backgroundAlertsEnabled: true,
+        lockScreenKeepAlive: true,
+      }));
+      setTestAlertNotice(
+        `جاري تشغيل: ${track.titleAr} (${track.reciterAr}) وتفعيل التذكير في الخلفية بدون نت ✓`,
+      );
+      window.setTimeout(() => setTestAlertNotice(null), 4000);
+    }
   };
 
   const handleRosaryTap = () => {
@@ -336,15 +379,37 @@ export const SalawatView: React.FC<SalawatViewProps> = ({
 
   return (
     <div className="space-y-4 pb-4">
-      {/* Header Verse */}
-      <div className="rounded-3xl border-2 border-[#C9A227] bg-[#050505] p-4 text-center text-white">
+      {/* Header Verse + Hero Play Button: تشغيل صلِّ على النبي ﷺ */}
+      <div className="space-y-3 rounded-3xl border-2 border-[#C9A227] bg-[#050505] p-4 text-center text-white">
         <span className="inline-flex items-center gap-1.5 rounded-xl border border-[#C9A227]/60 bg-[#C9A227]/15 px-3 py-1 text-[11px] font-bold text-[#FCE38A]">
           <Sparkles className="h-3.5 w-3.5" />
           <span>صلِّ على الحبيب المصطفى ﷺ</span>
         </span>
-        <p className="font-quran mt-3 text-lg leading-loose font-bold text-[#FCE38A]">
+        <p className="font-quran text-lg leading-loose font-bold text-[#FCE38A]">
           ﴿إِنَّ اللَّهَ وَمَلَائِكَتَهُ يُصَلُّونَ عَلَى النَّبِيِّ ۚ يَا أَيُّهَا الَّذِينَ آمَنُوا صَلُّوا عَلَيْهِ وَسَلِّمُوا تَسْلِيمًا﴾
         </p>
+
+        <button
+          type="button"
+          onClick={() => void handleMainPlaySalawatButton()}
+          className={`flex min-h-[54px] w-full items-center justify-center gap-2.5 rounded-2xl border-2 px-4 text-sm font-extrabold shadow-[0_6px_22px_rgba(201,162,39,0.28)] transition active:scale-[0.98] ${
+            playingTrackId === activeTrack.id
+              ? 'border-emerald-400 bg-emerald-600 text-white'
+              : 'border-[#FCE38A] bg-gradient-to-l from-[#FCE38A] via-[#C9A227] to-[#9A7415] text-black'
+          }`}
+        >
+          {playingTrackId === activeTrack.id ? (
+            <>
+              <Pause className="h-5 w-5 fill-current" />
+              <span>إيقاف صلِّ على النبي ﷺ ({activeTrack.reciterAr})</span>
+            </>
+          ) : (
+            <>
+              <Play className="h-5 w-5 fill-current" />
+              <span>تشغيل صلِّ على النبي ﷺ</span>
+            </>
+          )}
+        </button>
       </div>
 
       {/* Real Background Salawat Alarm Card (Works When Closed / Screen Locked) */}
@@ -688,14 +753,14 @@ export const SalawatView: React.FC<SalawatViewProps> = ({
 
               <button
                 type="button"
-                onClick={() => setSelectedTrackId(track.id)}
+                onClick={() => handleSelectTrack(track.id)}
                 className={`min-h-[34px] w-full rounded-xl border text-xs font-bold ${
                   isSelected
                     ? 'border-[#C9A227] bg-[#C9A227] text-black'
                     : 'border-[#C9A227]/50 text-[#9A7415] dark:text-[#FCE38A]'
                 }`}
               >
-                {isSelected ? 'الصيغة النشطة على السبحة' : 'اعتماد هذه الصيغة'}
+                {isSelected ? 'الصيغة النشطة على السبحة والتشغيل ✓' : 'اعتماد هذه الصيغة'}
               </button>
             </div>
           );

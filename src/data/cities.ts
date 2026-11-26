@@ -9,6 +9,7 @@ export const PRESET_CITIES: UserLocation[] = [
   {latitude: 18.2164, longitude: 42.5053, city: 'أبها', country: 'السعودية', isGps: false},
   {latitude: 28.3835, longitude: 36.5662, city: 'تبوك', country: 'السعودية', isGps: false},
   {latitude: 30.0444, longitude: 31.2357, city: 'القاهرة', country: 'مصر', isGps: false},
+  {latitude: 29.0661, longitude: 31.0994, city: 'بني سويف', country: 'مصر', isGps: false},
   {latitude: 30.0131, longitude: 31.2089, city: 'الجيزة', country: 'مصر', isGps: false},
   {latitude: 31.2001, longitude: 29.9187, city: 'الإسكندرية', country: 'مصر', isGps: false},
   {latitude: 31.0409, longitude: 31.3785, city: 'المنصورة', country: 'مصر', isGps: false},

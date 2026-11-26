@@ -513,55 +513,271 @@ export const ADHAN_VOICES_30: AdhanVoice[] = [
 export const ADHAN_VOICES_9: AdhanVoice[] = ADHAN_VOICES_30.slice(0, 9);
 export const ADHAN_VOICES_3: AdhanVoice[] = ADHAN_VOICES_30.slice(0, 3);
 
-export const IQAMAH_VOICES_3: AdhanVoice[] = [
+export const MUEZZIN_POPUP_VOICES_5: AdhanVoice[] = [
   {
-    id: 'iqamah-makkah',
-    nameAr: 'إقامة المسجد الحرام (بدون نت)',
-    muezzinAr: 'الأداء المكي المتقن',
+    id: 'muezzin-makkah',
+    nameAr: 'الحرم المكي',
+    muezzinAr: 'أذان الحرم المكي الشريف',
     locationAr: 'مكة المكرمة',
-    url: '/audio/iqamah-makkah.mp3',
+    url: '/adhan-sounds/makkah.mp3',
+    fallbackUrl: '/audio/adhan-makkah.mp3',
   },
   {
-    id: 'iqamah-madinah',
-    nameAr: 'إقامة المسجد النبوي (بدون نت)',
-    muezzinAr: 'الإقامة الهادئة الرصينة',
-    locationAr: 'المدينة المنورة',
-    url: '/audio/iqamah-madinah.mp3',
+    id: 'muezzin-naina',
+    nameAr: 'أحمد نعينع',
+    muezzinAr: 'الشيخ أحمد نعينع',
+    locationAr: 'مصر',
+    url: '/adhan-sounds/ahmed-naina.mp3',
+    fallbackUrl: '/audio/adhan-makkah.mp3',
   },
   {
-    id: 'iqamah-haram',
-    nameAr: 'الإقامة الخاشعة (بدون نت)',
-    muezzinAr: 'إقامة المسجد الجامع',
-    locationAr: 'الحرمين',
-    url: '/audio/iqamah-haram.mp3',
+    id: 'muezzin-jalil',
+    nameAr: 'خالد الجليل',
+    muezzinAr: 'الشيخ خالد الجليل',
+    locationAr: 'الرياض',
+    url: '/adhan-sounds/khalid-aljalil.mp3',
+    fallbackUrl: '/audio/adhan-alafasy.mp3',
+  },
+  {
+    id: 'muezzin-alafasy',
+    nameAr: 'مشاري راشد',
+    muezzinAr: 'الشيخ مشاري راشد العفاسي',
+    locationAr: 'الكويت',
+    url: '/adhan-sounds/mishary-alafasy.mp3',
+    fallbackUrl: '/audio/adhan-alafasy.mp3',
+  },
+  {
+    id: 'muezzin-egyptian',
+    nameAr: 'الأذان المصري',
+    muezzinAr: 'الأذان المصري الأصيل',
+    locationAr: 'القاهرة',
+    url: '/adhan-sounds/egyptian.mp3',
+    fallbackUrl: '/audio/adhan-madinah.mp3',
   },
 ];
 
-export const PRE_ADHAN_VOICES_3: Array<{
-  id: string;
-  nameAr: string;
-  descAr: string;
-  url: string;
-}> = [
+export function resolveAdhanVoiceById(id?: string | null): AdhanVoice {
+  if (!id || id === 'unselected') {
+    return MUEZZIN_POPUP_VOICES_5[0];
+  }
+  return (
+    MUEZZIN_POPUP_VOICES_5.find((v) => v.id === id) ||
+    ADHAN_VOICES_30.find((v) => v.id === id) ||
+    MUEZZIN_POPUP_VOICES_5[0]
+  );
+}
+
+export const IQAMAH_VOICES_10: AdhanVoice[] = [
   {
-    id: 'pre-chime',
-    nameAr: 'نغمة المسجد الهادئة',
-    descAr: 'جرس ذهبي هادئ ولطيف للتنبيه قبل الأذان',
-    url: '/audio/pre-chime.mp3',
+    id: 'iqamah-makkah',
+    nameAr: 'إقامة المسجد الحرام — الشيخ علي أحمد ملا',
+    muezzinAr: 'الشيخ علي أحمد ملا',
+    locationAr: 'مكة المكرمة',
+    url: '/audio/iqamah-makkah.mp3',
+    fallbackUrl: '/audio/iqamah-makkah.mp3',
   },
   {
+    id: 'iqamah-madinah',
+    nameAr: 'إقامة المسجد النبوي — الشيخ عصام بخاري',
+    muezzinAr: 'الشيخ عصام بن حسين بخاري',
+    locationAr: 'المدينة المنورة',
+    url: '/audio/iqamah-madinah.mp3',
+    fallbackUrl: '/audio/iqamah-makkah.mp3',
+  },
+  {
+    id: 'iqamah-haram',
+    nameAr: 'الإقامة الخاشعة — الشيخ فاروق حضراوي',
+    muezzinAr: 'الشيخ فاروق حضراوي',
+    locationAr: 'المسجد الحرام',
+    url: '/audio/iqamah-haram.mp3',
+    fallbackUrl: '/audio/iqamah-makkah.mp3',
+  },
+  {
+    id: 'iqamah-alafasy',
+    nameAr: 'نداء وإقامة الشيخ مشاري راشد العفاسي',
+    muezzinAr: 'الشيخ مشاري راشد العفاسي',
+    locationAr: 'الكويت',
+    url: '/adhan-sounds/mishary-alafasy.mp3',
+    fallbackUrl: '/audio/iqamah-makkah.mp3',
+  },
+  {
+    id: 'iqamah-jalil',
+    nameAr: 'نداء وإقامة الشيخ خالد الجليل',
+    muezzinAr: 'الشيخ خالد الجليل',
+    locationAr: 'الرياض',
+    url: '/adhan-sounds/khalid-aljalil.mp3',
+    fallbackUrl: '/audio/iqamah-makkah.mp3',
+  },
+  {
+    id: 'iqamah-naina',
+    nameAr: 'نداء وإقامة الشيخ أحمد نعينع',
+    muezzinAr: 'الشيخ أحمد نعينع',
+    locationAr: 'مصر',
+    url: '/adhan-sounds/ahmed-naina.mp3',
+    fallbackUrl: '/audio/iqamah-madinah.mp3',
+  },
+  {
+    id: 'iqamah-makkah-fayd',
+    nameAr: 'إقامة الحرم المكي — الشيخ نايف فيده',
+    muezzinAr: 'الشيخ نايف بن صالح فيده',
+    locationAr: 'مكة المكرمة',
+    url: '/adhan-sounds/makkah.mp3',
+    fallbackUrl: '/audio/iqamah-makkah.mp3',
+  },
+  {
+    id: 'iqamah-egypt',
+    nameAr: 'الإقامة المصرية الأصيلة — الجامع الأزهر',
+    muezzinAr: 'مؤذن الجامع الأزهر',
+    locationAr: 'القاهرة',
+    url: '/adhan-sounds/egyptian.mp3',
+    fallbackUrl: '/audio/iqamah-madinah.mp3',
+  },
+  {
+    id: 'iqamah-quba',
+    nameAr: 'إقامة مسجد قباء — الشيخ عبد المجيد السريحي',
+    muezzinAr: 'الشيخ عبد المجيد السريحي',
+    locationAr: 'المدينة المنورة',
+    url: '/audio/adhan-madinah.mp3',
+    fallbackUrl: '/audio/iqamah-madinah.mp3',
+  },
+  {
+    id: 'iqamah-jaber',
+    nameAr: 'إقامة الحرم المكي الهادئة — الشيخ ماجد العباس',
+    muezzinAr: 'الشيخ ماجد بن إبراهيم العباس',
+    locationAr: 'المسجد الحرام',
+    url: '/audio/azan.mp3',
+    fallbackUrl: '/audio/iqamah-haram.mp3',
+  },
+];
+
+export const IQAMAH_VOICES_3: AdhanVoice[] = IQAMAH_VOICES_10;
+
+export function resolveIqamahVoiceById(id?: string | null): AdhanVoice {
+  if (!id) return IQAMAH_VOICES_10[0];
+  return (
+    IQAMAH_VOICES_10.find((v) => v.id === id) || IQAMAH_VOICES_10[0]
+  );
+}
+
+export const PRE_ADHAN_VOICES_10: Array<{
+  id: string;
+  nameAr: string;
+  muezzinAr: string;
+  locationAr: string;
+  descAr: string;
+  url: string;
+  fallbackUrl: string;
+}> = [
+  {
     id: 'pre-takbeer',
-    nameAr: 'تكبير التنبيه من الحرم',
-    descAr: 'صوت «الله أكبر الله أكبر» لتنبيه اقتراب الصلاة',
+    nameAr: 'تكبير الحرم المكي — الشيخ علي أحمد ملا',
+    muezzinAr: 'الشيخ علي أحمد ملا',
+    locationAr: 'مكة المكرمة',
+    descAr: 'صوت «الله أكبر» بصوت مؤذن المسجد الحرام للتنبيه قبل الصلاة',
     url: '/audio/pre-takbeer.mp3',
+    fallbackUrl: '/audio/pre-takbeer.mp3',
   },
   {
     id: 'pre-istighfar',
-    nameAr: 'ذكر واستعداد للصلاة',
-    descAr: 'تنبيه صوتي بالذكر قبل الأذان (حصن المسلم)',
+    nameAr: 'ذكر واستغفار قبل الصلاة — حصن المسلم',
+    muezzinAr: 'الذكر المأثور',
+    locationAr: 'حصن المسلم',
+    descAr: 'تنبيه صوتي بالذكر والاستغفار استعدادًا للصلاة',
     url: '/audio/pre-istighfar.mp3',
+    fallbackUrl: '/audio/pre-takbeer.mp3',
+  },
+  {
+    id: 'pre-alafasy',
+    nameAr: 'الشيخ مشاري راشد العفاسي — صلاة على النبي',
+    muezzinAr: 'الشيخ مشاري راشد العفاسي',
+    locationAr: 'الكويت',
+    descAr: 'تنبيه خاشع بصوت الشيخ مشاري العفاسي قبل دخول الوقت',
+    url: '/audio/salawat-1.mp3',
+    fallbackUrl: '/audio/pre-takbeer.mp3',
+  },
+  {
+    id: 'pre-ghamdi',
+    nameAr: 'الشيخ سعد الغامدي — الصلاة الإبراهيمية',
+    muezzinAr: 'الشيخ سعد الغامدي',
+    locationAr: 'الدمام',
+    descAr: 'تنبيه ندي هادئ بصوت الشيخ سعد الغامدي',
+    url: '/audio/salawat-2.mp3',
+    fallbackUrl: '/audio/pre-takbeer.mp3',
+  },
+  {
+    id: 'pre-muaiqly',
+    nameAr: 'الشيخ ماهر المعيقلي — خشوع الحرم',
+    muezzinAr: 'الشيخ ماهر المعيقلي',
+    locationAr: 'المسجد الحرام',
+    descAr: 'تنبيه روحاني بصوت إمام المسجد الحرام الشيخ ماهر المعيقلي',
+    url: '/audio/salawat-3.mp3',
+    fallbackUrl: '/audio/pre-takbeer.mp3',
+  },
+  {
+    id: 'pre-dukhin',
+    nameAr: 'الشيخ هيثم الدخين — نبرة هادئة',
+    muezzinAr: 'الشيخ هيثم الدخين',
+    locationAr: 'السعودية',
+    descAr: 'تنبيه هادئ وعذب لتذكيرك بالاستعداد للصلاة والوضوء',
+    url: '/audio/salawat-4.mp3',
+    fallbackUrl: '/audio/pre-takbeer.mp3',
+  },
+  {
+    id: 'pre-naqshabandi-1',
+    nameAr: 'الشيخ سيد النقشبندي — مولاي إني ببابك',
+    muezzinAr: 'الشيخ سيد النقشبندي',
+    locationAr: 'القاهرة',
+    descAr: 'ابتهال خاشع للشيخ سيد النقشبندي قبل الأذان',
+    url: '/audio/tawasih-naqshabandi-1.mp3',
+    fallbackUrl: '/audio/pre-takbeer.mp3',
+  },
+  {
+    id: 'pre-naqshabandi-2',
+    nameAr: 'الشيخ سيد النقشبندي — أغيب وذو اللطائف',
+    muezzinAr: 'الشيخ سيد النقشبندي',
+    locationAr: 'القاهرة',
+    descAr: 'مناجاة روحانية مؤثرة للشيخ سيد النقشبندي قبل الصلاة',
+    url: '/audio/tawasih-naqshabandi-2.mp3',
+    fallbackUrl: '/audio/pre-takbeer.mp3',
+  },
+  {
+    id: 'pre-naina',
+    nameAr: 'الشيخ أحمد نعينع — نداء الصلاة',
+    muezzinAr: 'الشيخ أحمد نعينع',
+    locationAr: 'مصر',
+    descAr: 'نداء مصري وقور بصوت القارئ والمبتهل الشيخ أحمد نعينع',
+    url: '/adhan-sounds/ahmed-naina.mp3',
+    fallbackUrl: '/audio/pre-takbeer.mp3',
+  },
+  {
+    id: 'pre-jalil',
+    nameAr: 'الشيخ خالد الجليل — تنبيه الاقتراب',
+    muezzinAr: 'الشيخ خالد الجليل',
+    locationAr: 'الرياض',
+    descAr: 'صوت الشيخ خالد الجليل لتنبيهك باقتراب موعد الصلاة',
+    url: '/adhan-sounds/khalid-aljalil.mp3',
+    fallbackUrl: '/audio/pre-takbeer.mp3',
   },
 ];
+
+export const PRE_ADHAN_VOICES_3 = PRE_ADHAN_VOICES_10;
+
+export function resolvePreAdhanVoiceById(id?: string | null) {
+  if (id === 'pre-chime') {
+    return {
+      id: 'pre-chime',
+      nameAr: 'نغمة المسجد الهادئة',
+      muezzinAr: 'تنبيه هادئ',
+      locationAr: 'المسجد',
+      descAr: 'جرس ذهبي هادئ ولطيف للتنبيه قبل الأذان',
+      url: '/audio/pre-chime.mp3',
+      fallbackUrl: '/audio/pre-takbeer.mp3',
+    };
+  }
+  return (
+    PRE_ADHAN_VOICES_10.find((p) => p.id === id) || PRE_ADHAN_VOICES_10[0]
+  );
+}
 
 // تواشيح وابتهالات الشيخ سيد النقشبندي الأصلية فقط (تعمل بدون نت)
 export const TAWASIH_NAQSHABANDI: Array<{
@@ -652,6 +868,107 @@ export const POST_ADHAN_DUA = {
   audioUrl: '/audio/post-adhan-dua.mp3',
 };
 
+export const POST_ADHAN_DUA_VOICES_10: AdhanVoice[] = [
+  {
+    id: 'dua-makkah',
+    nameAr: 'دعاء ما بعد الأذان — الشيخ علي ملا (الحرم المكي)',
+    muezzinAr: 'الشيخ علي أحمد ملا',
+    locationAr: 'مكة المكرمة',
+    descAr: 'اللهم رب هذه الدعوة التامة والصلاة القائمة',
+    url: '/audio/post-adhan-dua.mp3',
+    fallbackUrl: '/audio/post-adhan-dua.mp3',
+  },
+  {
+    id: 'dua-alafasy',
+    nameAr: 'دعاء وصلاة بعد الأذان — الشيخ مشاري العفاسي',
+    muezzinAr: 'الشيخ مشاري راشد العفاسي',
+    locationAr: 'الكويت',
+    descAr: 'الصلاة على النبي ﷺ والدعاء بعد الأذان بصوت العفاسي',
+    url: '/audio/salawat-1.mp3',
+    fallbackUrl: '/audio/post-adhan-dua.mp3',
+  },
+  {
+    id: 'dua-ghamdi',
+    nameAr: 'دعاء الإبراهيمية بعد الأذان — الشيخ سعد الغامدي',
+    muezzinAr: 'الشيخ سعد الغامدي',
+    locationAr: 'الدمام',
+    descAr: 'الصلاة الإبراهيمية والدعاء المأثور بصوت الشيخ سعد الغامدي',
+    url: '/audio/salawat-2.mp3',
+    fallbackUrl: '/audio/post-adhan-dua.mp3',
+  },
+  {
+    id: 'dua-muaiqly',
+    nameAr: 'دعاء الحرم بعد الأذان — الشيخ ماهر المعيقلي',
+    muezzinAr: 'الشيخ ماهر المعيقلي',
+    locationAr: 'المسجد الحرام',
+    descAr: 'دعاء وصلوات خاشعة بصوت إمام المسجد الحرام',
+    url: '/audio/salawat-3.mp3',
+    fallbackUrl: '/audio/post-adhan-dua.mp3',
+  },
+  {
+    id: 'dua-dukhin',
+    nameAr: 'دعاء هادئ بعد الأذان — الشيخ هيثم الدخين',
+    muezzinAr: 'الشيخ هيثم الدخين',
+    locationAr: 'السعودية',
+    descAr: 'صوت ندي خاشع للصلاة على النبي والدعاء',
+    url: '/audio/salawat-4.mp3',
+    fallbackUrl: '/audio/post-adhan-dua.mp3',
+  },
+  {
+    id: 'dua-naqshabandi-1',
+    nameAr: 'دعاء مولاي إني ببابك — الشيخ سيد النقشبندي',
+    muezzinAr: 'الشيخ سيد النقشبندي',
+    locationAr: 'القاهرة',
+    descAr: 'ابتهال ودعاء خاشع بعد الأذان بصوت النقشبندي',
+    url: '/audio/tawasih-naqshabandi-1.mp3',
+    fallbackUrl: '/audio/post-adhan-dua.mp3',
+  },
+  {
+    id: 'dua-naqshabandi-2',
+    nameAr: 'دعاء أغيب وذو اللطائف — الشيخ سيد النقشبندي',
+    muezzinAr: 'الشيخ سيد النقشبندي',
+    locationAr: 'القاهرة',
+    descAr: 'مناجاة ودعاء بعد الأذان للشيخ سيد النقشبندي',
+    url: '/audio/tawasih-naqshabandi-2.mp3',
+    fallbackUrl: '/audio/post-adhan-dua.mp3',
+  },
+  {
+    id: 'dua-naqshabandi-3',
+    nameAr: 'دعاء يا رب إن عظمت ذنوبي — الشيخ سيد النقشبندي',
+    muezzinAr: 'الشيخ سيد النقشبندي',
+    locationAr: 'القاهرة',
+    descAr: 'دعاء التوسل والمغفرة بعد الأذان بصوت النقشبندي',
+    url: '/audio/tawasih-naqshabandi-3.mp3',
+    fallbackUrl: '/audio/post-adhan-dua.mp3',
+  },
+  {
+    id: 'dua-istighfar',
+    nameAr: 'أذكار واستغفار بعد الأذان — حصن المسلم',
+    muezzinAr: 'حصن المسلم',
+    locationAr: 'الأذكار المأثورة',
+    descAr: 'أذكار وأدعية بعد الأذان بين الأذان والإقامة',
+    url: '/audio/pre-istighfar.mp3',
+    fallbackUrl: '/audio/post-adhan-dua.mp3',
+  },
+  {
+    id: 'dua-hisn',
+    nameAr: 'الدعاء النبوي المأثور — الشيخ عبد الباسط / حصن المسلم',
+    muezzinAr: 'الشيخ عبد الباسط / حصن المسلم',
+    locationAr: 'مصر',
+    descAr: 'اللهم رب هذه الدعوة التامة مع الآيات والذكر',
+    url: 'https://www.hisnmuslim.com/audio/ar/24.mp3',
+    fallbackUrl: '/audio/post-adhan-dua.mp3',
+  },
+];
+
+export function resolvePostAdhanDuaVoiceById(id?: string | null): AdhanVoice {
+  if (!id) return POST_ADHAN_DUA_VOICES_10[0];
+  return (
+    POST_ADHAN_DUA_VOICES_10.find((v) => v.id === id) ||
+    POST_ADHAN_DUA_VOICES_10[0]
+  );
+}
+
 export const EID_TAKBEERAT_AUDIO = EID_TAKBEERAT_VOICES_3[0];
 export const FAJR_TAWASIH_AUDIO = TAWASIH_NAQSHABANDI[0];
 
@@ -663,7 +980,7 @@ export const POST_PRAYER_AZKAR_AUDIO_URLS = [
   'https://www.hisnmuslim.com/audio/ar/71.mp3',
 ];
 
-export const IQAMAH_AUDIO: AdhanVoice = IQAMAH_VOICES_3[0];
+export const IQAMAH_AUDIO: AdhanVoice = IQAMAH_VOICES_10[0];
 
 export interface SalawatAudioTrack {
   id: string;
@@ -715,6 +1032,13 @@ export const SALAWAT_AUDIO_TRACKS: SalawatAudioTrack[] = [
   },
 ];
 
+export function resolveSalawatTrackById(id?: string | null): SalawatAudioTrack {
+  if (!id) return SALAWAT_AUDIO_TRACKS[0];
+  return (
+    SALAWAT_AUDIO_TRACKS.find((t) => t.id === id) || SALAWAT_AUDIO_TRACKS[0]
+  );
+}
+
 export const ADHAN_TONE_DESCRIPTIONS: Record<string, {maqamAr: string; paceFactor: number}> = {
   'adhan-makkah': {maqamAr: 'النغمة: المقام المكي الجَهوري (الحجاز)', paceFactor: 1.0},
   'adhan-madinah': {maqamAr: 'النغمة: المقام المدني الرصين (البيات)', paceFactor: 0.98},
@@ -728,6 +1052,11 @@ export const ADHAN_TONE_DESCRIPTIONS: Record<string, {maqamAr: string; paceFacto
   'iqamah-makkah': {maqamAr: 'نغمة الإقامة المكية المتقنة (بدون نت)', paceFactor: 1.0},
   'iqamah-madinah': {maqamAr: 'نغمة الإقامة المدنية الهادئة (بدون نت)', paceFactor: 1.0},
   'iqamah-haram': {maqamAr: 'نغمة الإقامة الخاشعة (بدون نت)', paceFactor: 1.0},
+  'muezzin-makkah': {maqamAr: 'النغمة: أذان الحرم المكي الشريف (بدون نت)', paceFactor: 1.0},
+  'muezzin-naina': {maqamAr: 'النغمة: الشيخ أحمد نعينع (بدون نت)', paceFactor: 0.98},
+  'muezzin-jalil': {maqamAr: 'النغمة: الشيخ خالد الجليل (بدون نت)', paceFactor: 1.0},
+  'muezzin-alafasy': {maqamAr: 'النغمة: الشيخ مشاري راشد العفاسي (بدون نت)', paceFactor: 1.0},
+  'muezzin-egyptian': {maqamAr: 'النغمة: الأذان المصري الأصيل (بدون نت)', paceFactor: 0.96},
 };
 
 export const FAMOUS_SURAHS_30: FamousSurahItem[] = [
