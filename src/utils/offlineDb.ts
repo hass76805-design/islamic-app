@@ -3,19 +3,34 @@ import {
   INITIAL_SEED_VERSION,
   INITIAL_TAFSIR_SEED,
 } from '../data/initialSeedData';
+import {KhatmaPlan} from '../types';
 
 export const OFFLINE_DB_NAME = 'alzahabi-offline-json-db';
-export const OFFLINE_DB_VERSION = 3;
+export const OFFLINE_DB_VERSION = 4;
 
 export const STORE_JSON_CACHE = 'json_cache';
 export const STORE_AUDIO_BLOBS = 'audio_blobs';
 export const STORE_VOICE_HISTORY = 'voice_history';
 export const STORE_OFFLINE_META = 'offline_meta';
 export const STORE_APP_STATE = 'app_state';
+export const STORE_DOWNLOADS = 'downloads';
 
 export const SEED_QURAN_KEY = 'seed:/data/quran.json';
 export const SEED_TAFSIR_KEY = 'seed:/data/tafsir.json';
 export const SEED_MARKER_KEY = 'initial_seed_manifest';
+export const KHATMA_IDB_KEY = 'alzahabi_khatma_state_v1';
+export const LAST_READ_IDB_KEY = 'alzahabi_last_read_state_v1';
+
+export interface StoredDownloadRecord {
+  id: string;
+  title: string;
+  url: string;
+  size: number;
+  downloaded: boolean;
+  progress: number;
+  sectionId?: string;
+  updatedAt?: number;
+}
 
 export interface StoredVoiceWordResult {
   raw: string;
@@ -76,6 +91,9 @@ export function openOfflineDb(): Promise<IDBDatabase | null> {
         }
         if (!db.objectStoreNames.contains(STORE_APP_STATE)) {
           db.createObjectStore(STORE_APP_STATE);
+        }
+        if (!db.objectStoreNames.contains(STORE_DOWNLOADS)) {
+          db.createObjectStore(STORE_DOWNLOADS, {keyPath: 'id'});
         }
       };
       req.onsuccess = () => {
@@ -199,6 +217,83 @@ export async function idbCount(storeName: string): Promise<number> {
   });
 }
 
+export async function saveDownloadRecord(
+  record: StoredDownloadRecord,
+): Promise<boolean> {
+  const db = await openOfflineDb();
+  if (!db) return false;
+  return new Promise((resolve) => {
+    try {
+      if (!db.objectStoreNames.contains(STORE_DOWNLOADS)) {
+        resolve(false);
+        return;
+      }
+      const tx = db.transaction(STORE_DOWNLOADS, 'readwrite');
+      const store = tx.objectStore(STORE_DOWNLOADS);
+      store.put({...record, updatedAt: record.updatedAt ?? Date.now()});
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = () => resolve(false);
+      tx.onabort = () => resolve(false);
+    } catch {
+      resolve(false);
+    }
+  });
+}
+
+export async function getDownloadRecord(
+  id: string,
+): Promise<StoredDownloadRecord | null> {
+  if (!id) return null;
+  return idbRead<StoredDownloadRecord>(STORE_DOWNLOADS, id);
+}
+
+export async function listDownloadRecords(): Promise<StoredDownloadRecord[]> {
+  const db = await openOfflineDb();
+  if (!db) return [];
+  return new Promise((resolve) => {
+    try {
+      if (!db.objectStoreNames.contains(STORE_DOWNLOADS)) {
+        resolve([]);
+        return;
+      }
+      const tx = db.transaction(STORE_DOWNLOADS, 'readonly');
+      const store = tx.objectStore(STORE_DOWNLOADS);
+      const req = store.getAll();
+      req.onsuccess = () => {
+        resolve(Array.isArray(req.result) ? (req.result as StoredDownloadRecord[]) : []);
+      };
+      req.onerror = () => resolve([]);
+    } catch {
+      resolve([]);
+    }
+  });
+}
+
+export async function deleteDownloadRecord(id: string): Promise<boolean> {
+  if (!id) return false;
+  return idbDelete(STORE_DOWNLOADS, id);
+}
+
+export async function clearAllDownloadRecords(): Promise<boolean> {
+  const db = await openOfflineDb();
+  if (!db) return false;
+  return new Promise((resolve) => {
+    try {
+      if (!db.objectStoreNames.contains(STORE_DOWNLOADS)) {
+        resolve(false);
+        return;
+      }
+      const tx = db.transaction(STORE_DOWNLOADS, 'readwrite');
+      const store = tx.objectStore(STORE_DOWNLOADS);
+      store.clear();
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = () => resolve(false);
+    } catch {
+      resolve(false);
+    }
+  });
+}
+
 export async function saveAudioBlobToIdb(
   url: string,
   blob: Blob,
@@ -227,6 +322,32 @@ export async function saveAppStateToIdb<T>(
 export async function readAppStateFromIdb<T>(key: string): Promise<T | null> {
   if (!key) return null;
   return idbRead<T>(STORE_APP_STATE, key);
+}
+
+export async function saveKhatmaToIdb(khatma: KhatmaPlan): Promise<boolean> {
+  return saveAppStateToIdb(KHATMA_IDB_KEY, khatma);
+}
+
+export async function readKhatmaFromIdb(): Promise<KhatmaPlan | null> {
+  return readAppStateFromIdb<KhatmaPlan>(KHATMA_IDB_KEY);
+}
+
+export async function saveLastReadToIdb(pos: {
+  surahNumber: number;
+  ayahNumber: number;
+  page: number;
+  updatedAt: number;
+}): Promise<boolean> {
+  return saveAppStateToIdb(LAST_READ_IDB_KEY, pos);
+}
+
+export async function readLastReadFromIdb(): Promise<{
+  surahNumber: number;
+  ayahNumber: number;
+  page: number;
+  updatedAt: number;
+} | null> {
+  return readAppStateFromIdb(LAST_READ_IDB_KEY);
 }
 
 export async function saveOfflineMetaToIdb<T>(

@@ -4,9 +4,10 @@
     <meta charset="UTF-8" />
     <meta
       name="viewport"
-      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no, viewport-fit=cover"
     />
-    <title>أنت أوفلاين — البرنامج الإسلامي الذهبي</title>
+    <title>تسبيح — العمل بدون إنترنت</title>
+    <link rel="stylesheet" href="/fonts/fonts.css" />
     <style>
       * {
         box-sizing: border-box;
@@ -14,69 +15,141 @@
       body {
         margin: 0;
         min-height: 100dvh;
-        background: #000000;
+        background: radial-gradient(circle at top, #171206 0%, #050505 55%, #000000 100%);
         color: #ffffff;
-        font-family: system-ui, -apple-system, 'Cairo', sans-serif;
+        font-family: 'Cairo', system-ui, -apple-system, sans-serif;
         display: flex;
         align-items: center;
         justify-content: center;
-        padding: 16px;
+        padding: 20px;
       }
       .card {
+        position: relative;
         width: 100%;
-        max-width: 380px;
+        max-width: 400px;
         border: 2px solid #c9a227;
-        border-radius: 24px;
-        background: #080602;
-        padding: 28px 20px;
+        border-radius: 28px;
+        background: linear-gradient(180deg, #100d04 0%, #070603 100%);
+        padding: 28px 22px 24px;
         text-align: center;
+        box-shadow: 0 18px 50px rgba(0, 0, 0, 0.75), 0 0 0 1px rgba(252, 227, 138, 0.14);
+        overflow: hidden;
       }
-      .icon {
-        width: 64px;
-        height: 64px;
-        margin: 0 auto 16px;
-        border-radius: 18px;
-        border: 2px solid #c9a227;
-        background: rgba(201, 162, 39, 0.14);
+      .ornament {
+        width: 84px;
+        height: 84px;
+        margin: 0 auto 14px;
         display: flex;
         align-items: center;
         justify-content: center;
-        font-size: 28px;
+      }
+      .badge {
+        display: inline-block;
+        padding: 4px 12px;
+        border-radius: 999px;
+        border: 1px solid rgba(201, 162, 39, 0.5);
+        background: rgba(201, 162, 39, 0.12);
+        color: #fce38a;
+        font-size: 12px;
+        font-weight: 700;
+        margin-bottom: 10px;
       }
       h1 {
         margin: 0;
         font-size: 22px;
+        font-weight: 800;
         color: #fce38a;
       }
       p {
         margin: 12px 0 22px;
         font-size: 14px;
-        line-height: 1.8;
+        line-height: 1.85;
         color: #e4e4e7;
       }
-      a {
+      .actions {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      button,
+      a.btn-secondary {
         display: inline-flex;
         align-items: center;
         justify-content: center;
+        gap: 8px;
         width: 100%;
-        min-height: 46px;
-        border-radius: 14px;
-        background: #c9a227;
-        color: #000000;
+        min-height: 48px;
+        border-radius: 16px;
+        font-family: inherit;
         font-weight: 800;
         font-size: 14px;
         text-decoration: none;
+        cursor: pointer;
+        border: none;
+      }
+      button.btn-primary {
+        background: linear-gradient(90deg, #9a7415 0%, #c9a227 50%, #fce38a 100%);
+        color: #000000;
+      }
+      a.btn-secondary {
+        background: rgba(201, 162, 39, 0.1);
+        border: 1.5px solid rgba(201, 162, 39, 0.65);
+        color: #fce38a;
+      }
+      .footer-ornament {
+        margin-top: 18px;
+        opacity: 0.65;
       }
     </style>
   </head>
   <body>
     <main class="card">
-      <div class="icon">📶</div>
-      <h1>أنت أوفلاين</h1>
+      <div class="ornament" aria-hidden="true">
+        <svg viewBox="0 0 100 100" width="84" height="84" fill="none">
+          <rect
+            x="22"
+            y="22"
+            width="56"
+            height="56"
+            rx="6"
+            stroke="#C9A227"
+            stroke-width="2.2"
+          />
+          <rect
+            x="22"
+            y="22"
+            width="56"
+            height="56"
+            rx="6"
+            transform="rotate(45 50 50)"
+            stroke="#FCE38A"
+            stroke-width="2"
+          />
+          <circle cx="50" cy="50" r="16" stroke="#C9A227" stroke-width="2" fill="rgba(201,162,39,0.14)" />
+          <path
+            d="M54.5 40.5A10 10 0 1 0 58 56.5A8 8 0 1 1 54.5 40.5Z"
+            fill="#FCE38A"
+          />
+        </svg>
+      </div>
+      <div class="badge">الوضع الأوفلاين جاهز</div>
+      <h1>لا يوجد اتصال بالإنترنت حاليًا</h1>
       <p>
-        لا يوجد اتصال بالإنترنت حاليًا. جميع أقسام البرنامج الإسلامي الذهبي المحفوظة (القرآن الكريم، التفسير، الأذكار، التعليم، القبلة، السبحة، والأذان) تعمل دون نت.
+        الصفحة المطلوبة غير متوفرة مؤقتًا بدون شبكة، بينما تظل الأقسام الأساسية المحفوظة (القرآن، الأذكار، المسبحة، مواقيت الصلاة، القبلة، والمقاطع المحمّلة) متاحة دائمًا داخل تطبيق تسبيح.
       </p>
-      <a href="/">فتح التطبيق أوفلاين</a>
+      <div class="actions">
+        <button type="button" class="btn-primary" onclick="window.location.reload()">
+          إعادة المحاولة
+        </button>
+        <a class="btn-secondary" href="/">فتح الصفحة الرئيسية أوفلاين</a>
+      </div>
+      <div class="footer-ornament" aria-hidden="true">
+        <svg viewBox="0 0 220 14" width="180" height="12" fill="none">
+          <line x1="0" y1="7" x2="88" y2="7" stroke="#C9A227" stroke-opacity="0.5" stroke-width="1" />
+          <polygon points="110,1 116,7 110,13 104,7" fill="#C9A227" />
+          <line x1="132" y1="7" x2="220" y2="7" stroke="#C9A227" stroke-opacity="0.5" stroke-width="1" />
+        </svg>
+      </div>
     </main>
   </body>
 </html>

@@ -2,14 +2,15 @@
 // Enables reliable background alerts via Notification Triggers (TimestampTrigger), Periodic Background Sync, and Background Sync.
 
 const ADHAN_CACHE_META = 'al-zahabi-scheduled-alerts-v2';
-const OFFLINE_AUDIO_BUCKET = 'alzahabi-offline-audio-v1';
+const OFFLINE_AUDIO_BUCKET = 'audio-cache-v1';
+const OFFLINE_LEGACY_AUDIO_BUCKET = 'alzahabi-offline-audio-v1';
 const OFFLINE_CORE_BUCKET = 'alzahabi-core-data-v1';
 const OFFLINE_DL_NOTIF_TAG = 'alzahabi-full-offline-download';
 const OFFLINE_AUTO_UPDATE_NOTIF_TAG = 'alzahabi-offline-auto-update';
 const TOTAL_PACKAGE_MB = 850;
 
 const OFFLINE_IDB_NAME = 'alzahabi-offline-json-db';
-const OFFLINE_IDB_VERSION = 3;
+const OFFLINE_IDB_VERSION = 4;
 
 let offlineDownloadRunning = false;
 let offlineDownloadPauseRequested = false;
@@ -38,6 +39,9 @@ function openOfflineIdbInSw() {
         }
         if (!db.objectStoreNames.contains('app_state')) {
           db.createObjectStore('app_state');
+        }
+        if (!db.objectStoreNames.contains('downloads')) {
+          db.createObjectStore('downloads', {keyPath: 'id'});
         }
       };
       req.onsuccess = () => resolve(req.result);
@@ -283,7 +287,11 @@ async function isUrlAlreadyCached(url) {
         ? OFFLINE_CORE_BUCKET
         : OFFLINE_AUDIO_BUCKET;
     const cache = await caches.open(bucket);
-    const existing = await cache.match(url);
+    const existing =
+      (await cache.match(url)) ||
+      (bucket === OFFLINE_AUDIO_BUCKET
+        ? await caches.open(OFFLINE_LEGACY_AUDIO_BUCKET).then((c) => c.match(url))
+        : null);
     return !!existing;
   } catch {
     return false;
@@ -1417,6 +1425,7 @@ async function prewarmEssentialOfflineShellInSw() {
     '/index.html',
     '/offline.html',
     '/manifest.webmanifest',
+    '/fonts/fonts.css',
     '/icon.svg',
     '/pwa-192x192.png',
     '/pwa-512x512.png',
@@ -1424,6 +1433,7 @@ async function prewarmEssentialOfflineShellInSw() {
   ];
   const coreUrls = ['/data/quran.json', '/data/tafsir.json'];
   const essentialAudioUrls = [
+    '/audio/azan.mp3',
     '/audio/adhan-makkah.mp3',
     '/audio/adhan-madinah.mp3',
     '/audio/adhan-alafasy.mp3',

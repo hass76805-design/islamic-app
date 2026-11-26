@@ -448,6 +448,13 @@ export const HomeView: React.FC<HomeViewProps> = ({
       onClick: () => onOpenMoreSubPage('calendar'),
     },
     {
+      id: 'downloads',
+      titleAr: 'التحميلات والمكتبة الأوفلاين',
+      descAr: 'تحميل المحاضرات والقرآن الصوتي والأناشيد والخطب في audio-cache-v1',
+      icon: <Download className="h-5 w-5 text-[#C9A227]" />,
+      onClick: () => onOpenMoreSubPage('downloads'),
+    },
+    {
       id: 'tracker',
       titleAr: 'سجل الصلوات',
       descAr: 'متابعة أداء الصلوات الخمس اليومية',
@@ -457,6 +464,12 @@ export const HomeView: React.FC<HomeViewProps> = ({
   ];
 
   const quickChips = [
+    {
+      id: 'downloads',
+      labelAr: 'التحميلات',
+      icon: <Download className="h-4 w-4 text-[#C9A227]" />,
+      onClick: () => onOpenMoreSubPage('downloads'),
+    },
     {
       id: 'rafiqi',
       labelAr: 'رفيقي',
@@ -682,6 +695,27 @@ export const HomeView: React.FC<HomeViewProps> = ({
           </div>
         </div>
       </section>
+
+      {/* Offline Readiness Status Pill + Offline Downloads Manager */}
+      <div className="grid grid-cols-2 gap-2">
+        <button
+          type="button"
+          onClick={() => onOpenMoreSubPage('downloads')}
+          className="flex min-h-[46px] items-center justify-center gap-2 rounded-2xl border-2 border-emerald-500/70 bg-emerald-950/35 px-3 text-xs font-extrabold text-emerald-300 active:scale-95"
+        >
+          <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" />
+          <span>حالة الأوفلاين: جاهز ✓</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => onOpenMoreSubPage('downloads')}
+          className="flex min-h-[46px] items-center justify-center gap-2 rounded-2xl border-2 border-[#C9A227] bg-[#0B0903] px-3 text-xs font-extrabold text-[#FCE38A] active:scale-95"
+        >
+          <Download className="h-4 w-4 shrink-0 text-[#C9A227]" />
+          <span>المكتبة الأوفلاين</span>
+        </button>
+      </div>
 
       {/* Primary Offline Content Download CTA Button */}
       <button

@@ -39,7 +39,8 @@ export type AppSectionIconKey =
   | 'circle_dot'
   | 'compass'
   | 'calendar_days'
-  | 'check_circle_2';
+  | 'check_circle_2'
+  | 'download';
 
 export interface AppSectionDefinition {
   id: OfflineSectionId;
@@ -54,6 +55,7 @@ export interface AppSectionDefinition {
 }
 
 export const CORE_LOCAL_AUDIO_ASSETS = [
+  '/audio/azan.mp3',
   '/audio/adhan-makkah.mp3',
   '/audio/adhan-madinah.mp3',
   '/audio/adhan-alafasy.mp3',
@@ -405,6 +407,16 @@ const APP_SECTIONS_MAP: Record<OfflineSectionId, AppSectionDefinition> = {
     estimatedMb: 1,
     estimatedMinutes: 1,
   },
+  downloads: {
+    id: 'downloads',
+    labelAr: 'التحميلات والمكتبة الأوفلاين',
+    descAr: 'تحميل المحاضرات، القرآن الصوتي، الأناشيد والخطب للاستماع بدون نت',
+    moreDescAr: 'إدارة التحميلات الصوتية (audio-cache-v1) ومساحة التخزين بدون نت',
+    iconKey: 'download',
+    inMoreMenu: true,
+    estimatedMb: 45,
+    estimatedMinutes: 2,
+  },
 };
 
 const APP_SECTION_ORDER: OfflineSectionId[] = [
@@ -415,6 +427,7 @@ const APP_SECTION_ORDER: OfflineSectionId[] = [
   'adhan',
   'azkar',
   'audio_library',
+  'downloads',
   'salawat',
   'books',
   'seerah',
@@ -432,6 +445,7 @@ const APP_SECTION_ORDER: OfflineSectionId[] = [
 ];
 
 const MORE_MENU_ORDER: MoreMenuSectionId[] = [
+  'downloads',
   'adhan',
   'books',
   'rafiqi',

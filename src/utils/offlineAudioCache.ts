@@ -25,7 +25,6 @@ import {
 } from '../data/initialSeedData';
 import {
   prewarmRafiqiSheikhVoicesOffline,
-  prewarmStartupDuaVoiceOffline,
 } from './rafiqiVoice';
 import {
   ensureInitialOfflineSeedData,
@@ -209,8 +208,12 @@ export async function resolveOfflinePlayableUrl(url: string): Promise<string> {
 
   if (typeof caches !== 'undefined') {
     try {
-      const audioCache = await caches.open(AUDIO_CACHE_NAME);
-      const cached = (await audioCache.match(url)) || (await caches.match(url));
+      const primaryAudioCache = await caches.open('audio-cache-v1');
+      const legacyAudioCache = await caches.open(AUDIO_CACHE_NAME);
+      const cached =
+        (await primaryAudioCache.match(url)) ||
+        (await legacyAudioCache.match(url)) ||
+        (await caches.match(url));
       if (cached && cached.type !== 'opaque' && cached.ok) {
         const blob = await cached.clone().blob();
         if (blob && blob.size > 0) {
@@ -350,37 +353,16 @@ export async function prewarmCoreOfflineTextData(
     cacheAssetInBucket('alzahabi-app-shell-v1', '/index.html'),
     cacheAssetInBucket('alzahabi-app-shell-v1', '/offline.html'),
     cacheAssetInBucket('alzahabi-app-shell-v1', '/manifest.webmanifest'),
+    cacheAssetInBucket('alzahabi-fonts-v1', '/fonts/fonts.css'),
     cacheAssetInBucket(IMAGE_CACHE_NAME, '/pwa-192x192.png'),
     cacheAssetInBucket(IMAGE_CACHE_NAME, '/pwa-512x512.png'),
     cacheAssetInBucket(
       IMAGE_CACHE_NAME,
       '/assets/aistudio/IMG-20261120-WA4940_5880b328.jpg',
     ),
-    prewarmStartupDuaVoiceOffline(),
   ]);
 
   await cacheBatchUrls(CORE_LOCAL_AUDIO_ASSETS, undefined, 4);
-
-  const azkarUrls = AZKAR_CATEGORIES.flatMap((cat) =>
-    cat.items.map((item) => item.audioUrl).filter((u): u is string => Boolean(u)),
-  );
-  const externalMuezzinsAndAzkar = [
-    ...ADHAN_VOICES_30.map((a) => a.url),
-    ...IQAMAH_VOICES_3.map((i) => i.url),
-    ...PRE_ADHAN_VOICES_3.map((p) => p.url),
-    POST_ADHAN_DUA.audioUrl,
-    ...TAWASIH_NAQSHABANDI.map((t) => t.url),
-    ...EID_TAKBEERAT_VOICES_3.map((e) => e.url),
-    ...FRIDAY_KAHF_VOICES_3.map((k) => k.url),
-    ...SALAWAT_AUDIO_TRACKS.map((s) => s.url),
-    ...POST_PRAYER_AZKAR_AUDIO_URLS,
-    ...azkarUrls,
-    ...RAFIQI_WORDS_30.map((w) =>
-      getAyahAudioUrl(preferredReciter, w.surahNumber, w.ayahNumber),
-    ),
-    ...[1, 2, 3, 4, 5, 6, 7].map((a) => getAyahAudioUrl(preferredReciter, 1, a)),
-  ];
-  await cacheBatchUrls(externalMuezzinsAndAzkar, undefined, 3);
 }
 
 export async function isAudioCached(url: string): Promise<boolean> {
@@ -393,6 +375,8 @@ export async function isAudioCached(url: string): Promise<boolean> {
   }
   if (typeof caches === 'undefined') return false;
   try {
+    const primaryCache = await caches.open('audio-cache-v1');
+    if (await primaryCache.match(url)) return true;
     const cache = await caches.open(AUDIO_CACHE_NAME);
     const match = await cache.match(url);
     if (match) return true;

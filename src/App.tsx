@@ -19,7 +19,6 @@ import {AdhanMuezzinView} from './components/AdhanMuezzinView';
 import {AzkarView} from './components/AzkarView';
 import {HomeView} from './components/HomeView';
 import {MoreView} from './components/MoreView';
-import {OfflineIndicator} from './components/OfflineIndicator';
 import {PWAInstallButton} from './components/PWAInstallButton';
 import {QiblaView} from './components/QiblaView';
 import {QuranTestModal} from './components/QuranTestModal';
@@ -83,7 +82,12 @@ import {
 } from './utils/offlineAudioCache';
 import {
   ensureInitialOfflineSeedData,
+  readAudioBlobFromIdb,
+  readKhatmaFromIdb,
+  readLastReadFromIdb,
   requestPersistentStorage,
+  saveKhatmaToIdb,
+  saveLastReadToIdb,
 } from './utils/offlineDb';
 import {
   computeDailyPrayerData,
@@ -95,9 +99,9 @@ import {
   precomputeMonthlyPrayerCache,
 } from './utils/prayerTimes';
 import {
-  resolveSheikhHumanVoiceUrl,
   STARTUP_DUA_TEXT,
 } from './utils/rafiqiVoice';
+import {processPendingDownloadsIfReady} from './services/downloadManager';
 import {playRamadanCannonSound} from './utils/ramadanCannon';
 
 let splashPlayedThisLaunch = false;
@@ -193,7 +197,7 @@ const DEFAULT_CAIRO_CITY: UserLocation =
   PRESET_CITIES.find((c) => c.city === 'القاهرة') || PRESET_CITIES[7];
 
 const DEFAULT_SETTINGS: AppSettings = {
-  calculationMethod: 'Egyptian',
+  calculationMethod: 'UmmAlQura',
   madhab: 'Shafi',
   darkMode: true,
   quranFontSize: 22,
@@ -351,6 +355,44 @@ function AppContent({
     'ana_muslim_prayer_log',
     {},
   );
+
+  // Hydrate Khatma & LastRead permanently from IndexedDB on boot and persist every change
+  const idbKhatmaHydratedRef = useRef(false);
+  useEffect(() => {
+    void (async () => {
+      const [idbLastRead, idbKhatma] = await Promise.all([
+        readLastReadFromIdb(),
+        readKhatmaFromIdb(),
+      ]);
+      if (idbLastRead && idbLastRead.page >= 1 && idbLastRead.page <= 604) {
+        setLastRead((prev) =>
+          idbLastRead.updatedAt > prev.updatedAt ? idbLastRead : prev,
+        );
+      }
+      if (
+        idbKhatma &&
+        Array.isArray(idbKhatma.completedPages) &&
+        idbKhatma.completedPages.length > 0
+      ) {
+        setKhatma((prev) =>
+          idbKhatma.completedPages.length > prev.completedPages.length
+            ? idbKhatma
+            : prev,
+        );
+      }
+      idbKhatmaHydratedRef.current = true;
+    })();
+  }, [setKhatma, setLastRead]);
+
+  useEffect(() => {
+    if (!idbKhatmaHydratedRef.current) return;
+    void saveLastReadToIdb(lastRead);
+  }, [lastRead]);
+
+  useEffect(() => {
+    if (!idbKhatmaHydratedRef.current) return;
+    void saveKhatmaToIdb(khatma);
+  }, [khatma]);
 
   // Restore cloud state softly when signed in
   const appliedCloudRef = useRef<string | null>(null);
@@ -675,12 +717,14 @@ function AppContent({
     const handleOnline = () => {
       void notifyNetworkOnlineAutoResumeToSw();
       void syncOfflineContentUpdatesInBackground(settings.preferredReciter);
+      void processPendingDownloadsIfReady();
     };
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') {
         if (navigator.onLine) {
           void notifyNetworkOnlineAutoResumeToSw();
           void syncOfflineContentUpdatesInBackground(settings.preferredReciter);
+          void processPendingDownloadsIfReady();
         } else {
           void notifyNetworkOfflineToSw();
         }
@@ -699,62 +743,7 @@ function AppContent({
     };
   }, [settings.preferredReciter]);
 
-  // Automatically cache all selected Adhan / Iqamah / Tawasih / Eid / Salawat audio files locally for offline background playback
-  useEffect(() => {
-    if (typeof navigator !== 'undefined' && !navigator.onLine) return;
-    if (!settings.adhanEnabled && !settings.salawatReminderEnabled) return;
-
-    const selectedAdhanIds = new Set<string>([
-      settings.preferredAdhan,
-      settings.perPrayerAdhan.fajr,
-      settings.perPrayerAdhan.dhuhr,
-      settings.perPrayerAdhan.asr,
-      settings.perPrayerAdhan.maghrib,
-      settings.perPrayerAdhan.isha,
-    ]);
-    const adhanUrls = ADHAN_VOICES_30.filter((v) =>
-      selectedAdhanIds.has(v.id),
-    ).flatMap((v) => [v.url, ...(v.fallbackUrl ? [v.fallbackUrl] : [])]);
-
-    const iqamahUrls = IQAMAH_VOICES_3.map((i) => i.url);
-    const preUrls = PRE_ADHAN_VOICES_3.map((p) => p.url);
-    const tawasihUrls = TAWASIH_NAQSHABANDI.map((t) => t.url);
-    const eidUrls = EID_TAKBEERAT_VOICES_3.map((e) => e.url);
-    const kahfUrls = FRIDAY_KAHF_VOICES_3.map((k) => k.url);
-    const salawatUrls = SALAWAT_AUDIO_TRACKS.map((s) => s.url);
-
-    const allAdhanCoreUrls = Array.from(
-      new Set([
-        ...adhanUrls,
-        ...iqamahUrls,
-        ...preUrls,
-        POST_ADHAN_DUA.audioUrl,
-        ...tawasihUrls,
-        ...eidUrls,
-        ...kahfUrls,
-        ...salawatUrls,
-        ...POST_PRAYER_AZKAR_AUDIO_URLS,
-      ]),
-    );
-
-    const t = window.setTimeout(() => {
-      void cacheBatchUrls(allAdhanCoreUrls, undefined, 3);
-    }, 300);
-    return () => window.clearTimeout(t);
-  }, [
-    settings.adhanEnabled,
-    settings.salawatReminderEnabled,
-    settings.preferredAdhan,
-    settings.perPrayerAdhan,
-    settings.preferredIqamah,
-    settings.perPrayerIqamah,
-    settings.preferredPreAdhanSound,
-    settings.preferredTawasih,
-    settings.preferredEidTakbeer,
-    settings.preferredFridayKahf,
-  ]);
-
-  // Play sweet welcoming opening Dua voice once per launch (offline-ready + autoplay-safe)
+  // Play sweet welcoming opening Dua voice once per launch from local cache/bundle (ZERO external API fetch on boot)
   const startupDuaTriggeredRef = useRef(false);
   const startupDuaAudioRef = useRef<HTMLAudioElement | null>(null);
   const liveAdhanActiveRef = useRef(false);
@@ -770,9 +759,18 @@ function AppContent({
     const prepareAndPlayStartupDua = async () => {
       if (cancelled || liveAdhanActiveRef.current) return;
 
-      let duaSrc: string | null = await resolveSheikhHumanVoiceUrl(
-        STARTUP_DUA_TEXT,
-      );
+      let duaSrc: string | null = null;
+      try {
+        const cachedDuaBlob = await readAudioBlobFromIdb(
+          `rafiqi-sheikh-tts-v1:${STARTUP_DUA_TEXT.trim()}`,
+        );
+        if (cachedDuaBlob && cachedDuaBlob.size > 0) {
+          duaSrc = URL.createObjectURL(cachedDuaBlob);
+        }
+      } catch {
+        // fallback directly to bundled local audio
+      }
+
       if (!duaSrc) {
         duaSrc = await resolveOfflinePlayableUrl(POST_ADHAN_DUA.audioUrl);
       }
@@ -826,37 +824,16 @@ function AppContent({
     };
   }, []);
 
-  // Automatically pre-warm core offline Quran/Tafsir text + local audio silently when online
+  // Pre-warm ONLY local bundled core text & local audio (zero external network fetches on startup)
   const corePrewarmedRef = useRef(false);
   useEffect(() => {
     if (corePrewarmedRef.current) return;
-    if (typeof navigator !== 'undefined' && !navigator.onLine) return;
     corePrewarmedRef.current = true;
     const t = window.setTimeout(() => {
       void prewarmCoreOfflineTextData(settings.preferredReciter);
-      void syncOfflineContentUpdatesInBackground(settings.preferredReciter);
-    }, 450);
+    }, 350);
     return () => window.clearTimeout(t);
   }, [settings.preferredReciter]);
-
-  // Quietly pre-warm Al-Fatihah recitation audio once online after splash
-  const prewarmedRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (showSplash || typeof navigator === 'undefined' || !navigator.onLine) {
-      return;
-    }
-    const reciterKey = settings.preferredReciter;
-    if (prewarmedRef.current === reciterKey) return;
-    prewarmedRef.current = reciterKey;
-
-    const timer = window.setTimeout(() => {
-      const urls = [1, 2, 3, 4, 5, 6, 7].map((ayah) =>
-        getAyahAudioUrl(reciterKey, 1, ayah),
-      );
-      void cacheBatchUrls(urls);
-    }, 2500);
-    return () => window.clearTimeout(timer);
-  }, [showSplash, settings.preferredReciter]);
 
   // Optional Lock-Screen Electronic Muezzin & Salawat Keep-Alive (silent WAV + MediaSession + WakeLock)
   useEffect(() => {
@@ -1281,7 +1258,8 @@ function AppContent({
           settings.perPrayerAdhan[prayerKey] || settings.preferredAdhan;
         const voice =
           ADHAN_VOICES_30.find((a) => a.id === voiceId) || ADHAN_VOICES_30[0];
-        const resolvedAdhanUrl = voice.url || voice.fallbackUrl || '/audio/adhan-makkah.mp3';
+        const resolvedAdhanUrl =
+          voice.url || voice.fallbackUrl || '/audio/azan.mp3';
         const ts = item.time.getTime();
         const isAlreadyPrayed =
           prayerLog[dayKey]?.[prayerKey] === 'ontime' ||
@@ -2877,8 +2855,6 @@ function AppContent({
             onClose={() => setDirectTestOpen(false)}
           />
         )}
-
-        <OfflineIndicator />
       </div>
     </div>
   );

@@ -11,6 +11,7 @@ const DUA_CATS: Array<{id: DuaCategoryId | 'all'; labelAr: string}> = [
   {id: 'rizq', labelAr: 'الرزق والبركة'},
   {id: 'family', labelAr: 'الوالدين والذرية'},
   {id: 'travel', labelAr: 'السفر والمطر'},
+  {id: 'ruqyah', labelAr: 'الرقية الشرعية'},
 ];
 
 export const DuasView: React.FC = () => {

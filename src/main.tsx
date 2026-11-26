@@ -1,28 +1,32 @@
 import {createRoot} from 'react-dom/client';
 import {registerSW} from 'virtual:pwa-register';
 import App from './App.tsx';
-import {ErrorBoundary} from './components/ErrorBoundary';
 import './index.css';
 import {initAppProtection} from './utils/appProtection';
 
 initAppProtection();
 
-registerSW({
+const updateSW = registerSW({
   immediate: true,
   onRegisteredSW(_swUrl, registration) {
-    if (registration) {
-      window.setInterval(() => {
-        registration.update().catch(() => {});
-      }, 60 * 60 * 1000);
-    }
+    if (!registration) return;
+    registration.update().catch(() => {});
+    window.setInterval(() => {
+      registration.update().catch(() => {});
+    }, 30 * 60 * 1000);
   },
   onNeedRefresh() {
-    // Wait silently for next cold launch instead of reloading mid-session/splash
+    // Automatically apply cache update seamlessly in the background
+    void updateSW(true);
   },
 });
 
-createRoot(document.getElementById('root')!).render(
-  <ErrorBoundary>
-    <App />
-  </ErrorBoundary>,
-);
+if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
+  navigator.serviceWorker.ready
+    .then((reg) => {
+      reg.update().catch(() => {});
+    })
+    .catch(() => {});
+}
+
+createRoot(document.getElementById('root')!).render(<App />);

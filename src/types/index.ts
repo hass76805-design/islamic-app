@@ -26,6 +26,7 @@ export type MoreSubPageId =
   | 'tasbih'
   | 'calendar'
   | 'tracker'
+  | 'downloads'
   | 'settings';
 
 export type ReciterId =
@@ -123,7 +124,8 @@ export type DuaCategoryId =
   | 'distress'
   | 'rizq'
   | 'family'
-  | 'travel';
+  | 'travel'
+  | 'ruqyah';
 
 export interface DuaItem {
   id: string;

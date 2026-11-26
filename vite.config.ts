@@ -6,20 +6,33 @@ import {defineConfig} from 'vite';
 import {VitePWA} from 'vite-plugin-pwa';
 
 export default defineConfig(() => {
+  const fontsDir = path.resolve(__dirname, 'public/fonts');
+  const fontIncludeAssets = fs.existsSync(fontsDir)
+    ? fs
+        .readdirSync(fontsDir)
+        .filter((f) => f.endsWith('.woff2') || f.endsWith('.css'))
+        .map((f) => `fonts/${f}`)
+    : [];
+
   return {
     plugins: [
       react(),
       tailwindcss(),
       VitePWA({
         registerType: 'autoUpdate',
+        manifest: false,
         includeAssets: [
+          'manifest.webmanifest',
           'apple-touch-icon.png',
           'pwa-192x192.png',
           'pwa-512x512.png',
           'pwa-maskable-512x512.png',
+          'icon.svg',
+          'icon-maskable.svg',
           'assets/aistudio/IMG-20261120-WA4940_5880b328.jpg',
           'adhan-sw-ext.js',
           'offline.html',
+          'audio/azan.mp3',
           'audio/adhan-makkah.mp3',
           'audio/adhan-madinah.mp3',
           'audio/adhan-alafasy.mp3',
@@ -46,70 +59,16 @@ export default defineConfig(() => {
           'audio/sheikh-start-reading.mp3',
           'data/quran.json',
           'data/tafsir.json',
+          ...fontIncludeAssets,
         ],
-        manifest: {
-          id: '/',
-          name: 'البرنامج الإسلامي الذهبي',
-          short_name: 'الذهبي',
-          description:
-            'البرنامج الإسلامي الذهبي: القرآن الكريم، اختبر حفظك بالميكروفون، المؤذن الإلكتروني المتكامل، محاضرات 30 شيخًا، الأذكار، الفقه والمسابقة، وقصص الأنبياء والصحابة.',
-          theme_color: '#000000',
-          background_color: '#000000',
-          display: 'fullscreen',
-          display_override: ['fullscreen', 'standalone', 'minimal-ui'],
-          orientation: 'portrait-primary',
-          start_url: '/',
-          scope: '/',
-          lang: 'ar',
-          dir: 'rtl',
-          categories: ['lifestyle', 'books', 'education'],
-          prefer_related_applications: false,
-          shortcuts: [
-            {
-              name: 'القرآن الكريم',
-              short_name: 'القرآن',
-              url: '/?tab=quran',
-              icons: [{src: '/pwa-192x192.png', sizes: '192x192', type: 'image/png'}],
-            },
-            {
-              name: 'المؤذن الإلكتروني',
-              short_name: 'المؤذن',
-              url: '/?openMuezzin=1',
-              icons: [{src: '/pwa-192x192.png', sizes: '192x192', type: 'image/png'}],
-            },
-            {
-              name: 'الأذكار اليومية',
-              short_name: 'الأذكار',
-              url: '/?tab=azkar',
-              icons: [{src: '/pwa-192x192.png', sizes: '192x192', type: 'image/png'}],
-            },
-          ],
-          icons: [
-            {
-              src: '/pwa-192x192.png',
-              sizes: '192x192',
-              type: 'image/png',
-              purpose: 'any',
-            },
-            {
-              src: '/pwa-512x512.png',
-              sizes: '512x512',
-              type: 'image/png',
-              purpose: 'any',
-            },
-            {
-              src: '/pwa-maskable-512x512.png',
-              sizes: '512x512',
-              type: 'image/png',
-              purpose: 'maskable',
-            },
-          ],
-        },
         workbox: {
           maximumFileSizeToCacheInBytes: 25 * 1024 * 1024,
           navigateFallback: '/index.html',
           navigateFallbackDenylist: [/^\/api\//],
-          globPatterns: ['**/*.{js,css,html,ico,png,jpg,svg,woff,woff2,json,mp3,webmanifest}'],
+          globPatterns: [
+            '**/*.{js,css,html,ico,png,jpg,svg,woff,woff2,json,mp3,webmanifest}',
+          ],
+          globIgnores: ['**/sw.js', '**/workbox-*.js'],
           cleanupOutdatedCaches: true,
           skipWaiting: true,
           clientsClaim: true,
@@ -121,6 +80,38 @@ export default defineConfig(() => {
               handler: 'StaleWhileRevalidate',
               options: {
                 cacheName: 'alzahabi-app-shell-v1',
+                cacheableResponse: {
+                  statuses: [0, 200],
+                },
+              },
+            },
+            {
+              urlPattern: ({url}) =>
+                url.pathname.startsWith('/fonts/') ||
+                /\.(?:woff|woff2|ttf|otf)$/i.test(url.pathname),
+              handler: 'CacheFirst',
+              options: {
+                cacheName: 'alzahabi-fonts-v1',
+                expiration: {
+                  maxEntries: 60,
+                  maxAgeSeconds: 60 * 60 * 24 * 365,
+                },
+                cacheableResponse: {
+                  statuses: [0, 200],
+                },
+              },
+            },
+            {
+              urlPattern: ({request, url}) =>
+                request.destination === 'image' ||
+                /\.(?:png|jpe?g|svg|webp|ico|gif)$/i.test(url.pathname),
+              handler: 'CacheFirst',
+              options: {
+                cacheName: 'alzahabi-offline-images-v1',
+                expiration: {
+                  maxEntries: 500,
+                  maxAgeSeconds: 60 * 60 * 24 * 365,
+                },
                 cacheableResponse: {
                   statuses: [0, 200],
                 },
@@ -146,9 +137,9 @@ export default defineConfig(() => {
                 sameOrigin && url.pathname.startsWith('/audio/'),
               handler: 'CacheFirst',
               options: {
-                cacheName: 'alzahabi-offline-audio-v1',
+                cacheName: 'audio-cache-v1',
                 expiration: {
-                  maxEntries: 3000,
+                  maxEntries: 500,
                   maxAgeSeconds: 60 * 60 * 24 * 365,
                 },
                 cacheableResponse: {
@@ -161,7 +152,8 @@ export default defineConfig(() => {
                 sameOrigin &&
                 !url.pathname.startsWith('/api/') &&
                 !url.pathname.startsWith('/data/') &&
-                !url.pathname.startsWith('/audio/'),
+                !url.pathname.startsWith('/audio/') &&
+                !url.pathname.startsWith('/fonts/'),
               handler: 'StaleWhileRevalidate',
               options: {
                 cacheName: 'alzahabi-app-shell-v1',
@@ -175,38 +167,11 @@ export default defineConfig(() => {
               },
             },
             {
-              urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
+              urlPattern:
+                /^https:\/\/(everyayah\.com|server\d+\.mp3quran\.net|cdn\.mp3quran\.net|cdn\.islamic\.network|www\.hisnmuslim\.com|www\.islamcan\.com|archive\.org|cdn\.aladhan\.com)\/.*/i,
               handler: 'CacheFirst',
               options: {
-                cacheName: 'google-fonts-cache',
-                expiration: {
-                  maxEntries: 10,
-                  maxAgeSeconds: 60 * 60 * 24 * 365,
-                },
-                cacheableResponse: {
-                  statuses: [0, 200],
-                },
-              },
-            },
-            {
-              urlPattern: /^https:\/\/fonts\.gstatic\.com\/.*/i,
-              handler: 'CacheFirst',
-              options: {
-                cacheName: 'gstatic-fonts-cache',
-                expiration: {
-                  maxEntries: 10,
-                  maxAgeSeconds: 60 * 60 * 24 * 365,
-                },
-                cacheableResponse: {
-                  statuses: [0, 200],
-                },
-              },
-            },
-            {
-              urlPattern: /^https:\/\/(everyayah\.com|server\d+\.mp3quran\.net|cdn\.mp3quran\.net|cdn\.islamic\.network|www\.hisnmuslim\.com|www\.islamcan\.com|archive\.org|cdn\.aladhan\.com)\/.*/i,
-              handler: 'CacheFirst',
-              options: {
-                cacheName: 'alzahabi-offline-audio-v1',
+                cacheName: 'audio-cache-v1',
                 expiration: {
                   maxEntries: 3000,
                   maxAgeSeconds: 60 * 60 * 24 * 365,
