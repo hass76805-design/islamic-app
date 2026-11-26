@@ -1418,12 +1418,37 @@ async function syncNativeTimestampTriggers(alerts) {
   }
 }
 
+const PRECACHE_CACHE_NAME = 'tasbih-precache-v2';
+const CORE_PRECACHE_URLS = ['/', '/index.html', '/offline.html'];
+
+async function ensureCoreNavigationPrecacheInSw() {
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+  try {
+    const precache = await caches.open(PRECACHE_CACHE_NAME);
+    const shellCache = await caches.open('alzahabi-app-shell-v1');
+    await Promise.allSettled(
+      CORE_PRECACHE_URLS.map(async (u) => {
+        try {
+          const res = await swFetchWithTimeout(u, {cache: 'reload'}, 8000);
+          if (res && res.ok) {
+            await precache.put(u, res.clone());
+            await shellCache.put(u, res);
+          }
+        } catch {
+          // ignore individual error
+        }
+      }),
+    );
+  } catch {
+    // ignore
+  }
+}
+
 async function prewarmEssentialOfflineShellInSw() {
   if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+  await ensureCoreNavigationPrecacheInSw();
+
   const shellUrls = [
-    '/',
-    '/index.html',
-    '/offline.html',
     '/manifest.webmanifest',
     '/fonts/fonts.css',
     '/icon.svg',
@@ -1475,7 +1500,7 @@ async function prewarmEssentialOfflineShellInSw() {
 let lastWakeupCheckTs = 0;
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(prewarmEssentialOfflineShellInSw());
+  event.waitUntil(ensureCoreNavigationPrecacheInSw());
 });
 
 self.addEventListener('activate', (event) => {

@@ -308,9 +308,23 @@ async function startServer() {
     const distDir = path.resolve(__dirname, 'dist');
     const indexHtml = path.join(distDir, 'index.html');
     if (fs.existsSync(distDir)) {
-      app.use(express.static(distDir));
+      app.use(
+        express.static(distDir, {
+          setHeaders(res, filePath) {
+            if (
+              filePath.endsWith('sw.js') ||
+              filePath.endsWith('adhan-sw-ext.js') ||
+              filePath.endsWith('manifest.webmanifest') ||
+              filePath.endsWith('index.html')
+            ) {
+              res.setHeader('Cache-Control', 'no-cache');
+            }
+          },
+        }),
+      );
       app.get('*', (_req, res) => {
         if (fs.existsSync(indexHtml)) {
+          res.setHeader('Cache-Control', 'no-cache');
           res.sendFile(indexHtml);
         } else {
           res.status(404).send('Not built');

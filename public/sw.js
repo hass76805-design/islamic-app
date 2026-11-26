@@ -1,6 +1,7 @@
 // Custom Offline-First Service Worker for تسبيح
 // Precaches App Shell, Local Fonts, Core Audio (including /audio/azan.mp3) & /offline.html fallback
 
+const PRECACHE = 'tasbih-precache-v2';
 const SHELL_CACHE = 'alzahabi-app-shell-v1';
 const FONT_CACHE = 'alzahabi-fonts-v1';
 const IMAGE_CACHE = 'alzahabi-offline-images-v1';
@@ -8,7 +9,7 @@ const AUDIO_USER_CACHE = 'audio-cache-v1';
 const AUDIO_LEGACY_CACHE = 'alzahabi-offline-audio-v1';
 const CORE_DATA_CACHE = 'alzahabi-core-data-v1';
 
-const APP_SHELL_ASSETS = [
+const PRECACHE_URLS = [
   '/',
   '/index.html',
   '/offline.html',
@@ -21,9 +22,12 @@ const APP_SHELL_ASSETS = [
   '/pwa-maskable-512x512.png',
   '/fonts/fonts.css',
   '/audio/azan.mp3',
-  '/audio/adhan-makkah.mp3',
   '/audio/post-adhan-dua.mp3',
   '/audio/pre-chime.mp3',
+];
+
+const OPTIONAL_SHELL_ASSETS = [
+  '/audio/adhan-makkah.mp3',
   '/audio/pre-istighfar.mp3',
   '/audio/pre-takbeer.mp3',
   '/data/quran.json',
@@ -39,25 +43,45 @@ try {
 self.addEventListener('install', (event) => {
   self.skipWaiting();
   event.waitUntil(
-    caches.open(SHELL_CACHE).then(async (cache) => {
+    (async () => {
+      const precache = await caches.open(PRECACHE);
+      const shellCache = await caches.open(SHELL_CACHE);
+
+      // Guaranteed precache for core offline navigation routes: '/', '/index.html', '/offline.html'
       await Promise.allSettled(
-        APP_SHELL_ASSETS.map(async (assetUrl) => {
+        PRECACHE_URLS.map(async (assetUrl) => {
           try {
             const res = await fetch(assetUrl, {cache: 'reload'});
-            if (res.ok) {
-              await cache.put(assetUrl, res);
+            if (res && res.ok) {
+              await precache.put(assetUrl, res.clone());
+              await shellCache.put(assetUrl, res);
             }
           } catch {
-            // ignore offline install failure for optional assets
+            // ignore offline fetch failure during install
           }
         }),
       );
-    }),
+
+      // Warm optional shell/audio assets in background without blocking install
+      Promise.allSettled(
+        OPTIONAL_SHELL_ASSETS.map(async (assetUrl) => {
+          try {
+            const res = await fetch(assetUrl, {cache: 'reload'});
+            if (res && res.ok) {
+              await shellCache.put(assetUrl, res);
+            }
+          } catch {
+            // ignore optional asset error
+          }
+        }),
+      ).catch(() => {});
+    })(),
   );
 });
 
 self.addEventListener('activate', (event) => {
   const keep = new Set([
+    PRECACHE,
     SHELL_CACHE,
     FONT_CACHE,
     IMAGE_CACHE,
@@ -101,36 +125,38 @@ self.addEventListener('fetch', (event) => {
 
   if (url.pathname.startsWith('/api/')) return;
 
-  // Navigation requests -> try cache/network and never show white Oops page
+  // Navigation fallback: if network fetch fails, serve '/' from cache, then '/index.html', then '/offline.html'
   if (req.mode === 'navigate') {
     event.respondWith(
       (async () => {
         try {
-          const cachedIndex =
-            (await caches.match('/index.html')) ||
-            (await caches.match('/')) ||
-            (await caches.match(req));
-          if (cachedIndex) {
-            fetch(req)
-              .then((fresh) => {
-                if (fresh && fresh.ok) {
-                  caches.open(SHELL_CACHE).then((c) => c.put('/index.html', fresh));
-                }
-              })
-              .catch(() => {});
-            return cachedIndex;
-          }
           const networkRes = await fetch(req);
           if (networkRes && networkRes.ok) {
-            const c = await caches.open(SHELL_CACHE);
-            c.put('/index.html', networkRes.clone()).catch(() => {});
+            const precache = await caches.open(PRECACHE);
+            if (url.pathname === '/' || url.pathname === '') {
+              precache.put('/', networkRes.clone()).catch(() => {});
+            }
+            precache.put('/index.html', networkRes.clone()).catch(() => {});
             return networkRes;
           }
         } catch {
-          // offline fallback below
+          // Network failed — fall back to cached '/' then '/offline.html'
         }
-        const offlinePage = await caches.match('/offline.html');
+
+        const precache = await caches.open(PRECACHE);
+        const cachedRoot =
+          (await precache.match('/', {ignoreSearch: true})) ||
+          (await caches.match('/', {ignoreSearch: true})) ||
+          (await precache.match('/index.html', {ignoreSearch: true})) ||
+          (await caches.match('/index.html', {ignoreSearch: true})) ||
+          (await caches.match(req, {ignoreSearch: true}));
+        if (cachedRoot) return cachedRoot;
+
+        const offlinePage =
+          (await precache.match('/offline.html')) ||
+          (await caches.match('/offline.html'));
         if (offlinePage) return offlinePage;
+
         return new Response('أنت الآن أوفلاين — أعد المحاولة', {
           status: 503,
           headers: {'Content-Type': 'text/plain; charset=utf-8'},

@@ -6,14 +6,6 @@ import {defineConfig} from 'vite';
 import {VitePWA} from 'vite-plugin-pwa';
 
 export default defineConfig(() => {
-  const fontsDir = path.resolve(__dirname, 'public/fonts');
-  const fontIncludeAssets = fs.existsSync(fontsDir)
-    ? fs
-        .readdirSync(fontsDir)
-        .filter((f) => f.endsWith('.woff2') || f.endsWith('.css'))
-        .map((f) => `fonts/${f}`)
-    : [];
-
   return {
     plugins: [
       react(),
@@ -22,66 +14,56 @@ export default defineConfig(() => {
         registerType: 'autoUpdate',
         manifest: false,
         includeAssets: [
-          'manifest.webmanifest',
-          'apple-touch-icon.png',
-          'pwa-192x192.png',
-          'pwa-512x512.png',
-          'pwa-maskable-512x512.png',
-          'icon.svg',
-          'icon-maskable.svg',
-          'assets/aistudio/IMG-20261120-WA4940_5880b328.jpg',
-          'adhan-sw-ext.js',
-          'offline.html',
           'audio/azan.mp3',
-          'audio/adhan-makkah.mp3',
-          'audio/adhan-madinah.mp3',
-          'audio/adhan-alafasy.mp3',
-          'audio/iqamah-makkah.mp3',
-          'audio/iqamah-madinah.mp3',
-          'audio/iqamah-haram.mp3',
           'audio/pre-chime.mp3',
-          'audio/pre-istighfar.mp3',
-          'audio/pre-takbeer.mp3',
           'audio/post-adhan-dua.mp3',
-          'audio/tawasih-naqshabandi-1.mp3',
-          'audio/tawasih-naqshabandi-2.mp3',
-          'audio/tawasih-naqshabandi-3.mp3',
-          'audio/salawat-1.mp3',
-          'audio/salawat-2.mp3',
-          'audio/salawat-3.mp3',
-          'audio/salawat-4.mp3',
-          'audio/eid-makkah-1.mp3',
-          'audio/eid-makkah-2.mp3',
-          'audio/eid-jamaa.mp3',
-          'audio/kahf-abdulbasit.mp3',
-          'audio/kahf-alafasy.mp3',
-          'audio/kahf-muaiqly.mp3',
-          'audio/sheikh-start-reading.mp3',
-          'data/quran.json',
-          'data/tafsir.json',
-          ...fontIncludeAssets,
         ],
         workbox: {
           maximumFileSizeToCacheInBytes: 25 * 1024 * 1024,
           navigateFallback: '/index.html',
           navigateFallbackDenylist: [/^\/api\//],
-          globPatterns: [
-            '**/*.{js,css,html,ico,png,jpg,svg,woff,woff2,json,mp3,webmanifest}',
+          additionalManifestEntries: [
+            {url: '/', revision: 'tasbih-root-v2'},
           ],
-          globIgnores: ['**/sw.js', '**/workbox-*.js'],
+          ignoreURLParametersMatching: [
+            /^utm_/,
+            /^fbclid$/,
+            /^tab$/,
+            /^openMuezzin$/,
+            /^playAlert$/,
+            /^alertType$/,
+            /^prayer$/,
+            /^voiceId$/,
+          ],
+          globPatterns: [
+            '**/*.{js,css,html,ico,png,jpg,svg,woff,woff2,webmanifest}',
+          ],
+          globIgnores: [
+            '**/sw.js',
+            '**/workbox-*.js',
+            'src/assets/**',
+            'audio/**',
+            'data/**',
+          ],
           cleanupOutdatedCaches: true,
           skipWaiting: true,
           clientsClaim: true,
           importScripts: ['/adhan-sw-ext.js'],
           runtimeCaching: [
             {
-              urlPattern: ({request, sameOrigin}) =>
-                sameOrigin && request.mode === 'navigate',
-              handler: 'StaleWhileRevalidate',
+              urlPattern: ({request, sameOrigin, url}) =>
+                sameOrigin &&
+                request.mode === 'navigate' &&
+                !url.pathname.startsWith('/api/'),
+              handler: 'NetworkFirst',
               options: {
-                cacheName: 'alzahabi-app-shell-v1',
+                cacheName: 'tasbih-precache-v2',
+                networkTimeoutSeconds: 3,
                 cacheableResponse: {
                   statuses: [0, 200],
+                },
+                precacheFallback: {
+                  fallbackURL: '/offline.html',
                 },
               },
             },
@@ -148,8 +130,9 @@ export default defineConfig(() => {
               },
             },
             {
-              urlPattern: ({sameOrigin, url}) =>
+              urlPattern: ({request, sameOrigin, url}) =>
                 sameOrigin &&
+                request.mode !== 'navigate' &&
                 !url.pathname.startsWith('/api/') &&
                 !url.pathname.startsWith('/data/') &&
                 !url.pathname.startsWith('/audio/') &&
