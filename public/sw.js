@@ -19,11 +19,15 @@ const PRECACHE_URLS = [
   '/apple-touch-icon.png',
   '/pwa-192x192.png',
   '/pwa-512x512.png',
+  '/pwa-1024x1024.png',
   '/pwa-maskable-512x512.png',
   '/fonts/fonts.css',
+  '/audio/splash-alafasy.mp3',
   '/audio/azan.mp3',
   '/audio/post-adhan-dua.mp3',
   '/audio/pre-chime.mp3',
+  '/audio/pre-beep-soft.mp3',
+  '/audio/pre-beep-double.mp3',
   '/adhan.js',
   '/adhan-sounds/makkah.mp3',
   '/adhan-sounds/ahmed-naina.mp3',
@@ -34,8 +38,9 @@ const PRECACHE_URLS = [
 
 const OPTIONAL_SHELL_ASSETS = [
   '/audio/adhan-makkah.mp3',
-  '/audio/pre-istighfar.mp3',
-  '/audio/pre-takbeer.mp3',
+  '/audio/iqamah-makkah.mp3',
+  '/audio/iqamah-madinah.mp3',
+  '/audio/iqamah-haram.mp3',
   '/data/quran.json',
   '/data/tafsir.json',
 ];

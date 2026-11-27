@@ -1454,10 +1454,12 @@ async function prewarmEssentialOfflineShellInSw() {
     '/icon.svg',
     '/pwa-192x192.png',
     '/pwa-512x512.png',
+    '/pwa-1024x1024.png',
     '/assets/aistudio/IMG-20261120-WA4940_5880b328.jpg',
   ];
   const coreUrls = ['/data/quran.json', '/data/tafsir.json'];
   const essentialAudioUrls = [
+    '/audio/splash-alafasy.mp3',
     '/audio/azan.mp3',
     '/audio/adhan-makkah.mp3',
     '/audio/adhan-madinah.mp3',
@@ -1466,11 +1468,12 @@ async function prewarmEssentialOfflineShellInSw() {
     '/audio/iqamah-madinah.mp3',
     '/audio/iqamah-haram.mp3',
     '/audio/pre-chime.mp3',
-    '/audio/pre-istighfar.mp3',
-    '/audio/pre-takbeer.mp3',
+    '/audio/pre-beep-soft.mp3',
+    '/audio/pre-beep-double.mp3',
     '/audio/post-adhan-dua.mp3',
-    '/audio/tawasih-naqshabandi-1.mp3',
     '/audio/salawat-1.mp3',
+    '/audio/salawat-2.mp3',
+    '/audio/salawat-3.mp3',
   ];
   try {
     const shellCache = await caches.open('alzahabi-app-shell-v1');

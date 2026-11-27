@@ -842,7 +842,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
               الأذان والمؤذن
             </h3>
             <p className="mt-0.5 truncate text-[11px] text-slate-600 dark:text-zinc-400">
-              الإقامة والتواشيح والدعاء
+              الإقامة وتنبيه قبل الصلاة والدعاء
             </p>
           </div>
         </button>

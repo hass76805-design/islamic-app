@@ -30,7 +30,6 @@ import {INITIAL_QURAN_SEED} from './data/initialSeedData';
 import {findNearestCity, PRESET_CITIES} from './data/cities';
 import {
   ADHAN_VOICES_30,
-  EID_TAKBEERAT_VOICES_3,
   FRIDAY_KAHF_VOICES_3,
   getAyahAudioUrl,
   IQAMAH_VOICES_10,
@@ -45,7 +44,6 @@ import {
   resolvePreAdhanVoiceById,
   resolveSalawatTrackById,
   SALAWAT_AUDIO_TRACKS,
-  TAWASIH_NAQSHABANDI,
 } from './data/reciters';
 import {useLocalStorage} from './hooks/useLocalStorage';
 import {
@@ -105,11 +103,6 @@ import {
   hydrateMonthlyPrayerCacheFromIdb,
   precomputeMonthlyPrayerCache,
 } from './utils/prayerTimes';
-import {
-  readCachedSheikhAudioObjectUrl,
-  resolveSheikhHumanVoiceUrl,
-  SPLASH_QURAN_LIGHT_DUA_TEXT,
-} from './utils/rafiqiVoice';
 import {processPendingDownloadsIfReady} from './services/downloadManager';
 import {playRamadanCannonSound} from './utils/ramadanCannon';
 
@@ -236,13 +229,13 @@ const DEFAULT_SETTINGS: AppSettings = {
     maghrib: 'audio',
     isha: 'audio',
   },
-  preferredIqamah: 'iqamah-makkah',
+  preferredIqamah: 'iqamah-alafasy',
   perPrayerIqamah: {
-    fajr: 'iqamah-makkah',
-    dhuhr: 'iqamah-makkah',
-    asr: 'iqamah-makkah',
-    maghrib: 'iqamah-makkah',
-    isha: 'iqamah-makkah',
+    fajr: 'iqamah-alafasy',
+    dhuhr: 'iqamah-alafasy',
+    asr: 'iqamah-alafasy',
+    maghrib: 'iqamah-alafasy',
+    isha: 'iqamah-alafasy',
   },
   iqamahEnabled: true,
   iqamahMinutes: 15,
@@ -250,21 +243,21 @@ const DEFAULT_SETTINGS: AppSettings = {
   preferredPostAdhanDua: 'dua-makkah',
   postAdhanDuaDelaySeconds: 135,
   qiyamEnabled: true,
-  preferredPreAdhanSound: 'pre-takbeer',
+  preferredPreAdhanSound: 'pre-chime',
   preferredTawasih: 'tawasih-naqshabandi-1',
   preferredEidTakbeer: 'eid-makkah-1',
   preferredFridayKahf: 'kahf-alafasy',
   adhanEnabled: true,
   preAdhanEnabled: true,
-  preAdhanMinutes: 15,
+  preAdhanMinutes: 10,
   dstEnabled: false,
   timeFormat: '12',
   customFajrAngle: 18.5,
   customIshaAngle: 17.5,
   prayerOffsets: {...DEFAULT_PRAYER_OFFSETS},
   ramadanCannonEnabled: true,
-  fajrTawasihEnabled: true,
-  eidTakbeeratEnabled: true,
+  fajrTawasihEnabled: false,
+  eidTakbeeratEnabled: false,
   fridayKahfReminder: true,
   postPrayerAzkarEnabled: true,
   backgroundAlertsEnabled: true,
@@ -352,6 +345,16 @@ function AppContent({
   );
   const [audioUnlocked, setAudioUnlocked] = useState(false);
   const [permBannerDismissed, setPermBannerDismissed] = useState(false);
+  const [bgPromptDismissed, setBgPromptDismissed] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return true;
+    try {
+      return (
+        window.localStorage.getItem('alzahabi_bg_perm_prompted_v1') === '1'
+      );
+    } catch {
+      return false;
+    }
+  });
 
   const [bookmarks, setBookmarks] = useLocalStorage<QuranBookmark[]>(
     'ana_muslim_bookmarks',
@@ -613,7 +616,7 @@ function AppContent({
             ...s,
             calculationMethod: 'Egyptian',
             preAdhanMinutes: 10,
-            preferredPreAdhanSound: 'pre-takbeer',
+            preferredPreAdhanSound: 'pre-chime',
             lockScreenKeepAlive: true,
             prayerConfirmReminderEnabled: true,
           }));
@@ -771,25 +774,6 @@ function AppContent({
       document.removeEventListener('visibilitychange', handleVisibility);
     };
   }, [settings.preferredReciter]);
-
-  // Silently pre-warm the Splash Quran-Light Dua voice into IndexedDB when online
-  // so every subsequent offline launch plays it directly from IndexedDB.
-  const splashDuaPrewarmRef = useRef(false);
-  useEffect(() => {
-    if (splashDuaPrewarmRef.current || typeof window === 'undefined') return;
-    splashDuaPrewarmRef.current = true;
-    const t = window.setTimeout(() => {
-      void (async () => {
-        const cached = await readCachedSheikhAudioObjectUrl(
-          SPLASH_QURAN_LIGHT_DUA_TEXT,
-        );
-        if (!cached && navigator.onLine) {
-          void resolveSheikhHumanVoiceUrl(SPLASH_QURAN_LIGHT_DUA_TEXT);
-        }
-      })();
-    }, 3500);
-    return () => window.clearTimeout(t);
-  }, []);
 
   // Pre-warm ONLY local bundled core text & local audio (zero external network fetches on startup)
   const corePrewarmedRef = useRef(false);
@@ -1185,13 +1169,6 @@ function AppContent({
       5,
       settings.postAdhanDuaDelaySeconds ?? 135,
     );
-    const activeTawasihVoice =
-      TAWASIH_NAQSHABANDI.find((t) => t.id === settings.preferredTawasih) ||
-      TAWASIH_NAQSHABANDI[0];
-    const activeEidVoice =
-      EID_TAKBEERAT_VOICES_3.find(
-        (e) => e.id === settings.preferredEidTakbeer,
-      ) || EID_TAKBEERAT_VOICES_3[0];
     const activeKahfVoice =
       FRIDAY_KAHF_VOICES_3.find((k) => k.id === settings.preferredFridayKahf) ||
       FRIDAY_KAHF_VOICES_3[0];
@@ -1215,7 +1192,6 @@ function AppContent({
       const targetDate = new Date();
       targetDate.setDate(targetDate.getDate() + dayOffset);
       const dayKey = getDateKey(targetDate);
-      const hijriDay = getHijriParts(targetDate);
       const {schedule} = computeDailyPrayerData(
         location.latitude,
         location.longitude,
@@ -1354,22 +1330,6 @@ function AppContent({
           }
         }
 
-        if (settings.fajrTawasihEnabled && item.key === 'fajr') {
-          const tawasihTs = ts - 20 * 60 * 1000;
-          if (tawasihTs > nowMs) {
-            alerts.push({
-              tag: `tawasih-${dayKey}`,
-              title: 'تواشيح وابتهالات الفجر — الشيخ سيد النقشبندي',
-              body: `${activeTawasihVoice.titleAr} (${activeTawasihVoice.reciterAr})`,
-              prayerName: 'تواشيح الفجر',
-              voiceId: activeTawasihVoice.id,
-              timestamp: tawasihTs,
-              audioUrl: activeTawasihVoice.url,
-              type: 'tawasih',
-            });
-          }
-        }
-
         if (isPrayerEnabled && settings.postPrayerAzkarEnabled) {
           const postAzkarTs = ts + 18 * 60 * 1000;
           if (postAzkarTs > nowMs) {
@@ -1436,9 +1396,9 @@ function AppContent({
             title: 'قيام الليل — الثلث الأخير من الليل',
             body: 'وقت السحر واستجابة الدعاء — قم وصلِّ ركعتين في جوف الليل',
             prayerName: 'قيام الليل',
-            voiceId: activeTawasihVoice.id,
+            voiceId: 'pre-chime',
             timestamp: qiyamTs,
-            audioUrl: activeTawasihVoice.url,
+            audioUrl: '/audio/pre-chime.mp3',
             type: 'qiyam',
           });
         }
@@ -1458,27 +1418,6 @@ function AppContent({
             timestamp: kahfTime.getTime(),
             audioUrl: activeKahfVoice.url,
             type: 'kahf',
-          });
-        }
-      }
-
-      // Eid Takbeerat at 06:30 AM on Eid days
-      const isEid =
-        (hijriDay.month === 10 && hijriDay.day === 1) ||
-        (hijriDay.month === 12 && hijriDay.day >= 10 && hijriDay.day <= 13);
-      if (settings.eidTakbeeratEnabled && isEid) {
-        const eidTime = new Date(targetDate);
-        eidTime.setHours(6, 30, 0, 0);
-        if (eidTime.getTime() > nowMs) {
-          alerts.push({
-            tag: `eid-${dayKey}`,
-            title: 'عيدكم مبارك — تكبيرات العيد',
-            body: `${activeEidVoice.titleAr} (${activeEidVoice.reciterAr})`,
-            prayerName: 'تكبيرات العيد',
-            voiceId: activeEidVoice.id,
-            timestamp: eidTime.getTime(),
-            audioUrl: activeEidVoice.url,
-            type: 'eid',
           });
         }
       }
@@ -1651,13 +1590,6 @@ function AppContent({
       5,
       settings.postAdhanDuaDelaySeconds ?? 135,
     );
-    const activeTawasihVoice =
-      TAWASIH_NAQSHABANDI.find((v) => v.id === settings.preferredTawasih) ||
-      TAWASIH_NAQSHABANDI[0];
-    const activeEidVoice =
-      EID_TAKBEERAT_VOICES_3.find(
-        (v) => v.id === settings.preferredEidTakbeer,
-      ) || EID_TAKBEERAT_VOICES_3[0];
     const activeKahfVoice =
       FRIDAY_KAHF_VOICES_3.find((v) => v.id === settings.preferredFridayKahf) ||
       FRIDAY_KAHF_VOICES_3[0];
@@ -1786,26 +1718,6 @@ function AppContent({
       }
 
       if (
-        settings.fajrTawasihEnabled &&
-        item.key === 'fajr' &&
-        isDueWithinWindow(targetSec - 20 * 60, 300)
-      ) {
-        const tawasihKey = `tawasih-${todayStr}`;
-        if (!triggeredAlertsRef.current.has(tawasihKey)) {
-          markAlertHandled(tawasihKey);
-          setAdhanBanner({
-            text: `${activeTawasihVoice.titleAr} — قبل أذان الفجر بـ 20 دقيقة`,
-          });
-          showSystemNotification(
-            'البرنامج الإسلامي الذهبي',
-            `${activeTawasihVoice.titleAr} (${activeTawasihVoice.reciterAr})`,
-            tawasihKey,
-          );
-          playManagedAudio(activeTawasihVoice.url);
-        }
-      }
-
-      if (
         isPrayerEnabled &&
         (settings.preAdhanEnabled ?? true) &&
         settings.preAdhanMinutes > 0
@@ -1880,25 +1792,10 @@ function AppContent({
         );
         setAdhanBanner({
           text: 'بدأ الثلث الأخير من الليل — وقت قيام الليل المبارك',
-          actionLabel: 'تشغيل مناجاة الفجر',
-          onAction: () => playManagedAudio(activeTawasihVoice.url),
+          actionLabel: 'نغمة التنبيه',
+          onAction: () => playManagedAudio('/audio/pre-chime.mp3'),
         });
-        playManagedAudio(activeTawasihVoice.url);
-      }
-    }
-
-    const isEidDay =
-      (hijri.month === 10 && hijri.day === 1) ||
-      (hijri.month === 12 && hijri.day >= 10 && hijri.day <= 13);
-    if (settings.adhanEnabled && settings.eidTakbeeratEnabled && isEidDay) {
-      const eidKey = `eid-${todayStr}`;
-      if (!triggeredAlertsRef.current.has(eidKey)) {
-        triggeredAlertsRef.current.add(eidKey);
-        setAdhanBanner({
-          text: `عيدكم مبارك — ${activeEidVoice.titleAr} (${activeEidVoice.reciterAr})`,
-          actionLabel: 'تشغيل تكبيرات العيد',
-          onAction: () => playManagedAudio(activeEidVoice.url),
-        });
+        playManagedAudio('/audio/pre-chime.mp3');
       }
     }
 
@@ -2078,12 +1975,13 @@ function AppContent({
           ...PRE_ADHAN_VOICES_10.map((p) => p.url),
           ...POST_ADHAN_DUA_VOICES_10.map((d) => d.url),
           POST_ADHAN_DUA.audioUrl,
-          ...TAWASIH_NAQSHABANDI.map((t) => t.url),
-          ...EID_TAKBEERAT_VOICES_3.map((e) => e.url),
           ...SALAWAT_AUDIO_TRACKS.map((s) => s.url),
         ]),
       );
       void cacheBatchUrls(coreAdhanUrls, undefined, 4);
+    }
+    if (navigator.storage && typeof navigator.storage.persist === 'function') {
+      void navigator.storage.persist().catch(() => false);
     }
     if (typeof window !== 'undefined' && 'Notification' in window) {
       try {
@@ -2148,7 +2046,7 @@ function AppContent({
       iqamahEnabled: true,
       prayerConfirmReminderEnabled: true,
       salawatReminderEnabled: true,
-      preAdhanMinutes: s.preAdhanMinutes || 10,
+      preAdhanMinutes: s.preAdhanMinutes === 5 ? 5 : 10,
     }));
   }, [unlockAudioEngine, setLocation, setSettings]);
 
@@ -2430,6 +2328,18 @@ function AppContent({
     !permBannerDismissed &&
     (notifPermState === 'default' || !location.isGps || !audioUnlocked);
 
+  const showPostSplashBgPermPrompt =
+    !showSplash && !bgPromptDismissed && notifPermState === 'default';
+
+  const dismissPostSplashBgPrompt = () => {
+    setBgPromptDismissed(true);
+    try {
+      window.localStorage.setItem('alzahabi_bg_perm_prompted_v1', '1');
+    } catch {
+      // ignore storage errors
+    }
+  };
+
   return (
     <div className="h-dvh w-full overflow-hidden bg-[#000000]">
       <div
@@ -2438,6 +2348,52 @@ function AppContent({
         }`}
       >
         {showSplash && <SplashScreen onComplete={handleSplashComplete} />}
+
+        {showPostSplashBgPermPrompt && (
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="أذونات العمل في الخلفية للأذان"
+            className="fixed inset-0 z-[9000] flex items-end justify-center bg-black/85 p-3 sm:items-center"
+          >
+            <div className="w-full max-w-sm space-y-4 rounded-3xl border-2 border-[#C9A227] bg-[#080602] p-5 text-white shadow-[0_0_48px_rgba(201,162,39,0.35)]">
+              <div className="flex items-start gap-3">
+                <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-[#C9A227] bg-[#C9A227]/15 text-[#FCE38A]">
+                  <BellRing className="h-5 w-5" />
+                </span>
+                <div className="space-y-1">
+                  <h2 className="text-sm font-extrabold text-[#FCE38A]">
+                    تشغيل الأذان في الخلفية
+                  </h2>
+                  <p className="text-xs leading-relaxed text-zinc-300">
+                    السماح للتطبيق بالعمل في الخلفية للأذان — تجاهل تحسين البطارية وتفعيل الإشعارات والتخزين الدائم.
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    dismissPostSplashBgPrompt();
+                    void handleActivateAllPermissions();
+                  }}
+                  className="flex min-h-[46px] items-center justify-center gap-1.5 rounded-2xl bg-gradient-to-l from-[#FCE38A] via-[#C9A227] to-[#9A7415] px-3 text-xs font-extrabold text-black active:scale-95"
+                >
+                  <Check className="h-4 w-4" />
+                  <span>سماح وتفعيل</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={dismissPostSplashBgPrompt}
+                  className="flex min-h-[46px] items-center justify-center rounded-2xl border border-[#C9A227]/45 bg-black px-3 text-xs font-bold text-zinc-300 active:scale-95"
+                >
+                  لاحقًا
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Native Android Top AppBar (56px) with Live Prayer Time */}
         <header
@@ -2927,14 +2883,38 @@ export default function App() {
     () => ({
       ...DEFAULT_SETTINGS,
       ...rawSettings,
+      fajrTawasihEnabled: false,
+      eidTakbeeratEnabled: false,
+      preferredPreAdhanSound:
+        rawSettings?.preferredPreAdhanSound &&
+        PRE_ADHAN_VOICES_10.some(
+          (p) => p.id === rawSettings.preferredPreAdhanSound,
+        )
+          ? rawSettings.preferredPreAdhanSound
+          : DEFAULT_SETTINGS.preferredPreAdhanSound,
+      preAdhanMinutes:
+        rawSettings?.preAdhanMinutes === 0
+          ? 0
+          : rawSettings?.preAdhanMinutes === 5
+            ? 5
+            : 10,
+      preferredIqamah:
+        rawSettings?.preferredIqamah &&
+        IQAMAH_VOICES_10.some((i) => i.id === rawSettings.preferredIqamah)
+          ? rawSettings.preferredIqamah
+          : DEFAULT_SETTINGS.preferredIqamah,
       preferredTawasih:
         rawSettings?.preferredTawasih === 'tawasih-housaini'
           ? 'tawasih-naqshabandi-1'
           : rawSettings?.preferredTawasih || DEFAULT_SETTINGS.preferredTawasih,
       postAdhanDuaEnabled: rawSettings?.postAdhanDuaEnabled ?? true,
       preferredPostAdhanDua:
-        rawSettings?.preferredPostAdhanDua ||
-        DEFAULT_SETTINGS.preferredPostAdhanDua,
+        rawSettings?.preferredPostAdhanDua &&
+        POST_ADHAN_DUA_VOICES_10.some(
+          (d) => d.id === rawSettings.preferredPostAdhanDua,
+        )
+          ? rawSettings.preferredPostAdhanDua
+          : DEFAULT_SETTINGS.preferredPostAdhanDua,
       postAdhanDuaDelaySeconds:
         rawSettings?.postAdhanDuaDelaySeconds ??
         DEFAULT_SETTINGS.postAdhanDuaDelaySeconds,
@@ -2946,8 +2926,12 @@ export default function App() {
       salawatReminderEnabled: rawSettings?.salawatReminderEnabled ?? true,
       salawatIntervalMinutes: rawSettings?.salawatIntervalMinutes || 10,
       preferredSalawatTrack:
-        rawSettings?.preferredSalawatTrack ||
-        DEFAULT_SETTINGS.preferredSalawatTrack,
+        rawSettings?.preferredSalawatTrack &&
+        SALAWAT_AUDIO_TRACKS.some(
+          (s) => s.id === rawSettings.preferredSalawatTrack,
+        )
+          ? rawSettings.preferredSalawatTrack
+          : DEFAULT_SETTINGS.preferredSalawatTrack,
       prayerOffsets: {
         ...DEFAULT_PRAYER_OFFSETS,
         ...(rawSettings?.prayerOffsets || {}),

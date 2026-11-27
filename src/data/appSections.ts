@@ -1,7 +1,6 @@
 import {AZKAR_CATEGORIES} from './azkar';
 import {
   ADHAN_VOICES_30,
-  EID_TAKBEERAT_VOICES_3,
   FAMOUS_SURAHS_30,
   FRIDAY_KAHF_VOICES_3,
   getAyahAudioUrl,
@@ -14,7 +13,6 @@ import {
   PRE_ADHAN_VOICES_10,
   RECITERS_30,
   SALAWAT_AUDIO_TRACKS,
-  TAWASIH_NAQSHABANDI,
 } from './reciters';
 import {RAFIQI_WORDS_30} from './rafiqiData';
 import {MoreSubPageId, ReciterId} from '../types';
@@ -57,6 +55,7 @@ export interface AppSectionDefinition {
 }
 
 export const CORE_LOCAL_AUDIO_ASSETS = [
+  '/audio/splash-alafasy.mp3',
   '/audio/azan.mp3',
   '/audio/adhan-makkah.mp3',
   '/audio/adhan-madinah.mp3',
@@ -65,19 +64,12 @@ export const CORE_LOCAL_AUDIO_ASSETS = [
   '/audio/iqamah-madinah.mp3',
   '/audio/iqamah-haram.mp3',
   '/audio/pre-chime.mp3',
-  '/audio/pre-istighfar.mp3',
-  '/audio/pre-takbeer.mp3',
+  '/audio/pre-beep-soft.mp3',
+  '/audio/pre-beep-double.mp3',
   '/audio/post-adhan-dua.mp3',
-  '/audio/tawasih-naqshabandi-1.mp3',
-  '/audio/tawasih-naqshabandi-2.mp3',
-  '/audio/tawasih-naqshabandi-3.mp3',
   '/audio/salawat-1.mp3',
   '/audio/salawat-2.mp3',
   '/audio/salawat-3.mp3',
-  '/audio/salawat-4.mp3',
-  '/audio/eid-makkah-1.mp3',
-  '/audio/eid-makkah-2.mp3',
-  '/audio/eid-jamaa.mp3',
   '/audio/kahf-abdulbasit.mp3',
   '/audio/kahf-alafasy.mp3',
   '/audio/kahf-muaiqly.mp3',
@@ -238,8 +230,8 @@ const APP_SECTIONS_MAP: Record<OfflineSectionId, AppSectionDefinition> = {
   adhan: {
     id: 'adhan',
     labelAr: 'المؤذن الإلكتروني والأذان',
-    descAr: '30 مؤذنًا، الإقامة، التواشيح، دعاء بعد الأذان، وتنبيهات الصلاة',
-    moreDescAr: '30 مؤذنًا وتواشيح النقشبندي وقيام الليل وتنبيه الإقامة ودعاء بعد الأذان',
+    descAr: '30 مؤذنًا، الإقامة، دعاء بعد الأذان، وتنبيهات قبل الصلاة',
+    moreDescAr: '30 مؤذنًا وتنبيهات قبل الصلاة وقيام الليل والإقامة ودعاء بعد الأذان',
     iconKey: 'bell_ring',
     inMoreMenu: true,
     estimatedMb: 65,
@@ -253,8 +245,6 @@ const APP_SECTIONS_MAP: Record<OfflineSectionId, AppSectionDefinition> = {
       ...POST_ADHAN_DUA_VOICES_10.flatMap((d) =>
         d.fallbackUrl ? [d.url, d.fallbackUrl] : [d.url],
       ),
-      ...TAWASIH_NAQSHABANDI.map((t) => t.url),
-      ...EID_TAKBEERAT_VOICES_3.map((e) => e.url),
       ...FRIDAY_KAHF_VOICES_3.map((k) => k.url),
     ],
   },

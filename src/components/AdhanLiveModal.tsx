@@ -198,7 +198,11 @@ export const AdhanLiveModal: React.FC<AdhanLiveModalProps> = ({
     : isDuaMode
       ? activeDuaFallbackUrl
       : '/adhan-sounds/makkah.mp3';
-  const fallbackOfflineUrl = voice.fallbackUrl || defaultOfflineUrl;
+  const fallbackOfflineUrl = isIqamah
+    ? activeIqamahVoice.fallbackUrl || '/audio/iqamah-makkah.mp3'
+    : isDuaMode
+      ? activeDuaFallbackUrl
+      : voice.fallbackUrl || '/adhan-sounds/makkah.mp3';
   const isFajr =
     activeMode === 'adhan' &&
     (prayerNameAr.includes('الفجر') || voice.id === 'adhan-fajr');
@@ -210,13 +214,15 @@ export const AdhanLiveModal: React.FC<AdhanLiveModalProps> = ({
     return buildAdhanLines(isFajr);
   }, [isIqamah, isTawasih, isEid, isFajr, voice.nameAr]);
 
-  const toneMeta = ADHAN_TONE_DESCRIPTIONS[voice.id] || {
-    maqamAr: isTawasih
-      ? 'الشيخ سيد النقشبندي'
-      : isEid
-        ? 'تكبيرات العيد المباركة'
-        : isIqamah
-          ? 'الإقامة الشرعية — 15 دقيقة'
+  const toneMeta = ADHAN_TONE_DESCRIPTIONS[
+    isIqamah ? activeIqamahVoice.id : voice.id
+  ] || {
+    maqamAr: isIqamah
+      ? 'الإقامة الحقيقية فقط — الشيخ مشاري العفاسي'
+      : isTawasih
+        ? 'ابتهال'
+        : isEid
+          ? 'تكبيرات العيد المباركة'
           : 'أداء مؤذن الحرمين',
     paceFactor: 1.0,
   };
@@ -451,13 +457,16 @@ export const AdhanLiveModal: React.FC<AdhanLiveModalProps> = ({
 
   const playCustomModeAudio = (targetMode: 'dua' | 'iqamah') => {
     const audio = audioRef.current;
-    setShowPostAdhanDua(targetMode === 'dua');
+    const isTargetingDua = targetMode === 'dua';
+    playingDuaRef.current = isTargetingDua;
+    usedFallbackRef.current = false;
+    setIsPlayingDua(isTargetingDua);
+    setShowPostAdhanDua(isTargetingDua);
     setActiveMode(targetMode);
     if (!audio) return;
-    const targetUrl =
-      targetMode === 'dua' ? activeDuaUrl : activeIqamahVoice.url;
-    playingDuaRef.current = targetMode === 'dua';
-    setIsPlayingDua(targetMode === 'dua');
+    const targetUrl = isTargetingDua ? activeDuaUrl : activeIqamahVoice.url;
+    audio.pause();
+    audio.currentTime = 0;
     void resolveOfflinePlayableUrl(targetUrl).then((playableUrl) => {
       audio.src = playableUrl;
       audio.load();
@@ -479,7 +488,7 @@ export const AdhanLiveModal: React.FC<AdhanLiveModalProps> = ({
   const handleStartIqamah = () => {
     setIqamahCountdownSec(effectiveIqamahMinutes * 60);
     setStatusNotice(
-      `تم بدء عداد الإقامة (${TO_ARABIC_DIGITS(effectiveIqamahMinutes)} دقيقة) بصوت ${activeIqamahVoice.nameAr}`,
+      `تشغيل الإقامة فقط — ${activeIqamahVoice.nameAr} (بدون أذان أو دعاء)`,
     );
     playCustomModeAudio('iqamah');
   };

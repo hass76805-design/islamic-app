@@ -540,7 +540,7 @@ export const SalawatView: React.FC<SalawatViewProps> = ({
           )}
         </button>
 
-        {/* Two Action Buttons: تحديد الوقت + اختيار الصوت (10 أصوات بصيغ مختلفة) */}
+        {/* Two Action Buttons: تحديد الوقت + اختيار الصوت (3 صيغ أصلية) */}
         <div className="grid grid-cols-2 gap-2 pt-0.5">
           <button
             type="button"
@@ -564,7 +564,7 @@ export const SalawatView: React.FC<SalawatViewProps> = ({
           >
             <span className="inline-flex items-center gap-1.5 text-xs font-extrabold text-[#FCE38A]">
               <Volume2 className="h-4 w-4 text-[#C9A227]" />
-              <span>اختيار الصوت (10)</span>
+              <span>اختيار الصيغة ({SALAWAT_AUDIO_TRACKS.length})</span>
             </span>
             <span className="mt-0.5 max-w-full truncate px-1 text-[10px] font-semibold text-zinc-300">
               {activeTrack.reciterAr}
@@ -836,14 +836,14 @@ export const SalawatView: React.FC<SalawatViewProps> = ({
         </div>
       </section>
 
-      {/* Authentic 10 Salawat Formulas List (Offline Ready) */}
+      {/* Authentic 3 Original Salawat Formulas List (Offline Ready) */}
       <section className="space-y-2.5 rounded-3xl border-2 border-[#C9A227] bg-white p-4 dark:bg-[#050505]">
         <div className="flex items-center justify-between gap-2">
           <h3 className="text-sm font-bold text-slate-900 dark:text-[#FCE38A]">
-            10 أصوات وصيغ للصلاة على النبي ﷺ (بدون نت)
+            3 صيغ أصلية للصلاة على النبي ﷺ (بدون نت)
           </h3>
           <span className="rounded-lg border border-[#C9A227]/45 bg-[#141004] px-2 py-0.5 text-[10px] font-bold text-[#FCE38A]">
-            {SALAWAT_AUDIO_TRACKS.length} أصوات
+            {SALAWAT_AUDIO_TRACKS.length} صيغ
           </span>
         </div>
 
@@ -1028,7 +1028,7 @@ export const SalawatView: React.FC<SalawatViewProps> = ({
         </div>
       )}
 
-      {/* 10-Voice Salawat Picker Modal ("اختيار الصوت (10 أصوات)") */}
+      {/* 3-Voice Original Salawat Picker Modal */}
       {voicePickerOpen && (
         <div
           role="dialog"
@@ -1042,10 +1042,10 @@ export const SalawatView: React.FC<SalawatViewProps> = ({
                 <Volume2 className="h-5 w-5 text-[#FCE38A]" />
                 <div>
                   <h3 className="text-base font-extrabold text-[#FCE38A]">
-                    اختيار الصوت والصيغة (10 أصوات)
+                    اختيار الصيغة والصوت ({SALAWAT_AUDIO_TRACKS.length} صيغ)
                   </h3>
                   <p className="text-[10px] text-zinc-400">
-                    صيغ متنوعة بأصوات مشايخ حقيقيين — تعمل 100% بدون نت
+                    الصيغ الثلاث الأصلية بأصوات مشايخ حقيقيين — تعمل 100% بدون نت
                   </p>
                 </div>
               </div>

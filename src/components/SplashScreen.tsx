@@ -1,28 +1,21 @@
 import React, {useCallback, useEffect, useRef, useState} from 'react';
 import {AnimatePresence, motion} from 'motion/react';
-import {Volume2} from 'lucide-react';
-import {
-  readCachedSheikhAudioObjectUrl,
-  resolveSheikhHumanVoiceUrl,
-  SPLASH_QURAN_LIGHT_DUA_TEXT,
-} from '../utils/rafiqiVoice';
 
 interface SplashScreenProps {
   onComplete: () => void;
 }
 
-const SPOKEN_PLAIN_DUA = 'اللهم اجعل القرآن نور صدورنا';
+const LOCAL_ALAFASY_SPLASH_URL = '/audio/splash-alafasy.mp3';
+const REMOTE_ALAFASY_SPLASH_URL =
+  'https://cdn.islamic.network/quran/audio/128/ar.alafasy/1.mp3';
 
 export const SplashScreen: React.FC<SplashScreenProps> = ({onComplete}) => {
   const [exiting, setExiting] = useState(false);
-  const [lifted, setLifted] = useState(false);
-  const [needsTapToPlay, setNeedsTapToPlay] = useState(false);
-  const [duaPlaying, setDuaPlaying] = useState(false);
+  const [showTexts, setShowTexts] = useState(false);
 
   const onCompleteRef = useRef(onComplete);
   const finishedRef = useRef(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const idleExitTimerRef = useRef<number | null>(null);
   const maxCeilingTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -32,177 +25,70 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({onComplete}) => {
   const finishSplash = useCallback(() => {
     if (finishedRef.current) return;
     finishedRef.current = true;
-    if (idleExitTimerRef.current) {
-      window.clearTimeout(idleExitTimerRef.current);
-      idleExitTimerRef.current = null;
-    }
     if (maxCeilingTimerRef.current) {
       window.clearTimeout(maxCeilingTimerRef.current);
       maxCeilingTimerRef.current = null;
     }
-    try {
-      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-        window.speechSynthesis.cancel();
-      }
-    } catch {
-      // ignore speechSynthesis cancel failure
-    }
     setExiting(true);
     window.setTimeout(() => {
       onCompleteRef.current();
-    }, 150);
+    }, 180);
   }, []);
 
-  const speakArabicFallback = useCallback(() => {
-    if (finishedRef.current) return false;
-    if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
-      return false;
-    }
-    try {
-      window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(SPOKEN_PLAIN_DUA);
-      const voices = window.speechSynthesis.getVoices();
-      const arabicVoice =
-        voices.find((v) => v.lang.toLowerCase().startsWith('ar-eg')) ||
-        voices.find((v) => v.lang.toLowerCase().startsWith('ar-sa')) ||
-        voices.find((v) => v.lang.toLowerCase().startsWith('ar'));
-      if (arabicVoice) {
-        utterance.voice = arabicVoice;
-      }
-      utterance.lang = arabicVoice?.lang || 'ar-EG';
-      utterance.rate = 0.88;
-      utterance.pitch = 0.85;
-      utterance.volume = 1;
-
-      let started = false;
-      utterance.onstart = () => {
-        started = true;
-        setNeedsTapToPlay(false);
-        setDuaPlaying(true);
-        if (idleExitTimerRef.current) {
-          window.clearTimeout(idleExitTimerRef.current);
-          idleExitTimerRef.current = null;
-        }
-      };
-      utterance.onend = () => {
-        setDuaPlaying(false);
-        finishSplash();
-      };
-      utterance.onerror = () => {
-        setDuaPlaying(false);
-        finishSplash();
-      };
-
-      window.speechSynthesis.speak(utterance);
-
-      // If browser blocks speechSynthesis without throwing, proceed smoothly
-      idleExitTimerRef.current = window.setTimeout(() => {
-        if (!started && !finishedRef.current) {
-          finishSplash();
-        }
-      }, 3200);
-      return true;
-    } catch {
-      return false;
-    }
-  }, [finishSplash]);
-
-  const attemptPlayAudio = useCallback(
+  const startAlafasyAudio = useCallback(
     (audio: HTMLAudioElement) => {
       if (finishedRef.current) return;
-      audio
-        .play()
-        .then(() => {
-          setNeedsTapToPlay(false);
-          setDuaPlaying(true);
-          if (idleExitTimerRef.current) {
-            window.clearTimeout(idleExitTimerRef.current);
-            idleExitTimerRef.current = null;
-          }
-        })
-        .catch(() => {
-          // Strict mobile autoplay block: let user tap OR enter app cleanly
-          setNeedsTapToPlay(true);
-          if (!idleExitTimerRef.current) {
-            idleExitTimerRef.current = window.setTimeout(() => {
-              finishSplash();
-            }, 3400);
-          }
-        });
+      audio.play().catch(() => {
+        // Mobile autoplay blocked before gesture — wait cleanly after 2.5s animation completes
+      });
     },
-    [finishSplash],
+    [],
   );
 
   useEffect(() => {
     let cancelled = false;
 
-    const liftTimer = window.setTimeout(() => {
-      if (!cancelled) setLifted(true);
-    }, 320);
+    // Reveal the two lines right after the 2.5s slow-motion float-up completes
+    const textTimer = window.setTimeout(() => {
+      if (!cancelled) {
+        setShowTexts(true);
+      }
+    }, 2500);
 
-    // Safety ceiling so splash never hangs indefinitely on any device
+    // Hard safety ceiling so splash never blocks app entry
     maxCeilingTimerRef.current = window.setTimeout(() => {
       finishSplash();
     }, 9500);
 
-    // Start resolving the real Sheikh voice immediately (offline IDB first, then TTS API)
-    const resolveVoicePromise = (async () => {
-      let src = await readCachedSheikhAudioObjectUrl(SPLASH_QURAN_LIGHT_DUA_TEXT);
-      if (!src && typeof navigator !== 'undefined' && navigator.onLine) {
-        const warmPromise = resolveSheikhHumanVoiceUrl(SPLASH_QURAN_LIGHT_DUA_TEXT);
-        src = await Promise.race<string | null>([
-          warmPromise,
-          new Promise<null>((resolve) =>
-            window.setTimeout(() => resolve(null), 4200),
-          ),
-        ]);
+    const audio = new Audio(LOCAL_ALAFASY_SPLASH_URL);
+    audio.volume = 1;
+    audio.preload = 'auto';
+    audioRef.current = audio;
+
+    let triedRemote = false;
+    audio.onended = () => {
+      finishSplash();
+    };
+    audio.onerror = () => {
+      if (
+        !triedRemote &&
+        typeof navigator !== 'undefined' &&
+        navigator.onLine
+      ) {
+        triedRemote = true;
+        audio.src = REMOTE_ALAFASY_SPLASH_URL;
+        audio.load();
+        startAlafasyAudio(audio);
+        return;
       }
-      return src;
-    })();
+      window.setTimeout(() => finishSplash(), 1800);
+    };
 
-    const audioStartTimer = window.setTimeout(() => {
-      void (async () => {
-        const src = await resolveVoicePromise;
-        if (cancelled || finishedRef.current) return;
-
-        if (src) {
-          const audio = new Audio(src);
-          audio.volume = 1;
-          audio.preload = 'auto';
-          audioRef.current = audio;
-
-          audio.onended = () => {
-            setDuaPlaying(false);
-            finishSplash();
-          };
-          audio.onerror = () => {
-            setDuaPlaying(false);
-            if (!speakArabicFallback()) {
-              window.setTimeout(() => finishSplash(), 1800);
-            }
-          };
-
-          attemptPlayAudio(audio);
-          return;
-        }
-
-        // First offline launch (or no TTS backend): speak ONLY "اللهم اجعل القرآن نور صدورنا"
-        // Never play unrelated post-adhan or Azan MP3s on startup.
-        if (!speakArabicFallback()) {
-          idleExitTimerRef.current = window.setTimeout(() => {
-            finishSplash();
-          }, 2400);
-        }
-      })();
-    }, 380);
+    startAlafasyAudio(audio);
 
     return () => {
       cancelled = true;
-      window.clearTimeout(liftTimer);
-      window.clearTimeout(audioStartTimer);
-      if (idleExitTimerRef.current) {
-        window.clearTimeout(idleExitTimerRef.current);
-      }
+      window.clearTimeout(textTimer);
       if (maxCeilingTimerRef.current) {
         window.clearTimeout(maxCeilingTimerRef.current);
       }
@@ -210,22 +96,15 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({onComplete}) => {
         audioRef.current.pause();
         audioRef.current = null;
       }
-      try {
-        if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-          window.speechSynthesis.cancel();
-        }
-      } catch {
-        // ignore
-      }
     };
-  }, [attemptPlayAudio, finishSplash, speakArabicFallback]);
+  }, [finishSplash, startAlafasyAudio]);
 
+  // If browser blocked autoplay without gesture, tapping once plays Alafasy immediately
   const handleSplashTap = () => {
     if (finishedRef.current) return;
-    if (audioRef.current && audioRef.current.paused) {
-      attemptPlayAudio(audioRef.current);
-    } else if (needsTapToPlay) {
-      speakArabicFallback();
+    const audio = audioRef.current;
+    if (audio && audio.paused) {
+      startAlafasyAudio(audio);
     }
   };
 
@@ -234,73 +113,52 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({onComplete}) => {
       {!exiting && (
         <motion.div
           key="golden-splash"
-          initial={{opacity: 0}}
+          initial={{opacity: 1}}
           animate={{opacity: 1}}
           exit={{opacity: 0}}
-          transition={{duration: 0.15, ease: 'easeOut'}}
+          transition={{duration: 0.18, ease: 'easeOut'}}
           onClick={handleSplashTap}
-          className="fixed inset-0 z-[100] flex w-full flex-col items-center justify-center overflow-hidden bg-[#000000] px-6 text-center select-none"
-          aria-label="البرنامج الإسلامي الذهبي"
+          className="fixed inset-0 z-[99999] flex w-full flex-col items-center justify-center overflow-hidden bg-[#000000] px-6 text-center select-none"
+          aria-label="البرنامج الإسلامي الأزهري"
         >
-          {/* Ambient golden glow */}
+          {/* Ambient golden glow synced with 2.5s slow-motion float */}
           <motion.div
-            initial={{opacity: 0, scale: 0.8}}
-            animate={{opacity: [0.22, 0.55, 0.32], scale: [0.92, 1.08, 1]}}
-            transition={{duration: 2.2, ease: 'easeInOut'}}
-            className="pointer-events-none absolute h-[78vmin] w-[78vmin] rounded-full bg-[radial-gradient(circle,rgba(201,162,39,0.4)_0%,rgba(201,162,39,0.12)_48%,rgba(0,0,0,0)_74%)]"
+            initial={{opacity: 0.25, scale: 0.9}}
+            animate={{opacity: 0.65, scale: 1.15}}
+            transition={{duration: 2.5, ease: 'easeOut'}}
+            className="pointer-events-none absolute h-[82vmin] w-[82vmin] rounded-full bg-[radial-gradient(circle,rgba(218,175,45,0.46)_0%,rgba(201,162,39,0.16)_46%,rgba(0,0,0,0)_74%)]"
           />
 
-          {/* Centered App Icon that animates upward */}
+          {/* Single Centered 1024x1024 High-Quality PNG Icon — floats smoothly up & scales 1.0 -> 1.15 over 2.5s */}
           <motion.div
-            initial={{opacity: 0, scale: 0.88, y: 12}}
-            animate={
-              lifted
-                ? {opacity: 1, scale: 0.9, y: -36}
-                : {opacity: 1, scale: 1, y: 16}
-            }
-            transition={{duration: 0.7, ease: [0.22, 1, 0.36, 1]}}
+            initial={{scale: 1, y: 0}}
+            animate={{scale: 1.15, y: -34}}
+            transition={{duration: 2.5, ease: 'easeOut'}}
+            onAnimationComplete={() => setShowTexts(true)}
             className="relative flex flex-col items-center"
           >
-            <div className="relative h-36 w-36 overflow-hidden rounded-[26%] border-2 border-[#C9A227] bg-[#050505] shadow-[0_0_50px_rgba(201,162,39,0.38)] sm:h-40 sm:w-40">
+            <div className="relative h-40 w-40 overflow-hidden rounded-[26%] border-2 border-[#D4AF37] bg-[#050505] shadow-[0_0_56px_rgba(212,175,55,0.52)] sm:h-44 sm:w-44">
               <img
-                src="/pwa-512x512.png"
-                alt="البرنامج الإسلامي الذهبي"
+                src="/pwa-1024x1024.png"
+                alt="البرنامج الإسلامي الأزهري"
                 className="h-full w-full object-cover"
-              />
-              <motion.div
-                initial={{x: '-130%', opacity: 0}}
-                animate={{x: '140%', opacity: [0, 0.5, 0]}}
-                transition={{delay: 0.25, duration: 1.8, ease: 'easeInOut'}}
-                className="pointer-events-none absolute inset-y-0 w-1/3 -skew-x-12 bg-gradient-to-r from-transparent via-[#FCE38A]/35 to-transparent"
               />
             </div>
           </motion.div>
 
-          {/* Revealed underneath once icon moves upward */}
+          {/* Text revealed strictly once AFTER the 2.5s icon animation completes */}
           <motion.div
-            initial={{opacity: 0, y: 18}}
-            animate={lifted ? {opacity: 1, y: -12} : {opacity: 0, y: 18}}
-            transition={{duration: 0.6, ease: [0.22, 1, 0.36, 1]}}
-            className="relative z-10 flex max-w-md flex-col items-center gap-3"
+            initial={{opacity: 0, y: 12}}
+            animate={showTexts ? {opacity: 1, y: -8} : {opacity: 0, y: 12}}
+            transition={{duration: 0.45, ease: 'easeOut'}}
+            className="relative z-10 mt-6 flex max-w-md flex-col items-center gap-2.5"
           >
-            <p className="font-quran text-2xl leading-relaxed font-extrabold text-[#FCE38A] drop-shadow-[0_2px_14px_rgba(201,162,39,0.45)] sm:text-3xl">
+            <p className="font-quran text-2xl leading-relaxed font-extrabold text-[#FCE38A] drop-shadow-[0_2px_14px_rgba(201,162,39,0.48)] sm:text-3xl">
               اللهم اجعل القرآن نور صدورنا
             </p>
             <p className="text-sm font-extrabold tracking-wide text-[#C9A227]">
-              البرنامج الإسلامي الذهبي
+              البرنامج الإسلامي الأزهري
             </p>
-
-            {duaPlaying ? (
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-[#C9A227]/45 bg-[#120E04] px-3 py-1 text-[11px] font-bold text-[#F3D56B]">
-                <Volume2 className="h-3.5 w-3.5 animate-pulse text-[#FCE38A]" />
-                <span>جاري تلاوة الدعاء بصوت الشيخ...</span>
-              </span>
-            ) : needsTapToPlay ? (
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-[#FCE38A]/65 bg-[#C9A227]/18 px-3.5 py-1 text-[11px] font-extrabold text-[#FCE38A]">
-                <Volume2 className="h-3.5 w-3.5" />
-                <span>اضغط هنا لسماع الدعاء بصوت الشيخ</span>
-              </span>
-            ) : null}
           </motion.div>
         </motion.div>
       )}

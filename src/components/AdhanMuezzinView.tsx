@@ -231,10 +231,7 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
   const timeFormat: '12' | '24' = settings.timeFormat || '12';
   const dstEnabled = Boolean(settings.dstEnabled);
   const preAdhanEnabled = settings.preAdhanEnabled ?? settings.preAdhanMinutes > 0;
-  const preAdhanSliderMinutes = Math.min(
-    30,
-    Math.max(5, settings.preAdhanMinutes || 15),
-  );
+  const preAdhanSliderMinutes = settings.preAdhanMinutes === 5 ? 5 : 10;
   const iqamahEnabled = settings.iqamahEnabled ?? true;
   const iqamahMinutes = Math.min(30, Math.max(5, settings.iqamahMinutes || 15));
   const postAdhanDuaEnabled = settings.postAdhanDuaEnabled ?? true;
@@ -1157,16 +1154,16 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
               </button>
             </div>
 
-            {/* تنبيه باقتراب الصلاة Toggle + Slider (10 to 30 min) */}
+            {/* تنبيه قبل الصلاة Toggle + 5m / 10m ONLY */}
             <div className="space-y-2 border-t border-white/10 pt-3">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-xs font-extrabold text-[#E8DCC8]">
-                    تنبيه باقتراب الصلاة
+                    تنبيه قبل الصلاة
                   </p>
                   <p className="text-[11px] font-bold text-[#1FA47A]">
                     {preAdhanEnabled
-                      ? `${preAdhanSliderMinutes} دقيقة قبل الأذان`
+                      ? `قبل الأذان بـ ${preAdhanSliderMinutes} دقائق`
                       : 'متوقف حاليًا'}
                   </p>
                 </div>
@@ -1196,30 +1193,27 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
               </div>
 
               {preAdhanEnabled && (
-                <div className="space-y-1">
-                  <input
-                    type="range"
-                    min={10}
-                    max={30}
-                    step={1}
-                    value={preAdhanSliderMinutes}
-                    onChange={(e) => {
-                      const val = Number(e.target.value);
-                      onUpdateSettings((s) => ({
-                        ...s,
-                        preAdhanEnabled: true,
-                        preAdhanMinutes: val,
-                      }));
-                    }}
-                    className="h-2 w-full cursor-pointer accent-[#1FA47A]"
-                  />
-                  <div className="flex justify-between text-[10px] font-bold text-[#E8DCC8]/75">
-                    <span>10 دقائق</span>
-                    <span className="text-[#1FA47A]">
-                      {preAdhanSliderMinutes} دقيقة قبل الأذان
-                    </span>
-                    <span>30 دقيقة</span>
-                  </div>
+                <div className="grid grid-cols-2 gap-2">
+                  {[5, 10].map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() =>
+                        onUpdateSettings((s) => ({
+                          ...s,
+                          preAdhanEnabled: true,
+                          preAdhanMinutes: m,
+                        }))
+                      }
+                      className={`min-h-[38px] rounded-xl text-xs font-extrabold ${
+                        preAdhanSliderMinutes === m
+                          ? 'bg-[#1FA47A] text-white'
+                          : 'bg-white/10 text-[#E8DCC8]'
+                      }`}
+                    >
+                      قبل الصلاة بـ {m} دقائق
+                    </button>
+                  ))}
                 </div>
               )}
             </div>
@@ -1625,7 +1619,7 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
                 )}
               </div>
 
-              {/* BUTTON 1: تنبيه قبل الصلاة (10 أصوات شيوخ) */}
+              {/* BUTTON 1: تنبيه قبل الصلاة — 5 أو 10 دقائق فقط بنغمة تنبيه قصيرة */}
               <div className="space-y-2.5 rounded-2xl border border-[#1FA47A]/45 bg-black/25 p-3">
                 <div className="flex items-center justify-between gap-2">
                   <div className="min-w-0">
@@ -1635,7 +1629,7 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
                     </h4>
                     <p className="text-[11px] text-[#1FA47A]">
                       {preAdhanEnabled
-                        ? `قبل الأذان بـ ${preAdhanSliderMinutes} دقيقة · ${selectedPreVoice.nameAr}`
+                        ? `قبل الأذان بـ ${preAdhanSliderMinutes} دقائق · ${selectedPreVoice.nameAr}`
                         : 'متوقف حاليًا'}
                     </p>
                   </div>
@@ -1665,29 +1659,27 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
                 </div>
 
                 {preAdhanEnabled && (
-                  <div className="space-y-1.5">
-                    <div className="grid grid-cols-5 gap-1">
-                      {[5, 10, 15, 20, 30].map((m) => (
-                        <button
-                          key={m}
-                          type="button"
-                          onClick={() =>
-                            onUpdateSettings((s) => ({
-                              ...s,
-                              preAdhanEnabled: true,
-                              preAdhanMinutes: m,
-                            }))
-                          }
-                          className={`min-h-[32px] rounded-xl text-[11px] font-extrabold ${
-                            preAdhanSliderMinutes === m
-                              ? 'bg-[#1FA47A] text-white'
-                              : 'bg-white/10 text-[#E8DCC8]'
-                          }`}
-                        >
-                          {m} د
-                        </button>
-                      ))}
-                    </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    {[5, 10].map((m) => (
+                      <button
+                        key={m}
+                        type="button"
+                        onClick={() =>
+                          onUpdateSettings((s) => ({
+                            ...s,
+                            preAdhanEnabled: true,
+                            preAdhanMinutes: m,
+                          }))
+                        }
+                        className={`min-h-[34px] rounded-xl text-xs font-extrabold ${
+                          preAdhanSliderMinutes === m
+                            ? 'bg-[#1FA47A] text-white'
+                            : 'bg-white/10 text-[#E8DCC8]'
+                        }`}
+                      >
+                        قبل الصلاة بـ {m} دقائق
+                      </button>
+                    ))}
                   </div>
                 )}
 
@@ -1698,15 +1690,15 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
                 >
                   <span className="flex items-center gap-1.5">
                     <Volume2 className="h-4 w-4" />
-                    <span>تنبيه قبل الصلاة — اختر من 10 أصوات شيوخ</span>
+                    <span>تنبيه قبل الصلاة — نغمة تنبيه قصيرة</span>
                   </span>
                   <span className="rounded-lg bg-black/25 px-2 py-0.5 text-[10px]">
-                    10 شيوخ
+                    {PRE_ADHAN_VOICES_10.length} نغمات
                   </span>
                 </button>
               </div>
 
-              {/* BUTTON 2: الإقامة (10 أصوات حقيقية) */}
+              {/* BUTTON 2: الإقامة (إقامة حقيقية فقط بدون أذان أو دعاء) */}
               <div className="space-y-2.5 rounded-2xl border border-[#1FA47A]/45 bg-black/25 p-3">
                 <div className="flex items-center justify-between gap-2">
                   <div className="min-w-0">
@@ -1774,10 +1766,10 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
                 >
                   <span className="flex items-center gap-1.5">
                     <AlarmClock className="h-4 w-4" />
-                    <span>الإقامة — اختر من 10 أصوات شيوخ</span>
+                    <span>الإقامة — صوت الإقامة الحقيقية فقط</span>
                   </span>
                   <span className="rounded-lg bg-black/25 px-2 py-0.5 text-[10px]">
-                    10 شيوخ
+                    {IQAMAH_VOICES_10.length} أصوات
                   </span>
                 </button>
               </div>
@@ -1898,10 +1890,10 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
                 >
                   <span className="flex items-center gap-1.5">
                     <BookOpen className="h-4 w-4" />
-                    <span>دعاء بعد الصلاة — اختر من 10 أصوات شيوخ</span>
+                    <span>دعاء بعد الصلاة — اختر الصوت</span>
                   </span>
                   <span className="rounded-lg bg-black/25 px-2 py-0.5 text-[10px]">
-                    10 شيوخ
+                    {POST_ADHAN_DUA_VOICES_10.length} أصوات
                   </span>
                 </button>
               </div>
@@ -1910,7 +1902,7 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
         </div>
       )}
 
-      {/* ==================== 10 REAL SHEIKH VOICES PICKER MODAL ==================== */}
+      {/* ==================== SOUND PICKER MODAL ==================== */}
       {activeVoicePickerTab && (
         <div className="fixed inset-0 z-[60] flex items-end justify-center bg-black/85 p-2 sm:items-center">
           <div className="animate-sheet-up flex max-h-[88dvh] w-full max-w-[400px] flex-col rounded-3xl border-2 border-[#1FA47A] bg-[#0F2225] p-4 text-white shadow-2xl">
@@ -1918,13 +1910,13 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
               <div>
                 <h3 className="text-base font-extrabold text-[#E8DCC8]">
                   {activeVoicePickerTab === 'pre'
-                    ? 'أصوات تنبيه قبل الصلاة (10 شيوخ)'
+                    ? 'نغمات تنبيه قبل الصلاة (نغمة قصيرة فقط)'
                     : activeVoicePickerTab === 'iqamah'
-                      ? 'أصوات الإقامة (10 أصوات شيوخ)'
-                      : 'أصوات دعاء بعد الصلاة (10 شيوخ)'}
+                      ? 'أصوات الإقامة الحقيقية (بدون أذان أو دعاء)'
+                      : 'أصوات دعاء بعد الصلاة'}
                 </h3>
                 <p className="text-[11px] text-[#1FA47A]">
-                  أصوات حقيقية محفوظة للعمل أوفلاين بدون إنترنت
+                  محفوظة للعمل أوفلاين بدون إنترنت
                 </p>
               </div>
               <button
@@ -2021,7 +2013,7 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
                             onUpdateSettings((s) => ({
                               ...s,
                               preAdhanEnabled: true,
-                              preAdhanMinutes: s.preAdhanMinutes || 15,
+                              preAdhanMinutes: s.preAdhanMinutes === 5 ? 5 : 10,
                               preferredPreAdhanSound: voiceItem.id,
                             }));
                           } else if (activeVoicePickerTab === 'iqamah') {
