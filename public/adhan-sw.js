@@ -77,6 +77,13 @@
     event.waitUntil(prewarmMuezzinAssets());
   });
 
+  swSelf.addEventListener('activate', (event) => {
+    const staleCaches = ['tasbih-precache-v2', 'alzahabi-app-shell-v1'];
+    event.waitUntil(
+      Promise.allSettled(staleCaches.map((name) => caches.delete(name))),
+    );
+  });
+
   swSelf.addEventListener('message', (event) => {
     const data = event.data;
     if (!data || typeof data !== 'object') return;

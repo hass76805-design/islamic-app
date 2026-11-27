@@ -6,6 +6,7 @@ import {
   getDocFromServer,
   getFirestore,
   initializeFirestore,
+  memoryLocalCache,
   persistentLocalCache,
   persistentMultipleTabManager,
 } from 'firebase/firestore';
@@ -25,7 +26,15 @@ function createOfflinePersistentFirestore(): Firestore {
       firebaseConfig.firestoreDatabaseId,
     );
   } catch {
-    return getFirestore(app, firebaseConfig.firestoreDatabaseId);
+    try {
+      return initializeFirestore(
+        app,
+        {localCache: memoryLocalCache()},
+        firebaseConfig.firestoreDatabaseId,
+      );
+    } catch {
+      return getFirestore(app, firebaseConfig.firestoreDatabaseId);
+    }
   }
 }
 

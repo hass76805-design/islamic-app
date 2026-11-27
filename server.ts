@@ -313,18 +313,41 @@ async function startServer() {
           setHeaders(res, filePath) {
             if (
               filePath.endsWith('sw.js') ||
+              filePath.endsWith('adhan-sw.js') ||
               filePath.endsWith('adhan-sw-ext.js') ||
               filePath.endsWith('manifest.webmanifest') ||
-              filePath.endsWith('index.html')
+              filePath.endsWith('index.html') ||
+              path.basename(filePath).startsWith('workbox-')
             ) {
-              res.setHeader('Cache-Control', 'no-cache');
+              res.setHeader(
+                'Cache-Control',
+                'no-store, no-cache, must-revalidate',
+              );
             }
           },
         }),
       );
-      app.get('*', (_req, res) => {
+      app.get('*', (req, res) => {
+        const reqPath = req.path || '/';
+        if (
+          reqPath.startsWith('/api/') ||
+          reqPath.startsWith('/assets/') ||
+          reqPath.startsWith('/audio/') ||
+          reqPath.startsWith('/adhan-sounds/') ||
+          reqPath.startsWith('/data/') ||
+          reqPath.startsWith('/fonts/') ||
+          /\.(?:js|mjs|css|map|json|png|jpe?g|svg|webp|ico|woff2?|ttf|otf|mp3|wav|ogg|webmanifest)$/i.test(
+            reqPath,
+          )
+        ) {
+          res.status(404).send('Not found');
+          return;
+        }
         if (fs.existsSync(indexHtml)) {
-          res.setHeader('Cache-Control', 'no-cache');
+          res.setHeader(
+            'Cache-Control',
+            'no-store, no-cache, must-revalidate',
+          );
           res.sendFile(indexHtml);
         } else {
           res.status(404).send('Not built');

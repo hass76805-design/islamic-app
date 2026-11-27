@@ -26,11 +26,12 @@ export default defineConfig(() => {
           'adhan-sounds/egyptian.mp3',
         ],
         workbox: {
-          maximumFileSizeToCacheInBytes: 25 * 1024 * 1024,
+          maximumFileSizeToCacheInBytes: 30 * 1024 * 1024,
           navigateFallback: '/index.html',
-          navigateFallbackDenylist: [/^\/api\//],
-          additionalManifestEntries: [
-            {url: '/', revision: 'tasbih-root-v2'},
+          navigateFallbackDenylist: [
+            /^\/api\//,
+            /^\/assets\//,
+            /\.(?:js|mjs|css|map|json|png|jpe?g|svg|webp|ico|woff2?|ttf|otf|mp3|wav|ogg)$/i,
           ],
           ignoreURLParametersMatching: [
             /^utm_/,
@@ -57,23 +58,6 @@ export default defineConfig(() => {
           clientsClaim: true,
           importScripts: ['/adhan-sw-ext.js', '/adhan-sw.js'],
           runtimeCaching: [
-            {
-              urlPattern: ({request, sameOrigin, url}) =>
-                sameOrigin &&
-                request.mode === 'navigate' &&
-                !url.pathname.startsWith('/api/'),
-              handler: 'NetworkFirst',
-              options: {
-                cacheName: 'tasbih-precache-v2',
-                networkTimeoutSeconds: 3,
-                cacheableResponse: {
-                  statuses: [0, 200],
-                },
-                precacheFallback: {
-                  fallbackURL: '/offline.html',
-                },
-              },
-            },
             {
               urlPattern: ({url}) =>
                 url.pathname.startsWith('/fonts/') ||
@@ -143,13 +127,14 @@ export default defineConfig(() => {
                 sameOrigin &&
                 request.mode !== 'navigate' &&
                 !url.pathname.startsWith('/api/') &&
+                !url.pathname.startsWith('/assets/') &&
                 !url.pathname.startsWith('/data/') &&
                 !url.pathname.startsWith('/audio/') &&
                 !url.pathname.startsWith('/adhan-sounds/') &&
                 !url.pathname.startsWith('/fonts/'),
               handler: 'StaleWhileRevalidate',
               options: {
-                cacheName: 'alzahabi-app-shell-v1',
+                cacheName: 'alzahabi-app-shell-v2',
                 expiration: {
                   maxEntries: 500,
                   maxAgeSeconds: 60 * 60 * 24 * 30,
@@ -157,6 +142,25 @@ export default defineConfig(() => {
                 cacheableResponse: {
                   statuses: [0, 200],
                 },
+                plugins: [
+                  {
+                    cacheWillUpdate: async ({request, response}) => {
+                      if (!response) return null;
+                      const contentType =
+                        response.headers.get('content-type') || '';
+                      const pathname = new URL(request.url).pathname;
+                      if (
+                        /\.(?:js|mjs|css|json|mp3|wav|ogg|png|svg|woff2?)$/i.test(
+                          pathname,
+                        ) &&
+                        contentType.includes('text/html')
+                      ) {
+                        return null;
+                      }
+                      return response;
+                    },
+                  },
+                ],
               },
             },
             {

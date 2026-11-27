@@ -1792,6 +1792,7 @@ self.addEventListener('notificationclick', (event) => {
           if ('focus' in client) {
             client.postMessage({
               type: 'PLAY_ADHAN_FROM_NOTIFICATION',
+              fromNotificationClick: true,
               audioUrl: data.audioUrl,
               alertType: data.type,
               prayerNameAr: data.prayerNameAr,

@@ -8,7 +8,7 @@ export const STARTUP_DUA_TEXT =
   'بِسْمِ اللَّهِ الرَّحْمَنِ الرَّحِيمِ، اللَّهُمَّ افْتَحْ لَنَا أَبْوَابَ رَحْمَتِكَ، وَبَارِكْ لَنَا فِي يَوْمِنَا هَذَا، وَاجْعَلِ الْقُرْآنَ الْعَظِيمَ رَبِيعَ قُلُوبِنَا وَنُورَ صُدُورِنَا وَجَلَاءَ أَحْزَانِنَا.';
 
 export const SPLASH_QURAN_LIGHT_DUA_TEXT =
-  'اللَّهُمَّ اجْعَلِ الْقُرْآنَ نُورَ صُدُورِنَا، وَرَبِيعَ قُلُوبِنَا، وَجَلَاءَ أَحْزَانِنَا، وَذَهَابَ هُمُومِنَا.';
+  'اللَّهُمَّ اجْعَلِ الْقُرْآنَ نُورَ صُدُورِنَا';
 
 function getTtsCacheKey(text: string): string {
   return `rafiqi-sheikh-tts-v1:${text.trim()}`;
@@ -190,5 +190,5 @@ export async function prewarmRafiqiSheikhVoicesOffline(): Promise<void> {
  * play it instantaneously even completely offline.
  */
 export async function prewarmStartupDuaVoiceOffline(): Promise<string | null> {
-  return resolveSheikhHumanVoiceUrl(STARTUP_DUA_TEXT);
+  return resolveSheikhHumanVoiceUrl(SPLASH_QURAN_LIGHT_DUA_TEXT);
 }

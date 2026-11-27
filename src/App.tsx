@@ -319,6 +319,9 @@ function AppContent({
     splashPlayedThisLaunch = true;
     return true;
   });
+  const showSplashRef = useRef(showSplash);
+  showSplashRef.current = showSplash;
+  const appMountSecRef = useRef(Math.floor(Date.now() / 1000));
   const handleSplashComplete = useCallback(() => {
     splashPlayedThisLaunch = true;
     setShowSplash(false);
@@ -802,6 +805,7 @@ function AppContent({
   // Optional Lock-Screen Electronic Muezzin & Salawat Keep-Alive (silent WAV + MediaSession + WakeLock)
   useEffect(() => {
     if (
+      showSplash ||
       !(settings.adhanEnabled || settings.salawatReminderEnabled) ||
       !settings.lockScreenKeepAlive ||
       typeof window === 'undefined'
@@ -853,6 +857,7 @@ function AppContent({
       wakeSentinel?.release?.().catch(() => {});
     };
   }, [
+    showSplash,
     settings.adhanEnabled,
     settings.salawatReminderEnabled,
     settings.lockScreenKeepAlive,
@@ -1078,6 +1083,10 @@ function AppContent({
       }
 
       if (data?.type === 'PLAY_ADHAN_FROM_NOTIFICATION') {
+        // Only auto-play from explicit notification clicks; ignore passive catch-up chatter on app launch
+        if (!data.fromNotificationClick || showSplashRef.current) {
+          return;
+        }
         const matchedVoice =
           MUEZZIN_POPUP_VOICES_5.find((v) => v.id === data.voiceId) ||
           ADHAN_VOICES_30.find((v) => v.id === data.voiceId) ||
@@ -1114,30 +1123,15 @@ function AppContent({
     const onVisibility = () => {
       if (document.visibilityState === 'visible') {
         setNow(new Date());
-        navigator.serviceWorker.ready
-          .then((reg) => {
-            reg.active?.postMessage({type: 'CHECK_DUE_ADHAN_ALERTS'});
-          })
-          .catch(() => {});
       }
     };
     const onFocusOrPageShow = () => {
       setNow(new Date());
-      navigator.serviceWorker.ready
-        .then((reg) => {
-          reg.active?.postMessage({type: 'CHECK_DUE_ADHAN_ALERTS'});
-        })
-        .catch(() => {});
     };
     navigator.serviceWorker.addEventListener('message', onSwMessage);
     document.addEventListener('visibilitychange', onVisibility);
     window.addEventListener('focus', onFocusOrPageShow);
     window.addEventListener('pageshow', onFocusOrPageShow);
-    navigator.serviceWorker.ready
-      .then((reg) => {
-        reg.active?.postMessage({type: 'CHECK_DUE_ADHAN_ALERTS'});
-      })
-      .catch(() => {});
     return () => {
       navigator.serviceWorker.removeEventListener('message', onSwMessage);
       document.removeEventListener('visibilitychange', onVisibility);
@@ -1637,6 +1631,7 @@ function AppContent({
 
   // Real-time Scheduled Adhan & Salawat Trigger Watcher
   useEffect(() => {
+    if (showSplash) return;
     if (!settings.adhanEnabled && !settings.salawatReminderEnabled) return;
     const {schedule} = dailyPrayerData;
 
@@ -1667,8 +1662,11 @@ function AppContent({
       FRIDAY_KAHF_VOICES_3.find((v) => v.id === settings.preferredFridayKahf) ||
       FRIDAY_KAHF_VOICES_3[0];
 
-    const isDueWithinWindow = (targetSec: number, windowSec = 300) =>
-      nowSec >= targetSec && nowSec - targetSec <= windowSec;
+    // Only trigger audio for alerts actually occurring live after app launch (no launch-time catch-up chatter)
+    const isDueWithinWindow = (targetSec: number, windowSec = 90) =>
+      nowSec >= targetSec &&
+      nowSec - targetSec <= windowSec &&
+      targetSec >= appMountSecRef.current - 15;
 
     const markAlertHandled = (key: string) => {
       triggeredAlertsRef.current.add(key);
@@ -1842,8 +1840,12 @@ function AppContent({
         elapsedAfterAdhanMin <= 90
       ) {
         const bucket = Math.floor(elapsedAfterAdhanMin / 5) * 5;
+        const confirmTargetSec = targetSec + bucket * 60;
         const confirmKey = `prayconfirm-${todayStr}-${item.key}-${bucket}`;
-        if (!triggeredAlertsRef.current.has(confirmKey)) {
+        if (
+          isDueWithinWindow(confirmTargetSec, 45) &&
+          !triggeredAlertsRef.current.has(confirmKey)
+        ) {
           markAlertHandled(confirmKey);
           showSystemNotification(
             `هل صليت ${item.nameAr}؟`,
@@ -1948,6 +1950,7 @@ function AppContent({
       }
     }
   }, [
+    showSplash,
     now,
     scheduleDateKey,
     dailyPrayerData,

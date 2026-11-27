@@ -1,7 +1,6 @@
 import React, {useCallback, useEffect, useRef, useState} from 'react';
 import {AnimatePresence, motion} from 'motion/react';
 import {Volume2} from 'lucide-react';
-import {resolveOfflinePlayableUrl} from '../utils/offlineAudioCache';
 import {
   readCachedSheikhAudioObjectUrl,
   resolveSheikhHumanVoiceUrl,
@@ -11,6 +10,8 @@ import {
 interface SplashScreenProps {
   onComplete: () => void;
 }
+
+const SPOKEN_PLAIN_DUA = 'اللهم اجعل القرآن نور صدورنا';
 
 export const SplashScreen: React.FC<SplashScreenProps> = ({onComplete}) => {
   const [exiting, setExiting] = useState(false);
@@ -39,11 +40,72 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({onComplete}) => {
       window.clearTimeout(maxCeilingTimerRef.current);
       maxCeilingTimerRef.current = null;
     }
+    try {
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+      }
+    } catch {
+      // ignore speechSynthesis cancel failure
+    }
     setExiting(true);
     window.setTimeout(() => {
       onCompleteRef.current();
-    }, 380);
+    }, 150);
   }, []);
+
+  const speakArabicFallback = useCallback(() => {
+    if (finishedRef.current) return false;
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
+      return false;
+    }
+    try {
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(SPOKEN_PLAIN_DUA);
+      const voices = window.speechSynthesis.getVoices();
+      const arabicVoice =
+        voices.find((v) => v.lang.toLowerCase().startsWith('ar-eg')) ||
+        voices.find((v) => v.lang.toLowerCase().startsWith('ar-sa')) ||
+        voices.find((v) => v.lang.toLowerCase().startsWith('ar'));
+      if (arabicVoice) {
+        utterance.voice = arabicVoice;
+      }
+      utterance.lang = arabicVoice?.lang || 'ar-EG';
+      utterance.rate = 0.88;
+      utterance.pitch = 0.85;
+      utterance.volume = 1;
+
+      let started = false;
+      utterance.onstart = () => {
+        started = true;
+        setNeedsTapToPlay(false);
+        setDuaPlaying(true);
+        if (idleExitTimerRef.current) {
+          window.clearTimeout(idleExitTimerRef.current);
+          idleExitTimerRef.current = null;
+        }
+      };
+      utterance.onend = () => {
+        setDuaPlaying(false);
+        finishSplash();
+      };
+      utterance.onerror = () => {
+        setDuaPlaying(false);
+        finishSplash();
+      };
+
+      window.speechSynthesis.speak(utterance);
+
+      // If browser blocks speechSynthesis without throwing, proceed smoothly
+      idleExitTimerRef.current = window.setTimeout(() => {
+        if (!started && !finishedRef.current) {
+          finishSplash();
+        }
+      }, 3200);
+      return true;
+    } catch {
+      return false;
+    }
+  }, [finishSplash]);
 
   const attemptPlayAudio = useCallback(
     (audio: HTMLAudioElement) => {
@@ -59,7 +121,7 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({onComplete}) => {
           }
         })
         .catch(() => {
-          // Mobile / strict autoplay fallback: allow tap to hear OR enter smoothly after brief read
+          // Strict mobile autoplay block: let user tap OR enter app cleanly
           setNeedsTapToPlay(true);
           if (!idleExitTimerRef.current) {
             idleExitTimerRef.current = window.setTimeout(() => {
@@ -74,56 +136,65 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({onComplete}) => {
   useEffect(() => {
     let cancelled = false;
 
-    // Step 1: Icon stays centered briefly, then rises upward revealing Dua underneath
     const liftTimer = window.setTimeout(() => {
       if (!cancelled) setLifted(true);
-    }, 360);
+    }, 320);
 
-    // Step 2: Safety ceiling so splash can never hang permanently offline or on slow devices
+    // Safety ceiling so splash never hangs indefinitely on any device
     maxCeilingTimerRef.current = window.setTimeout(() => {
       finishSplash();
-    }, 13000);
+    }, 9500);
 
-    const startDuaAudio = async () => {
+    // Start resolving the real Sheikh voice immediately (offline IDB first, then TTS API)
+    const resolveVoicePromise = (async () => {
       let src = await readCachedSheikhAudioObjectUrl(SPLASH_QURAN_LIGHT_DUA_TEXT);
-
       if (!src && typeof navigator !== 'undefined' && navigator.onLine) {
-        // Race fast online fetch (900ms) so launch is instant; still saves to IDB in background
         const warmPromise = resolveSheikhHumanVoiceUrl(SPLASH_QURAN_LIGHT_DUA_TEXT);
         src = await Promise.race<string | null>([
           warmPromise,
           new Promise<null>((resolve) =>
-            window.setTimeout(() => resolve(null), 900),
+            window.setTimeout(() => resolve(null), 4200),
           ),
         ]);
       }
-
-      if (!src) {
-        src = await resolveOfflinePlayableUrl('/audio/post-adhan-dua.mp3');
-      }
-
-      if (cancelled || finishedRef.current) return;
-
-      const audio = new Audio(src);
-      audio.volume = 1;
-      audio.preload = 'auto';
-      audioRef.current = audio;
-
-      audio.onended = () => {
-        setDuaPlaying(false);
-        finishSplash();
-      };
-      audio.onerror = () => {
-        setDuaPlaying(false);
-        window.setTimeout(() => finishSplash(), 1800);
-      };
-
-      attemptPlayAudio(audio);
-    };
+      return src;
+    })();
 
     const audioStartTimer = window.setTimeout(() => {
-      void startDuaAudio();
-    }, 450);
+      void (async () => {
+        const src = await resolveVoicePromise;
+        if (cancelled || finishedRef.current) return;
+
+        if (src) {
+          const audio = new Audio(src);
+          audio.volume = 1;
+          audio.preload = 'auto';
+          audioRef.current = audio;
+
+          audio.onended = () => {
+            setDuaPlaying(false);
+            finishSplash();
+          };
+          audio.onerror = () => {
+            setDuaPlaying(false);
+            if (!speakArabicFallback()) {
+              window.setTimeout(() => finishSplash(), 1800);
+            }
+          };
+
+          attemptPlayAudio(audio);
+          return;
+        }
+
+        // First offline launch (or no TTS backend): speak ONLY "اللهم اجعل القرآن نور صدورنا"
+        // Never play unrelated post-adhan or Azan MP3s on startup.
+        if (!speakArabicFallback()) {
+          idleExitTimerRef.current = window.setTimeout(() => {
+            finishSplash();
+          }, 2400);
+        }
+      })();
+    }, 380);
 
     return () => {
       cancelled = true;
@@ -139,13 +210,22 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({onComplete}) => {
         audioRef.current.pause();
         audioRef.current = null;
       }
+      try {
+        if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+          window.speechSynthesis.cancel();
+        }
+      } catch {
+        // ignore
+      }
     };
-  }, [attemptPlayAudio, finishSplash]);
+  }, [attemptPlayAudio, finishSplash, speakArabicFallback]);
 
   const handleSplashTap = () => {
     if (finishedRef.current) return;
     if (audioRef.current && audioRef.current.paused) {
       attemptPlayAudio(audioRef.current);
+    } else if (needsTapToPlay) {
+      speakArabicFallback();
     }
   };
 
@@ -156,8 +236,8 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({onComplete}) => {
           key="golden-splash"
           initial={{opacity: 0}}
           animate={{opacity: 1}}
-          exit={{opacity: 0, scale: 1.02}}
-          transition={{duration: 0.38, ease: 'easeInOut'}}
+          exit={{opacity: 0}}
+          transition={{duration: 0.15, ease: 'easeOut'}}
           onClick={handleSplashTap}
           className="fixed inset-0 z-[100] flex w-full flex-col items-center justify-center overflow-hidden bg-[#000000] px-6 text-center select-none"
           aria-label="البرنامج الإسلامي الذهبي"
@@ -178,7 +258,7 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({onComplete}) => {
                 ? {opacity: 1, scale: 0.9, y: -36}
                 : {opacity: 1, scale: 1, y: 16}
             }
-            transition={{duration: 0.75, ease: [0.22, 1, 0.36, 1]}}
+            transition={{duration: 0.7, ease: [0.22, 1, 0.36, 1]}}
             className="relative flex flex-col items-center"
           >
             <div className="relative h-36 w-36 overflow-hidden rounded-[26%] border-2 border-[#C9A227] bg-[#050505] shadow-[0_0_50px_rgba(201,162,39,0.38)] sm:h-40 sm:w-40">
@@ -200,7 +280,7 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({onComplete}) => {
           <motion.div
             initial={{opacity: 0, y: 18}}
             animate={lifted ? {opacity: 1, y: -12} : {opacity: 0, y: 18}}
-            transition={{duration: 0.65, ease: [0.22, 1, 0.36, 1]}}
+            transition={{duration: 0.6, ease: [0.22, 1, 0.36, 1]}}
             className="relative z-10 flex max-w-md flex-col items-center gap-3"
           >
             <p className="font-quran text-2xl leading-relaxed font-extrabold text-[#FCE38A] drop-shadow-[0_2px_14px_rgba(201,162,39,0.45)] sm:text-3xl">

@@ -1,8 +1,8 @@
 // Custom Offline-First Service Worker for تسبيح
 // Precaches App Shell, Local Fonts, Core Audio (including /audio/azan.mp3) & /offline.html fallback
 
-const PRECACHE = 'tasbih-precache-v2';
-const SHELL_CACHE = 'alzahabi-app-shell-v1';
+const PRECACHE = 'tasbih-precache-v3';
+const SHELL_CACHE = 'alzahabi-app-shell-v2';
 const FONT_CACHE = 'alzahabi-fonts-v1';
 const IMAGE_CACHE = 'alzahabi-offline-images-v1';
 const AUDIO_USER_CACHE = 'audio-cache-v1';
@@ -232,7 +232,9 @@ self.addEventListener('fetch', (event) => {
       caches.match(req).then((hit) => {
         if (hit) return hit;
         return fetch(req).then((res) => {
-          if (res && res.ok) {
+          const ct = (res && res.headers && res.headers.get('content-type')) || '';
+          const isStaticAsset = /\.(?:js|mjs|css|json|mp3|wav|ogg|png|svg|woff2?)$/i.test(url.pathname);
+          if (res && res.ok && !(isStaticAsset && ct.includes('text/html'))) {
             caches.open(SHELL_CACHE).then((c) => c.put(req, res.clone()));
           }
           return res;
