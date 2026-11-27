@@ -984,7 +984,7 @@ export const IQAMAH_AUDIO: AdhanVoice = IQAMAH_VOICES_10[0];
 
 export interface SalawatAudioTrack {
   id: string;
-  formulaId: 'short' | 'ibrahimiyyah' | 'kafiyah' | 'friday';
+  formulaId: string;
   titleAr: string;
   textAr: string;
   reciterAr: string;
@@ -996,7 +996,7 @@ export const SALAWAT_AUDIO_TRACKS: SalawatAudioTrack[] = [
   {
     id: 'salawat-afasy',
     formulaId: 'short',
-    titleAr: 'الصلاة المختصرة المباركة',
+    titleAr: '1. الصلاة المختصرة المباركة',
     textAr: 'اللَّهُمَّ صَلِّ وَسَلِّمْ عَلَى نَبِيِّنَا مُحَمَّدٍ',
     reciterAr: 'بصوت الشيخ مشاري راشد العفاسي',
     virtueAr: 'من صلى عليَّ صلاة واحدة صلى الله عليه بها عشرًا (صحيح مسلم)',
@@ -1005,7 +1005,7 @@ export const SALAWAT_AUDIO_TRACKS: SalawatAudioTrack[] = [
   {
     id: 'salawat-ghamdi',
     formulaId: 'ibrahimiyyah',
-    titleAr: 'الصلاة الإبراهيمية الكاملة',
+    titleAr: '2. الصلاة الإبراهيمية الكاملة',
     textAr:
       'اللَّهُمَّ صَلِّ عَلَى مُحَمَّدٍ وَعَلَى آلِ مُحَمَّدٍ، كَمَا صَلَّيْتَ عَلَى إِبْرَاهِيمَ وَعَلَى آلِ إِبْرَاهِيمَ، إِنَّكَ حَمِيدٌ مَجِيدٌ، اللَّهُمَّ بَارِكْ عَلَى مُحَمَّدٍ وَعَلَى آلِ مُحَمَّدٍ، كَمَا بَارَكْتَ عَلَى إِبْرَاهِيمَ وَعَلَى آلِ إِبْرَاهِيمَ، إِنَّكَ حَمِيدٌ مَجِيدٌ',
     reciterAr: 'بصوت الشيخ سعد الغامدي',
@@ -1015,7 +1015,7 @@ export const SALAWAT_AUDIO_TRACKS: SalawatAudioTrack[] = [
   {
     id: 'salawat-muaiqly',
     formulaId: 'kafiyah',
-    titleAr: 'الصلاة على النبي ﷺ بخشوع الحرم',
+    titleAr: '3. الصلاة على النبي ﷺ وآله وصحبه',
     textAr: 'اللَّهُمَّ صَلِّ وَسَلِّمْ وَبَارِكْ عَلَى نَبِيِّنَا مُحَمَّدٍ وَعَلَى آلِهِ وَصَحْبِهِ أَجْمَعِينَ',
     reciterAr: 'بصوت الشيخ ماهر المعيقلي',
     virtueAr: 'قيل لأبي بن كعب: إذن تُكفى همَّك ويُغفر لك ذنبُك (الترمذي)',
@@ -1024,11 +1024,65 @@ export const SALAWAT_AUDIO_TRACKS: SalawatAudioTrack[] = [
   {
     id: 'salawat-dukhin',
     formulaId: 'friday',
-    titleAr: 'صلِّ على النبي ﷺ بنبرة هادئة خاشعة',
+    titleAr: '4. صلِّ على النبي ﷺ بنبرة هادئة',
     textAr: 'صَلَّى اللَّهُ عَلَى مُحَمَّدٍ صَلَّى اللَّهُ عَلَيْهِ وَسَلَّمَ',
     reciterAr: 'بصوت الشيخ هيثم الدخين',
     virtueAr: 'فأكثروا عليَّ من الصلاة فيه، فإن صلاتكم معروضة عليَّ (أبو داود)',
     url: '/audio/salawat-4.mp3',
+  },
+  {
+    id: 'salawat-naqshabandi-1',
+    formulaId: 'munajat',
+    titleAr: '5. صلاة ومناجاة الحبيب ﷺ',
+    textAr: 'اللَّهُمَّ صَلِّ عَلَى سَيِّدِنَا مُحَمَّدٍ طِبِّ الْقُلُوبِ وَدَوَائِهَا وَعَافِيَةِ الْأَبْدَانِ وَشِفَائِهَا',
+    reciterAr: 'بصوت الشيخ سيد النقشبندي',
+    virtueAr: 'تنشرح بها الصدور وتطمئن بها القلوب بذكر الله',
+    url: '/audio/tawasih-naqshabandi-1.mp3',
+  },
+  {
+    id: 'salawat-naqshabandi-2',
+    formulaId: 'noor',
+    titleAr: '6. صلاة النور والرحمة المهداة',
+    textAr: 'اللَّهُمَّ صَلِّ عَلَى نُورِ الْأَنْوَارِ وَسِرِّ الْأَسْرَارِ سَيِّدِنَا مُحَمَّدٍ الْمُخْتَارِ',
+    reciterAr: 'بصوت الشيخ سيد النقشبندي',
+    virtueAr: 'رفع الدرجات ومضاعفة الحسنات بعشر أمثالها',
+    url: '/audio/tawasih-naqshabandi-2.mp3',
+  },
+  {
+    id: 'salawat-naqshabandi-3',
+    formulaId: 'maghfirah',
+    titleAr: '7. صلاة الشفاعة والمغفرة',
+    textAr: 'اللَّهُمَّ صَلِّ عَلَى مُحَمَّدٍ صَلَاةً تُنْجِينَا بِهَا مِنْ جَمِيعِ الْأَهْوَالِ وَالْآفَاتِ',
+    reciterAr: 'بصوت الشيخ سيد النقشبندي',
+    virtueAr: 'من أكثر من الصلاة على النبي ﷺ نال شفاعته يوم القيامة',
+    url: '/audio/tawasih-naqshabandi-3.mp3',
+  },
+  {
+    id: 'salawat-mulla-wasilah',
+    formulaId: 'wasilah',
+    titleAr: '8. صيغة الوسيلة والفضيلة المأثورة',
+    textAr: 'اللَّهُمَّ صَلِّ عَلَى مُحَمَّدٍ وَآتِهِ الْوَسِيلَةَ وَالْفَضِيلَةَ وَالدَّرَجَةَ الرَّفِيعَةَ',
+    reciterAr: 'بصوت الشيخ علي أحمد ملا (الحرم المكي)',
+    virtueAr: 'من سأل الله للنبي الوسيلة حلّت له الشفاعة (صحيح البخاري)',
+    url: '/audio/post-adhan-dua.mp3',
+  },
+  {
+    id: 'salawat-istighfar',
+    formulaId: 'tasbih',
+    titleAr: '9. الصلاة مع الاستغفار والتسبيح',
+    textAr: 'اللَّهُمَّ صَلِّ وَسَلِّمْ عَلَى رَسُولِ اللَّهِ ﷺ وَأَسْتَغْفِرُ اللَّهَ الْعَظِيمَ',
+    reciterAr: 'بصوت القارئ الشيخ محمد صديق المنشاوي / حصن المسلم',
+    virtueAr: 'جمعٌ بين الصلاة على النبي ﷺ والاستغفار الماحي للذنوب',
+    url: '/audio/pre-istighfar.mp3',
+  },
+  {
+    id: 'salawat-takbeer',
+    formulaId: 'jalal',
+    titleAr: '10. الصلاة بالتكبير والتعظيم',
+    textAr: 'اللَّهُ أَكْبَرُ كَبِيرًا، اللَّهُمَّ صَلِّ وَسَلِّمْ وَبَارِكْ عَلَى خَيْرِ خَلْقِكَ مُحَمَّدٍ ﷺ',
+    reciterAr: 'بصوت مؤذني المسجد الحرام',
+    virtueAr: 'تعظيم الله ثم الصلاة على خاتم الأنبياء والمرسلين ﷺ',
+    url: '/audio/pre-takbeer.mp3',
   },
 ];
 

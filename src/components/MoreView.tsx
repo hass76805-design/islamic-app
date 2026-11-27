@@ -13,7 +13,6 @@ import {
   CircleDot,
   Cloud,
   Download,
-  HardDrive,
   Heart,
   HelpCircle,
   Loader2,
@@ -27,7 +26,6 @@ import {
   Settings,
   Sparkles,
   Sun,
-  Trash2,
 } from 'lucide-react';
 import {AppSectionIconKey, getMoreMenuSections} from '../data/appSections';
 import {useFirebase} from '../contexts/FirebaseContext';
@@ -66,15 +64,6 @@ import {StoriesView} from './StoriesView';
 import {TasbihView} from './TasbihView';
 import {VoiceTestView} from './VoiceTestView';
 import {WhoIsAllahView} from './WhoIsAllahView';
-import {
-  deleteDownload,
-  downloadSection,
-  getStorageUsage,
-  getWifiOnlySetting,
-  setWifiOnlySetting,
-  StorageUsageSummary,
-  subscribeDownloadsChanged,
-} from '../services/downloadManager';
 
 interface MoreViewProps {
   subPage: MoreSubPageId;
@@ -175,21 +164,6 @@ export const MoreView: React.FC<MoreViewProps> = ({
   const {user, signingIn, authError, signInWithGoogle, signOutUser} =
     useFirebase();
   const isOnline = useOnlineStatus();
-  const [storageUsage, setStorageUsage] =
-    React.useState<StorageUsageSummary | null>(null);
-  const [wifiOnly, setWifiOnly] = React.useState<boolean>(() =>
-    getWifiOnlySetting(),
-  );
-  const [dlAllProgress, setDlAllProgress] = React.useState<number | null>(null);
-
-  React.useEffect(() => {
-    const syncStorage = () => {
-      void getStorageUsage().then(setStorageUsage);
-      setWifiOnly(getWifiOnlySetting());
-    };
-    syncStorage();
-    return subscribeDownloadsChanged(syncStorage);
-  }, [subPage]);
 
   if (subPage !== 'menu') {
     const activeItem = SUB_ITEMS.find((i) => i.id === subPage);
@@ -514,104 +488,15 @@ export const MoreView: React.FC<MoreViewProps> = ({
               </div>
             </div>
 
-            {/* Offline & PWA & Smart Audio Storage Manager */}
-            <div className="space-y-3 rounded-3xl border-2 border-[#C9A227] bg-white p-4 dark:bg-[#050505]">
-              <div className="flex items-center justify-between gap-2">
-                <h3 className="text-sm font-bold text-slate-900 dark:text-white">
-                  إدارة التحميلات والمساحة بدون إنترنت
-                </h3>
-                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/20 px-2.5 py-0.5 text-[11px] font-extrabold text-emerald-400">
-                  جاهز ✓
-                </span>
-              </div>
+            {/* App Installation */}
+            <div className="space-y-2.5 rounded-3xl border-2 border-[#C9A227] bg-white p-4 dark:bg-[#050505]">
+              <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                تثبيت التطبيق والعمل بدون إنترنت
+              </h3>
               <p className="text-xs leading-relaxed text-slate-600 dark:text-zinc-300">
-                القرآن 604 صفحة، التفسير الميسر، التعليم والوضوء، الأذكار، المسبحة، القبلة والأذان تعمل تلقائيًا دون إنترنت.
+                يمكنك اختيار الأقسام التي تريد حفظها للعمل أوفلاين من زر «تحميل محتوى التطبيق» في الصفحة الرئيسية.
               </p>
-
-              <div className="flex items-center justify-between rounded-2xl border border-[#C9A227]/40 bg-slate-50 px-3.5 py-2.5 dark:bg-[#0B0B0B]">
-                <span className="flex items-center gap-2 text-xs font-bold text-slate-700 dark:text-zinc-200">
-                  <HardDrive className="h-4 w-4 text-[#C9A227]" />
-                  <span>مساحة التخزين المستخدمة</span>
-                </span>
-                <span className="font-mono-num text-xs font-extrabold text-[#9A7415] dark:text-[#FCE38A]">
-                  {storageUsage
-                    ? `${storageUsage.totalMb} MB (${storageUsage.downloadedCount}/${storageUsage.totalItemsCount})`
-                    : '0 MB'}
-                </span>
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  disabled={!isOnline || dlAllProgress !== null}
-                  onClick={() => {
-                    setDlAllProgress(1);
-                    void downloadSection('all', (p) =>
-                      setDlAllProgress(p.percent),
-                    ).finally(() => setDlAllProgress(null));
-                  }}
-                  className="flex min-h-[44px] items-center justify-center gap-1.5 rounded-2xl bg-[#C9A227] px-3 text-xs font-extrabold text-black active:scale-95 disabled:opacity-50"
-                >
-                  {dlAllProgress !== null ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Download className="h-4 w-4" />
-                  )}
-                  <span>
-                    {dlAllProgress !== null
-                      ? `تحميل الكل ${dlAllProgress}%`
-                      : 'تحميل الكل'}
-                  </span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => void deleteDownload('all')}
-                  className="flex min-h-[44px] items-center justify-center gap-1.5 rounded-2xl border border-rose-500/60 bg-rose-950/20 px-3 text-xs font-extrabold text-rose-400 active:scale-95"
-                >
-                  <Trash2 className="h-4 w-4" />
-                  <span>حذف الكل</span>
-                </button>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => {
-                  const next = !wifiOnly;
-                  setWifiOnlySetting(next);
-                  setWifiOnly(next);
-                }}
-                className="flex min-h-[46px] w-full items-center justify-between rounded-2xl border border-[#C9A227]/45 bg-slate-50 px-3.5 py-2 text-right dark:bg-[#0B0B0B]"
-              >
-                <span className="text-xs font-bold text-slate-800 dark:text-zinc-200">
-                  تحميل تلقائي على واي فاي فقط
-                </span>
-                <span
-                  className={`rounded-full px-2.5 py-0.5 text-[11px] font-extrabold ${
-                    wifiOnly
-                      ? 'bg-emerald-500/20 text-emerald-400'
-                      : 'bg-zinc-700/40 text-zinc-400'
-                  }`}
-                >
-                  {wifiOnly ? 'مفعّل' : 'غير مفعّل'}
-                </span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => onSelectSubPage('downloads')}
-                className="flex min-h-[46px] w-full items-center justify-between rounded-2xl border border-[#C9A227] bg-[#0B0903] px-3.5 py-2 text-xs font-extrabold text-[#FCE38A] active:scale-[0.98]"
-              >
-                <span className="flex items-center gap-2">
-                  <Download className="h-4 w-4 text-[#C9A227]" />
-                  <span>فتح مكتبة التحميلات الصوتية (4 أقسام)</span>
-                </span>
-                <ChevronLeft className="h-4 w-4 text-[#C9A227]" />
-              </button>
-
-              <div className="pt-1">
-                <PWAInstallButton />
-              </div>
+              <PWAInstallButton />
             </div>
 
             {/* Quick Open All Islamic Library Sections */}

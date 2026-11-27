@@ -343,6 +343,6 @@ export interface AppSettings {
   lockScreenKeepAlive?: boolean;
   prayerConfirmReminderEnabled?: boolean;
   salawatReminderEnabled?: boolean;
-  salawatIntervalMinutes?: 10 | 30 | 60;
+  salawatIntervalMinutes?: number;
   preferredSalawatTrack?: string;
 }

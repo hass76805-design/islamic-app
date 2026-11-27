@@ -33,12 +33,17 @@ import {
   EID_TAKBEERAT_VOICES_3,
   FRIDAY_KAHF_VOICES_3,
   getAyahAudioUrl,
-  IQAMAH_VOICES_3,
+  IQAMAH_VOICES_10,
   MUEZZIN_POPUP_VOICES_5,
   POST_ADHAN_DUA,
+  POST_ADHAN_DUA_VOICES_10,
   POST_PRAYER_AZKAR_AUDIO_URLS,
-  PRE_ADHAN_VOICES_3,
+  PRE_ADHAN_VOICES_10,
   resolveAdhanVoiceById,
+  resolveIqamahVoiceById,
+  resolvePostAdhanDuaVoiceById,
+  resolvePreAdhanVoiceById,
+  resolveSalawatTrackById,
   SALAWAT_AUDIO_TRACKS,
   TAWASIH_NAQSHABANDI,
 } from './data/reciters';
@@ -101,7 +106,9 @@ import {
   precomputeMonthlyPrayerCache,
 } from './utils/prayerTimes';
 import {
-  STARTUP_DUA_TEXT,
+  readCachedSheikhAudioObjectUrl,
+  resolveSheikhHumanVoiceUrl,
+  SPLASH_QURAN_LIGHT_DUA_TEXT,
 } from './utils/rafiqiVoice';
 import {processPendingDownloadsIfReady} from './services/downloadManager';
 import {playRamadanCannonSound} from './utils/ramadanCannon';
@@ -238,7 +245,10 @@ const DEFAULT_SETTINGS: AppSettings = {
     isha: 'iqamah-makkah',
   },
   iqamahEnabled: true,
+  iqamahMinutes: 15,
   postAdhanDuaEnabled: true,
+  preferredPostAdhanDua: 'dua-makkah',
+  postAdhanDuaDelaySeconds: 135,
   qiyamEnabled: true,
   preferredPreAdhanSound: 'pre-takbeer',
   preferredTawasih: 'tawasih-naqshabandi-1',
@@ -262,6 +272,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   prayerConfirmReminderEnabled: true,
   salawatReminderEnabled: true,
   salawatIntervalMinutes: 10,
+  preferredSalawatTrack: SALAWAT_AUDIO_TRACKS[0].id,
 };
 
 const NAV_ITEMS: Array<{id: TabId; labelAr: string; icon: typeof Home}> = [
@@ -758,85 +769,23 @@ function AppContent({
     };
   }, [settings.preferredReciter]);
 
-  // Play sweet welcoming opening Dua voice once per launch from local cache/bundle (ZERO external API fetch on boot)
-  const startupDuaTriggeredRef = useRef(false);
-  const startupDuaAudioRef = useRef<HTMLAudioElement | null>(null);
-  const liveAdhanActiveRef = useRef(false);
-  liveAdhanActiveRef.current = Boolean(liveAdhanModal);
-
+  // Silently pre-warm the Splash Quran-Light Dua voice into IndexedDB when online
+  // so every subsequent offline launch plays it directly from IndexedDB.
+  const splashDuaPrewarmRef = useRef(false);
   useEffect(() => {
-    if (startupDuaTriggeredRef.current || typeof window === 'undefined') return;
-    startupDuaTriggeredRef.current = true;
-
-    let cancelled = false;
-    let cleanupGesture: (() => void) | null = null;
-
-    const prepareAndPlayStartupDua = async () => {
-      if (cancelled || liveAdhanActiveRef.current) return;
-
-      let duaSrc: string | null = null;
-      try {
-        const cachedDuaBlob = await readAudioBlobFromIdb(
-          `rafiqi-sheikh-tts-v1:${STARTUP_DUA_TEXT.trim()}`,
-        );
-        if (cachedDuaBlob && cachedDuaBlob.size > 0) {
-          duaSrc = URL.createObjectURL(cachedDuaBlob);
-        }
-      } catch {
-        // fallback directly to bundled local audio
-      }
-
-      if (!duaSrc) {
-        duaSrc = await resolveOfflinePlayableUrl(POST_ADHAN_DUA.audioUrl);
-      }
-      if (!duaSrc || cancelled || liveAdhanActiveRef.current) return;
-
-      if (!startupDuaAudioRef.current) {
-        startupDuaAudioRef.current = new Audio();
-      }
-      const audio = startupDuaAudioRef.current;
-      audio.src = duaSrc;
-      audio.volume = 0.92;
-      audio.preload = 'auto';
-
-      const tryPlayOnce = () => {
-        if (cancelled || liveAdhanActiveRef.current) return;
-        audio.play().catch(() => {
-          // If browser blocked autoplay before user gesture, play immediately on first interaction
-          if (cancelled || cleanupGesture) return;
-          const onFirstInteraction = () => {
-            cleanupGesture = null;
-            if (!cancelled && !liveAdhanActiveRef.current) {
-              audio.play().catch(() => {});
-            }
-          };
-          document.addEventListener('pointerdown', onFirstInteraction, {
-            once: true,
-            passive: true,
-          });
-          document.addEventListener('keydown', onFirstInteraction, {
-            once: true,
-          });
-          cleanupGesture = () => {
-            document.removeEventListener('pointerdown', onFirstInteraction);
-            document.removeEventListener('keydown', onFirstInteraction);
-          };
-        });
-      };
-
-      tryPlayOnce();
-    };
-
+    if (splashDuaPrewarmRef.current || typeof window === 'undefined') return;
+    splashDuaPrewarmRef.current = true;
     const t = window.setTimeout(() => {
-      void prepareAndPlayStartupDua();
-    }, 650);
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(t);
-      cleanupGesture?.();
-      startupDuaAudioRef.current?.pause();
-    };
+      void (async () => {
+        const cached = await readCachedSheikhAudioObjectUrl(
+          SPLASH_QURAN_LIGHT_DUA_TEXT,
+        );
+        if (!cached && navigator.onLine) {
+          void resolveSheikhHumanVoiceUrl(SPLASH_QURAN_LIGHT_DUA_TEXT);
+        }
+      })();
+    }, 3500);
+    return () => window.clearTimeout(t);
   }, []);
 
   // Pre-warm ONLY local bundled core text & local audio (zero external network fetches on startup)
@@ -958,7 +907,6 @@ function AppContent({
   );
 
   const playManagedAudio = useCallback((url: string) => {
-    startupDuaAudioRef.current?.pause();
     if (!adhanAudioRef.current) {
       adhanAudioRef.current = new Audio();
       adhanAudioRef.current.preload = 'auto';
@@ -976,7 +924,6 @@ function AppContent({
   }, []);
 
   const playPostPrayerAzkar = useCallback(() => {
-    startupDuaAudioRef.current?.pause();
     if (!adhanAudioRef.current) {
       adhanAudioRef.current = new Audio();
     }
@@ -1033,14 +980,18 @@ function AppContent({
       const matchedVoice =
         MUEZZIN_POPUP_VOICES_5.find((v) => v.id === voiceIdParam) ||
         ADHAN_VOICES_30.find((v) => v.id === voiceIdParam) ||
-        IQAMAH_VOICES_3.find((v) => v.id === voiceIdParam) ||
+        IQAMAH_VOICES_10.find((v) => v.id === voiceIdParam) ||
+        POST_ADHAN_DUA_VOICES_10.find((v) => v.id === voiceIdParam) ||
+        PRE_ADHAN_VOICES_10.find((v) => v.id === voiceIdParam) ||
         MUEZZIN_POPUP_VOICES_5.find((v) => v.url === playAlertUrl) ||
         ADHAN_VOICES_30.find((v) => v.url === playAlertUrl);
       if (matchedVoice) {
         const isIqamahMode =
           alertTypeParam === 'iqamah' ||
-          IQAMAH_VOICES_3.some((i) => i.id === matchedVoice.id);
-        const isDuaMode = alertTypeParam === 'post-adhan-dua';
+          IQAMAH_VOICES_10.some((i) => i.id === matchedVoice.id);
+        const isDuaMode =
+          alertTypeParam === 'post-adhan-dua' ||
+          POST_ADHAN_DUA_VOICES_10.some((d) => d.id === matchedVoice.id);
         setLiveAdhanModal({
           prayerNameAr: prayerParam || 'الصلاة',
           voice: matchedVoice,
@@ -1130,14 +1081,18 @@ function AppContent({
         const matchedVoice =
           MUEZZIN_POPUP_VOICES_5.find((v) => v.id === data.voiceId) ||
           ADHAN_VOICES_30.find((v) => v.id === data.voiceId) ||
-          IQAMAH_VOICES_3.find((v) => v.id === data.voiceId) ||
+          IQAMAH_VOICES_10.find((v) => v.id === data.voiceId) ||
+          POST_ADHAN_DUA_VOICES_10.find((v) => v.id === data.voiceId) ||
+          PRE_ADHAN_VOICES_10.find((v) => v.id === data.voiceId) ||
           MUEZZIN_POPUP_VOICES_5.find((v) => v.url === data.audioUrl) ||
           ADHAN_VOICES_30.find((v) => v.url === data.audioUrl);
         if (matchedVoice) {
           const isIqamahMode =
             data.alertType === 'iqamah' ||
-            IQAMAH_VOICES_3.some((i) => i.id === matchedVoice.id);
-          const isDuaMode = data.alertType === 'post-adhan-dua';
+            IQAMAH_VOICES_10.some((i) => i.id === matchedVoice.id);
+          const isDuaMode =
+            data.alertType === 'post-adhan-dua' ||
+            POST_ADHAN_DUA_VOICES_10.some((d) => d.id === matchedVoice.id);
           setLiveAdhanModal({
             prayerNameAr: data.prayerName || data.prayerNameAr || 'الصلاة',
             prayerKey: (data.prayerKey || undefined) as
@@ -1224,13 +1179,18 @@ function AppContent({
       return;
     }
 
-    const activePreSound =
-      PRE_ADHAN_VOICES_3.find(
-        (p) => p.id === settings.preferredPreAdhanSound,
-      ) || PRE_ADHAN_VOICES_3[0];
-    const activeIqamahVoice =
-      IQAMAH_VOICES_3.find((iq) => iq.id === settings.preferredIqamah) ||
-      IQAMAH_VOICES_3[0];
+    const activePreSound = resolvePreAdhanVoiceById(
+      settings.preferredPreAdhanSound,
+    );
+    const activeIqamahVoice = resolveIqamahVoiceById(settings.preferredIqamah);
+    const activePostDuaVoice = resolvePostAdhanDuaVoiceById(
+      settings.preferredPostAdhanDua,
+    );
+    const iqamahDelayMin = Math.max(1, settings.iqamahMinutes || 15);
+    const postDuaDelaySec = Math.max(
+      5,
+      settings.postAdhanDuaDelaySeconds ?? 135,
+    );
     const activeTawasihVoice =
       TAWASIH_NAQSHABANDI.find((t) => t.id === settings.preferredTawasih) ||
       TAWASIH_NAQSHABANDI[0];
@@ -1310,13 +1270,17 @@ function AppContent({
           });
         }
 
-        if (isPrayerEnabled && settings.preAdhanMinutes > 0) {
+        if (
+          isPrayerEnabled &&
+          (settings.preAdhanEnabled ?? true) &&
+          settings.preAdhanMinutes > 0
+        ) {
           const preTs = ts - settings.preAdhanMinutes * 60 * 1000;
           if (preTs > nowMs) {
             alerts.push({
               tag: `preadhan-${dayKey}-${item.key}`,
               title: `قربت صلاة ${item.nameAr}`,
-              body: `تنبيه: متبقي ${settings.preAdhanMinutes} دقائق على أذان ${item.nameAr}`,
+              body: `تنبيه: متبقي ${settings.preAdhanMinutes} دقائق على أذان ${item.nameAr} (${activePreSound.muezzinAr})`,
               prayerName: item.nameAr,
               voiceId: activePreSound.id,
               timestamp: preTs,
@@ -1329,16 +1293,16 @@ function AppContent({
         }
 
         if (isPrayerEnabled && (settings.postAdhanDuaEnabled ?? true)) {
-          const duaTs = ts + 135 * 1000;
+          const duaTs = ts + postDuaDelaySec * 1000;
           if (duaTs > nowMs) {
             alerts.push({
               tag: `dua-${dayKey}-${item.key}`,
               title: `دعاء ما بعد أذان ${item.nameAr}`,
-              body: POST_ADHAN_DUA.textAr,
+              body: `${POST_ADHAN_DUA.textAr} (${activePostDuaVoice.muezzinAr})`,
               prayerName: item.nameAr,
-              voiceId: voice.id,
+              voiceId: activePostDuaVoice.id,
               timestamp: duaTs,
-              audioUrl: POST_ADHAN_DUA.audioUrl,
+              audioUrl: activePostDuaVoice.url,
               type: 'post-adhan-dua',
               dateKey: dayKey,
               prayerKey,
@@ -1346,18 +1310,18 @@ function AppContent({
           }
         }
 
-        // Iqamah strictly 15 minutes after Adhan (per-prayer voice support)
+        // Iqamah according to configured iqamahMinutes & chosen 10-Sheikh voice
         if (isPrayerEnabled && (settings.iqamahEnabled ?? true)) {
-          const iqamahTs = ts + 15 * 60 * 1000;
+          const iqamahTs = ts + iqamahDelayMin * 60 * 1000;
           const prayerIqamahId =
             settings.perPrayerIqamah?.[prayerKey] || settings.preferredIqamah;
-          const prayerIqamahVoice =
-            IQAMAH_VOICES_3.find((iq) => iq.id === prayerIqamahId) ||
-            activeIqamahVoice;
+          const prayerIqamahVoice = resolveIqamahVoiceById(
+            prayerIqamahId || activeIqamahVoice.id,
+          );
           if (iqamahTs > nowMs) {
             alerts.push({
               tag: `iqamah-${dayKey}-${item.key}`,
-              title: `إقامة صلاة ${item.nameAr} — بعد 15 دقيقة`,
+              title: `إقامة صلاة ${item.nameAr} — بعد ${iqamahDelayMin} دقيقة`,
               body: `حان وقت إقامة صلاة ${item.nameAr} (${prayerIqamahVoice.nameAr})`,
               prayerName: item.nameAr,
               voiceId: prayerIqamahVoice.id,
@@ -1535,11 +1499,16 @@ function AppContent({
         1,
         Math.ceil((nowMs + 3000 - anchorMs) / intervalMs),
       );
+      const preferredSalawatTrack = resolveSalawatTrackById(
+        settings.preferredSalawatTrack,
+      );
       for (let idx = 0; idx < 48; idx++) {
         const slotIndex = firstFutureSlot + idx;
         const slotTs = anchorMs + slotIndex * intervalMs;
         const track =
-          SALAWAT_AUDIO_TRACKS[slotIndex % SALAWAT_AUDIO_TRACKS.length];
+          idx === 0
+            ? preferredSalawatTrack
+            : SALAWAT_AUDIO_TRACKS[slotIndex % SALAWAT_AUDIO_TRACKS.length];
         alerts.push({
           tag: `salawat-${intervalMin}-${slotIndex}`,
           title: 'صلِّ على النبي ﷺ — تذكير',
@@ -1609,12 +1578,16 @@ function AppContent({
     location.longitude,
     settings.adhanEnabled,
     settings.iqamahEnabled,
+    settings.iqamahMinutes,
     settings.postAdhanDuaEnabled,
+    settings.preferredPostAdhanDua,
+    settings.postAdhanDuaDelaySeconds,
     settings.qiyamEnabled,
     settings.enabledPrayers,
     settings.preferredIqamah,
     settings.perPrayerIqamah,
     settings.preferredPreAdhanSound,
+    settings.preAdhanEnabled,
     settings.preAdhanMinutes,
     settings.preferredAdhan,
     settings.perPrayerAdhan,
@@ -1627,6 +1600,7 @@ function AppContent({
     settings.eidTakbeeratEnabled,
     settings.salawatReminderEnabled,
     settings.salawatIntervalMinutes,
+    settings.preferredSalawatTrack,
     settings.prayerConfirmReminderEnabled,
     prayerLog,
     settings.calculationMethod,
@@ -1670,13 +1644,18 @@ function AppContent({
     const hijri = getHijriParts(now);
     const nowSec = Math.floor(now.getTime() / 1000);
 
-    const activeIqamahVoice =
-      IQAMAH_VOICES_3.find((v) => v.id === settings.preferredIqamah) ||
-      IQAMAH_VOICES_3[0];
-    const activePreAdhanVoice =
-      PRE_ADHAN_VOICES_3.find(
-        (v) => v.id === settings.preferredPreAdhanSound,
-      ) || PRE_ADHAN_VOICES_3[0];
+    const activeIqamahVoice = resolveIqamahVoiceById(settings.preferredIqamah);
+    const activePreAdhanVoice = resolvePreAdhanVoiceById(
+      settings.preferredPreAdhanSound,
+    );
+    const activePostDuaVoice = resolvePostAdhanDuaVoiceById(
+      settings.preferredPostAdhanDua,
+    );
+    const iqamahDelayMin = Math.max(1, settings.iqamahMinutes || 15);
+    const postDuaDelaySec = Math.max(
+      5,
+      settings.postAdhanDuaDelaySeconds ?? 135,
+    );
     const activeTawasihVoice =
       TAWASIH_NAQSHABANDI.find((v) => v.id === settings.preferredTawasih) ||
       TAWASIH_NAQSHABANDI[0];
@@ -1752,24 +1731,20 @@ function AppContent({
       }
 
       if (isPrayerEnabled && (settings.postAdhanDuaEnabled ?? true)) {
-        const duaSec = targetSec + 135;
-        const duaKey = `dua-${todayStr}-${item.key}`;
+        const duaSec = targetSec + postDuaDelaySec;
+        const duaKey = `dua-${todayStr}-${item.key}-${postDuaDelaySec}`;
         if (
           isDueWithinWindow(duaSec, 300) &&
           !triggeredAlertsRef.current.has(duaKey)
         ) {
           markAlertHandled(duaKey);
-          const voiceId =
-            settings.perPrayerAdhan[prayerKey] || settings.preferredAdhan;
-          const voice =
-            ADHAN_VOICES_30.find((a) => a.id === voiceId) || ADHAN_VOICES_30[0];
           showSystemNotification(
             `دعاء ما بعد أذان ${item.nameAr}`,
-            POST_ADHAN_DUA.textAr,
+            `${POST_ADHAN_DUA.textAr} (${activePostDuaVoice.muezzinAr})`,
             duaKey,
           );
           setAdhanBanner({
-            text: `دعاء بعد أذان ${item.nameAr}: اللهم رب هذه الدعوة التامة...`,
+            text: `دعاء بعد أذان ${item.nameAr} (${activePostDuaVoice.muezzinAr})`,
           });
           setLiveAdhanModal((prev) =>
             prev
@@ -1777,17 +1752,17 @@ function AppContent({
               : {
                   prayerNameAr: `صلاة ${item.nameAr}`,
                   prayerKey,
-                  voice,
+                  voice: activePostDuaVoice,
                   mode: 'dua',
                 },
           );
         }
       }
 
-      // Iqamah strictly 15 minutes after Adhan (per-prayer voice support)
+      // Iqamah according to configured iqamahMinutes & chosen Sheikh voice
       if (isPrayerEnabled && (settings.iqamahEnabled ?? true)) {
-        const iqamahSec = targetSec + 15 * 60;
-        const iqamahKey = `iqamah-${todayStr}-${item.key}`;
+        const iqamahSec = targetSec + iqamahDelayMin * 60;
+        const iqamahKey = `iqamah-${todayStr}-${item.key}-${iqamahDelayMin}`;
         if (
           isDueWithinWindow(iqamahSec, 300) &&
           !triggeredAlertsRef.current.has(iqamahKey)
@@ -1795,9 +1770,9 @@ function AppContent({
           markAlertHandled(iqamahKey);
           const prayerIqamahId =
             settings.perPrayerIqamah?.[prayerKey] || settings.preferredIqamah;
-          const prayerIqamahVoice =
-            IQAMAH_VOICES_3.find((v) => v.id === prayerIqamahId) ||
-            activeIqamahVoice;
+          const prayerIqamahVoice = resolveIqamahVoiceById(
+            prayerIqamahId || activeIqamahVoice.id,
+          );
           showSystemNotification(
             `إقامة صلاة ${item.nameAr} — البرنامج الإسلامي الذهبي`,
             `حان وقت إقامة صلاة ${item.nameAr} (${prayerIqamahVoice.nameAr})`,
@@ -1832,7 +1807,11 @@ function AppContent({
         }
       }
 
-      if (isPrayerEnabled && settings.preAdhanMinutes > 0) {
+      if (
+        isPrayerEnabled &&
+        (settings.preAdhanEnabled ?? true) &&
+        settings.preAdhanMinutes > 0
+      ) {
         const preTargetSec = targetSec - settings.preAdhanMinutes * 60;
         const preKey = `pre-${todayStr}-${item.key}-${settings.preAdhanMinutes}`;
         if (
@@ -1841,11 +1820,11 @@ function AppContent({
         ) {
           markAlertHandled(preKey);
           setAdhanBanner({
-            text: `قربت صلاة ${item.nameAr} — متبقي ${settings.preAdhanMinutes} دقائق على الأذان`,
+            text: `قربت صلاة ${item.nameAr} — متبقي ${settings.preAdhanMinutes} دقائق على الأذان (${activePreAdhanVoice.muezzinAr})`,
           });
           showSystemNotification(
             `قربت صلاة ${item.nameAr}`,
-            `تنبيه: متبقي ${settings.preAdhanMinutes} دقائق على أذان ${item.nameAr}`,
+            `تنبيه: متبقي ${settings.preAdhanMinutes} دقائق على أذان ${item.nameAr} (${activePreAdhanVoice.muezzinAr})`,
             preKey,
           );
           playManagedAudio(activePreAdhanVoice.url);
@@ -1976,7 +1955,10 @@ function AppContent({
     location.longitude,
     settings.adhanEnabled,
     settings.iqamahEnabled,
+    settings.iqamahMinutes,
     settings.postAdhanDuaEnabled,
+    settings.preferredPostAdhanDua,
+    settings.postAdhanDuaDelaySeconds,
     settings.qiyamEnabled,
     settings.enabledPrayers,
     settings.calculationMethod,
@@ -1988,6 +1970,7 @@ function AppContent({
     settings.preferredTawasih,
     settings.preferredEidTakbeer,
     settings.preferredFridayKahf,
+    settings.preAdhanEnabled,
     settings.preAdhanMinutes,
     settings.preferredAdhan,
     settings.perPrayerAdhan,
@@ -1998,6 +1981,7 @@ function AppContent({
     settings.fridayKahfReminder,
     settings.salawatReminderEnabled,
     settings.salawatIntervalMinutes,
+    settings.preferredSalawatTrack,
     settings.prayerConfirmReminderEnabled,
     prayerLog,
     playManagedAudio,
@@ -2087,8 +2071,9 @@ function AppContent({
             v.url,
             ...(v.fallbackUrl ? [v.fallbackUrl] : []),
           ]),
-          ...IQAMAH_VOICES_3.map((i) => i.url),
-          ...PRE_ADHAN_VOICES_3.map((p) => p.url),
+          ...IQAMAH_VOICES_10.map((i) => i.url),
+          ...PRE_ADHAN_VOICES_10.map((p) => p.url),
+          ...POST_ADHAN_DUA_VOICES_10.map((d) => d.url),
           POST_ADHAN_DUA.audioUrl,
           ...TAWASIH_NAQSHABANDI.map((t) => t.url),
           ...EID_TAKBEERAT_VOICES_3.map((e) => e.url),
@@ -2472,7 +2457,7 @@ function AppContent({
               />
               <div className="min-w-0">
                 <span className="font-quran block truncate text-[15px] font-bold leading-tight text-[#9A7415] dark:text-[#F3D56B]">
-                  الذهبي الإسلامي
+                  البرنامج الإسلامي الذهبي
                 </span>
                 <span className="block truncate text-[10px] font-semibold text-slate-500 dark:text-zinc-400">
                   {location.city}
@@ -2698,7 +2683,9 @@ function AppContent({
         <main
           id="app-main-scroll"
           ref={mainScrollRef}
-          className="no-scrollbar w-full flex-1 overflow-y-auto overscroll-y-contain px-3 pt-2.5 pb-6"
+          className={`no-scrollbar w-full flex-1 overflow-y-auto overscroll-y-contain ${
+            activeTab === 'quran' ? 'px-1 pt-1 pb-1' : 'px-3 pt-2.5 pb-6'
+          }`}
         >
           {activeTab === 'home' && (
             <HomeView
@@ -2860,6 +2847,17 @@ function AppContent({
             schedule={dailyPrayerData.schedule}
             mode={liveAdhanModal.mode || 'adhan'}
             postAdhanDuaEnabled={settings.postAdhanDuaEnabled ?? true}
+            iqamahVoice={resolveIqamahVoiceById(
+              liveAdhanModal.prayerKey
+                ? settings.perPrayerIqamah?.[liveAdhanModal.prayerKey] ||
+                    settings.preferredIqamah
+                : settings.preferredIqamah,
+            )}
+            iqamahMinutes={settings.iqamahMinutes || 15}
+            postAdhanDuaVoice={resolvePostAdhanDuaVoiceById(
+              settings.preferredPostAdhanDua,
+            )}
+            postAdhanDuaDelaySeconds={settings.postAdhanDuaDelaySeconds ?? 135}
             onConfirmPrayed={
               liveAdhanModal.prayerKey
                 ? () =>
@@ -2931,11 +2929,22 @@ export default function App() {
           ? 'tawasih-naqshabandi-1'
           : rawSettings?.preferredTawasih || DEFAULT_SETTINGS.preferredTawasih,
       postAdhanDuaEnabled: rawSettings?.postAdhanDuaEnabled ?? true,
+      preferredPostAdhanDua:
+        rawSettings?.preferredPostAdhanDua ||
+        DEFAULT_SETTINGS.preferredPostAdhanDua,
+      postAdhanDuaDelaySeconds:
+        rawSettings?.postAdhanDuaDelaySeconds ??
+        DEFAULT_SETTINGS.postAdhanDuaDelaySeconds,
+      iqamahMinutes:
+        rawSettings?.iqamahMinutes ?? DEFAULT_SETTINGS.iqamahMinutes,
       qiyamEnabled: rawSettings?.qiyamEnabled ?? true,
       prayerConfirmReminderEnabled:
         rawSettings?.prayerConfirmReminderEnabled ?? true,
       salawatReminderEnabled: rawSettings?.salawatReminderEnabled ?? true,
       salawatIntervalMinutes: rawSettings?.salawatIntervalMinutes || 10,
+      preferredSalawatTrack:
+        rawSettings?.preferredSalawatTrack ||
+        DEFAULT_SETTINGS.preferredSalawatTrack,
       prayerOffsets: {
         ...DEFAULT_PRAYER_OFFSETS,
         ...(rawSettings?.prayerOffsets || {}),

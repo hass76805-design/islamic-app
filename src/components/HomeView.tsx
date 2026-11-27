@@ -56,7 +56,6 @@ import {
 } from '../utils/prayerTimes';
 import {
   BackgroundOfflineProgress,
-  downloadSingleSectionOffline,
   estimateOfflineSelection,
   getAllOfflineSectionIds,
   getAvailableOfflineSections,
@@ -448,13 +447,6 @@ export const HomeView: React.FC<HomeViewProps> = ({
       onClick: () => onOpenMoreSubPage('calendar'),
     },
     {
-      id: 'downloads',
-      titleAr: 'التحميلات والمكتبة الأوفلاين',
-      descAr: 'تحميل المحاضرات والقرآن الصوتي والأناشيد والخطب في audio-cache-v1',
-      icon: <Download className="h-5 w-5 text-[#C9A227]" />,
-      onClick: () => onOpenMoreSubPage('downloads'),
-    },
-    {
       id: 'tracker',
       titleAr: 'سجل الصلوات',
       descAr: 'متابعة أداء الصلوات الخمس اليومية',
@@ -464,12 +456,6 @@ export const HomeView: React.FC<HomeViewProps> = ({
   ];
 
   const quickChips = [
-    {
-      id: 'downloads',
-      labelAr: 'التحميلات',
-      icon: <Download className="h-4 w-4 text-[#C9A227]" />,
-      onClick: () => onOpenMoreSubPage('downloads'),
-    },
     {
       id: 'rafiqi',
       labelAr: 'رفيقي',
@@ -696,28 +682,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
         </div>
       </section>
 
-      {/* Offline Readiness Status Pill + Offline Downloads Manager */}
-      <div className="grid grid-cols-2 gap-2">
-        <button
-          type="button"
-          onClick={() => onOpenMoreSubPage('downloads')}
-          className="flex min-h-[46px] items-center justify-center gap-2 rounded-2xl border-2 border-emerald-500/70 bg-emerald-950/35 px-3 text-xs font-extrabold text-emerald-300 active:scale-95"
-        >
-          <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" />
-          <span>حالة الأوفلاين: جاهز ✓</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => onOpenMoreSubPage('downloads')}
-          className="flex min-h-[46px] items-center justify-center gap-2 rounded-2xl border-2 border-[#C9A227] bg-[#0B0903] px-3 text-xs font-extrabold text-[#FCE38A] active:scale-95"
-        >
-          <Download className="h-4 w-4 shrink-0 text-[#C9A227]" />
-          <span>المكتبة الأوفلاين</span>
-        </button>
-      </div>
-
-      {/* Primary Offline Content Download CTA Button */}
+      {/* Single Unified Offline Content Download CTA Button */}
       <button
         type="button"
         onClick={() => {
@@ -740,12 +705,12 @@ export const HomeView: React.FC<HomeViewProps> = ({
         <div className="min-w-0 flex-1 space-y-0.5">
           <p className="text-sm font-extrabold leading-snug">
             {offlineDownloadState.status === 'downloading'
-              ? `جاري تحميل المحتوى... ${offlineDownloadState.percent}%`
+              ? `جاري تحميل محتوى التطبيق... ${offlineDownloadState.percent}%`
               : offlineDownloadState.status === 'paused'
                 ? `التحميل متوقف — باقي ${offlineDownloadState.remainingMb} ميجا`
                 : offlineDownloadState.status === 'completed'
-                  ? 'تحميل المحتوى · جاهز بدون نت ✓'
-                  : 'تحميل المحتوى للعمل بدون نت'}
+                  ? 'تحميل محتوى التطبيق · جاهز بدون نت ✓'
+                  : 'تحميل محتوى التطبيق'}
           </p>
           <p
             className={`truncate text-[11px] font-semibold ${
@@ -1140,10 +1105,10 @@ export const HomeView: React.FC<HomeViewProps> = ({
                 <Download className="h-5 w-5 text-[#FCE38A]" />
                 <div>
                   <h3 className="text-base font-extrabold text-[#FCE38A]">
-                    تحميل المحتوى للعمل بدون نت
+                    تحميل محتوى التطبيق
                   </h3>
                   <p className="text-[10px] font-semibold text-[#C9A227]">
-                    جميع أقسام التطبيق ({availableSections.length} قسمًا)
+                    اختر الأقسام التي تريد حفظها للعمل أوفلاين ({availableSections.length} قسمًا)
                   </p>
                 </div>
               </div>
@@ -1231,28 +1196,10 @@ export const HomeView: React.FC<HomeViewProps> = ({
                       </div>
                     </button>
 
-                    <div className="flex shrink-0 flex-col items-end gap-1">
-                      <span className="font-mono-num text-[10px] font-bold text-[#C9A227]">
+                    <div className="flex shrink-0 flex-col items-end">
+                      <span className="font-mono-num text-[11px] font-bold text-[#C9A227]">
                         {opt.estimatedMb} ميجا
                       </span>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setOfflineChecklistOpen(false);
-                          void downloadSingleSectionOffline(
-                            opt.id,
-                            settings.preferredReciter,
-                            alreadyDownloaded,
-                          );
-                        }}
-                        className={`rounded-lg border px-2 py-0.5 text-[10px] font-extrabold active:scale-95 ${
-                          alreadyDownloaded
-                            ? 'border-emerald-400/60 bg-emerald-950/40 text-emerald-200'
-                            : 'border-[#C9A227] bg-[#C9A227] text-black'
-                        }`}
-                      >
-                        {alreadyDownloaded ? 'تحديث' : 'تحميل'}
-                      </button>
                     </div>
                   </div>
                 );

@@ -7,8 +7,33 @@ const inflightTtsRequests = new Map<string, Promise<string | null>>();
 export const STARTUP_DUA_TEXT =
   'بِسْمِ اللَّهِ الرَّحْمَنِ الرَّحِيمِ، اللَّهُمَّ افْتَحْ لَنَا أَبْوَابَ رَحْمَتِكَ، وَبَارِكْ لَنَا فِي يَوْمِنَا هَذَا، وَاجْعَلِ الْقُرْآنَ الْعَظِيمَ رَبِيعَ قُلُوبِنَا وَنُورَ صُدُورِنَا وَجَلَاءَ أَحْزَانِنَا.';
 
+export const SPLASH_QURAN_LIGHT_DUA_TEXT =
+  'اللَّهُمَّ اجْعَلِ الْقُرْآنَ نُورَ صُدُورِنَا، وَرَبِيعَ قُلُوبِنَا، وَجَلَاءَ أَحْزَانِنَا، وَذَهَابَ هُمُومِنَا.';
+
 function getTtsCacheKey(text: string): string {
   return `rafiqi-sheikh-tts-v1:${text.trim()}`;
+}
+
+export async function readCachedSheikhAudioObjectUrl(
+  text: string,
+): Promise<string | null> {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+  const cacheKey = getTtsCacheKey(trimmed);
+  if (ttsObjectUrlCache.has(cacheKey)) {
+    return ttsObjectUrlCache.get(cacheKey)!;
+  }
+  try {
+    const existingBlob = await readAudioBlobFromIdb(cacheKey);
+    if (existingBlob && existingBlob.size > 0) {
+      const objUrl = URL.createObjectURL(existingBlob);
+      ttsObjectUrlCache.set(cacheKey, objUrl);
+      return objUrl;
+    }
+  } catch {
+    // ignore IndexedDB error
+  }
+  return null;
 }
 
 function base64ToWavBlob(base64: string, mimeType = 'audio/wav'): Blob {

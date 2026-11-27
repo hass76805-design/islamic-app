@@ -42,6 +42,7 @@ import {
 } from '../utils/ayahWordMeanings';
 import {useHardwareBack} from '../utils/backNavigation';
 import {
+  cacheAudioUrl,
   isQuranShowingInitialSeedOnly,
   loadOfflineJson,
   resolveOfflinePlayableUrl,
@@ -496,11 +497,16 @@ export const QuranView: React.FC<QuranViewProps> = ({
           );
         };
 
-        audio.play().catch(() => {
-          if (session !== playSessionRef.current) return;
-          audio.playbackRate = 1;
-          setIsPlaying(false);
-        });
+        audio
+          .play()
+          .then(() => {
+            void cacheAudioUrl(rawUrl);
+          })
+          .catch(() => {
+            if (session !== playSessionRef.current) return;
+            audio.playbackRate = 1;
+            setIsPlaying(false);
+          });
       });
     },
     [preferredReciter, pageEntries, isPlaying, playingAyahId, stopAudio],
@@ -721,32 +727,31 @@ export const QuranView: React.FC<QuranViewProps> = ({
   }
 
   return (
-    <div className="space-y-3">
-      {/* SINGLE CLEAN TOP BAR: ONLY ONE "فهرس" BUTTON + PAGE CAPTION */}
-      <div className="flex items-center justify-between gap-2 rounded-2xl border-2 border-[#C9A227] bg-[#070602] px-3 py-2.5 text-white">
+    <div className="space-y-1.5">
+      {/* COMPACT TOP BAR: SINGLE "فهرس" BUTTON + PAGE & SHEIKH */}
+      <div className="flex items-center justify-between gap-2 rounded-2xl border border-[#C9A227]/80 bg-[#070602] px-2.5 py-1.5 text-white">
         <button
           type="button"
           onClick={() => {
             setDrawerTab('surah');
             setIndexOpen(true);
           }}
-          className="inline-flex min-h-[40px] items-center gap-2 rounded-xl bg-[#C9A227] px-4 py-2 text-xs font-extrabold text-black"
+          className="inline-flex min-h-[36px] items-center gap-1.5 rounded-xl bg-[#C9A227] px-3 py-1.5 text-xs font-extrabold text-black"
         >
           <List className="h-4 w-4" />
           <span>فهرس</span>
         </button>
 
         <div className="min-w-0 text-center">
-          <p className="font-quran truncate text-base font-bold text-[#FCE38A]">
+          <p className="font-quran truncate text-base font-bold leading-tight text-[#FCE38A]">
             {currentSurahName}
           </p>
           <p className="font-mono-num text-[10px] font-bold text-[#C9A227]">
-            الجزء {toArabicDigits(currentJuz)} · صفحة{' '}
-            {toArabicDigits(currentPage)} / ٦٠٤
+            الجزء {toArabicDigits(currentJuz)} · ص {toArabicDigits(currentPage)} / ٦٠٤ · {activeSheikh.shortNameAr}
           </p>
         </div>
 
-        <span className="inline-flex items-center gap-1 rounded-xl border border-[#C9A227]/45 bg-[#120E04] px-2.5 py-1.5 text-[10px] font-bold text-[#F3D56B]">
+        <span className="inline-flex items-center gap-1 rounded-xl border border-[#C9A227]/45 bg-[#120E04] px-2 py-1 text-[10px] font-bold text-[#F3D56B]">
           <History className="h-3 w-3 text-[#C9A227]" />
           <span>أوفلاين</span>
         </span>
@@ -841,19 +846,19 @@ export const QuranView: React.FC<QuranViewProps> = ({
             }
           }
         }}
-        className="mushaf-surface relative w-full touch-pan-y rounded-[1.75rem] border-[3px] border-[#C9A227] p-2 shadow-[0_0_32px_rgba(201,162,39,0.16)]"
+        className="mushaf-surface relative min-h-[calc(100dvh-134px)] w-full touch-pan-y rounded-2xl border-2 border-[#C9A227] p-1.5 shadow-[0_0_28px_rgba(201,162,39,0.14)]"
       >
-        {/* Inner Double Gilded Plate Frame */}
-        <div className="relative rounded-[1.35rem] border border-[#C9A227]/75 p-3">
+        {/* Fullscreen Illuminated Plate Frame */}
+        <div className="relative flex min-h-[calc(100dvh-150px)] flex-col justify-between rounded-xl border border-[#C9A227]/65 px-2.5 py-2.5 sm:px-4 sm:py-3">
           {/* Illuminated Top Page Plate Header */}
-          <div className="mb-3 flex items-center justify-between border-b border-[#C9A227]/40 pb-2 text-[11px] font-bold text-[#9A7415] dark:text-[#FCE38A]">
+          <div className="mb-2 flex items-center justify-between border-b border-[#C9A227]/40 pb-1.5 text-[11px] font-bold text-[#9A7415] dark:text-[#FCE38A]">
             <span>{currentSurahName}</span>
             <span>الحزب {toArabicDigits(currentHizb)}</span>
             <span>الجزء {toArabicDigits(currentJuz)}</span>
           </div>
 
           {/* Crisp Calligraphic Mushaf Body */}
-          <div className="space-y-4">
+          <div className="flex-1 space-y-3">
             {groupedPageSections.map(({surah, ayahs}) => {
               const startsHere = ayahs[0]?.n === 1;
               const showBismillah = startsHere && surah.n !== 1 && surah.n !== 9;
@@ -1054,6 +1059,9 @@ export const QuranView: React.FC<QuranViewProps> = ({
               <span className="text-[10px] font-bold leading-tight text-white">
                 تغيير الشيخ
               </span>
+              <span className="max-w-[74px] truncate text-[9px] font-semibold text-[#C9A227]">
+                {activeSheikh.shortNameAr}
+              </span>
             </button>
 
             {/* 2. استماع */}
@@ -1073,6 +1081,9 @@ export const QuranView: React.FC<QuranViewProps> = ({
               </span>
               <span className="text-[10px] font-bold leading-tight text-[#FCE38A]">
                 استماع
+              </span>
+              <span className="max-w-[74px] truncate text-[9px] font-semibold text-zinc-300">
+                {activeSheikh.shortNameAr}
               </span>
             </button>
 
@@ -1702,11 +1713,16 @@ export const QuranView: React.FC<QuranViewProps> = ({
         />
       )}
 
-      {/* 10-Sheikh Ayah Repeater Sheet */}
+      {/* 30-Sheikh Ayah Repeater & Switcher Sheet */}
       {longPressTarget && (
         <AyahReciterSheet
           surah={longPressTarget.surah}
           ayah={longPressTarget.ayah}
+          preferredReciter={preferredReciter}
+          onSelectReciter={(id) => {
+            stopAudio();
+            onChangePreferredReciter(id);
+          }}
           onClose={() => setLongPressTarget(null)}
         />
       )}
