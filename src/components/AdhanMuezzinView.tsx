@@ -92,22 +92,73 @@ interface AdhanMuezzinViewProps {
 type MuezzinPageStep = 'permissions' | 'setup' | 'per_prayer';
 
 const INITIAL_PERM_SNAPSHOT: RealPermissionSnapshot = {
-  location: {status: 'prompt', granted: false, labelAr: 'ممنوع - دوس للسماح'},
   notifications: {
+    key: 'notifications',
     status: 'prompt',
     granted: false,
-    labelAr: 'ممنوع - دوس للسماح',
+    nameAr: 'إذن الإشعارات',
+    descAr: 'إرسال إشعار الأذان',
+    badgeLabelAr: 'غير مفعل',
+  },
+  backgroundAudio: {
+    key: 'backgroundAudio',
+    status: 'prompt',
+    granted: false,
+    nameAr: 'إذن الصوت في الخلفية',
+    descAr: 'استمرار الصوت',
+    badgeLabelAr: 'غير مفعل',
+  },
+  bootStartup: {
+    key: 'bootStartup',
+    status: 'prompt',
+    granted: false,
+    nameAr: 'إذن بدء التشغيل',
+    descAr: 'جدولة مواقيت الصلوات',
+    badgeLabelAr: 'غير مفعل',
+  },
+  doNotDisturb: {
+    key: 'doNotDisturb',
+    status: 'prompt',
+    granted: false,
+    nameAr: 'إذن عدم الإزعاج',
+    descAr: 'تجاوز الوضع الصامت',
+    badgeLabelAr: 'غير مفعل',
+  },
+  battery: {
+    key: 'battery',
+    status: 'prompt',
+    granted: false,
+    nameAr: 'إذن البطارية',
+    descAr: 'تجاهل التوفير',
+    badgeLabelAr: 'غير مفعل',
+  },
+  location: {
+    key: 'location',
+    status: 'prompt',
+    granted: false,
+    nameAr: 'إذن الموقع',
+    descAr: 'تحديد الإحداثيات',
+    badgeLabelAr: 'غير مفعل',
   },
   exactAlarm: {
+    key: 'exactAlarm',
     status: 'prompt',
     granted: false,
-    labelAr: 'ممنوع - دوس للسماح',
+    nameAr: 'إذن التنبيه الدقيق',
+    descAr: 'جدولة دقيقة',
+    badgeLabelAr: 'غير مفعل',
   },
-  battery: {status: 'prompt', granted: false, labelAr: 'ممنوع - دوس للسماح'},
-  overlay: {status: 'prompt', granted: false, labelAr: 'ممنوع - دوس للسماح'},
+  overlay: {
+    key: 'overlay',
+    status: 'prompt',
+    granted: false,
+    nameAr: 'إذن إبقاء الشاشة نشطة',
+    descAr: 'WakeLock',
+    badgeLabelAr: 'غير مفعل',
+  },
 };
 
-const STEP_STORAGE_KEY = 'alzahabi_muezzin_step_v1';
+const STEP_STORAGE_KEY = 'alzahabi_muezzin_step_v2';
 
 const SIX_PRAYERS: Array<{key: PrayerKey; nameAr: string}> = [
   {key: 'fajr', nameAr: 'الفجر'},
@@ -155,12 +206,12 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
   );
   const [showSettingsGuide, setShowSettingsGuide] = useState(false);
   const [step, setStep] = useState<MuezzinPageStep>(() => {
-    if (typeof window === 'undefined') return 'permissions';
+    if (typeof window === 'undefined') return 'per_prayer';
     const saved = window.localStorage.getItem(STEP_STORAGE_KEY);
-    if (saved === 'permissions' || saved === 'setup' || saved === 'per_prayer') {
+    if (saved === 'setup' || saved === 'per_prayer') {
       return saved;
     }
-    return 'permissions';
+    return 'per_prayer';
   });
 
   const [citySearch, setCitySearch] = useState('');

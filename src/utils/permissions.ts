@@ -4,6 +4,7 @@ export type AppPermissionKey =
   | 'notifications'
   | 'backgroundAudio'
   | 'bootStartup'
+  | 'exactAlarm'
   | 'doNotDisturb'
   | 'battery'
   | 'location'
@@ -137,6 +138,7 @@ export async function readRealPermissionsSnapshot(): Promise<RealPermissionSnaps
       notifications: fallback('notifications', 'إذن الإشعارات', 'إشعار الأذان والتنبيهات المسبقة'),
       backgroundAudio: fallback('backgroundAudio', 'إذن الصوت في الخلفية', 'استمرار الصوت عند قفل الهاتف'),
       bootStartup: fallback('bootStartup', 'إذن التشغيل عند بدء التشغيل', 'إعادة جدولة الأذان تلقائيًا'),
+      exactAlarm: fallback('exactAlarm', 'إذن التنبيه الدقيق', 'جدولة الأذان في اللحظة المحددة دون تأخير'),
       doNotDisturb: fallback('doNotDisturb', 'إذن عدم الإزعاج', 'تنبيه الأذان بصوت حتى لو الهاتف صامت'),
       battery: fallback('battery', 'إذن البطارية', 'منع النظام من إيقاف مؤذن الخلفية'),
       location: fallback('location', 'إذن الموقع (GPS)', 'حساب مواقيت الصلاة والقبلة تلقائيًا'),
@@ -311,6 +313,14 @@ export async function readRealPermissionsSnapshot(): Promise<RealPermissionSnaps
       nameAr: 'إذن الموقع الجغرافي (GPS)',
       descAr: 'تحديد إحداثيات مدينتك تلقائيًا لحساب مواقيت الأذان وبوصلة القبلة',
       badgeLabelAr: formatShortPermissionBadgeAr(locStatus),
+    },
+    exactAlarm: {
+      key: 'exactAlarm',
+      status: bootStatus,
+      granted: bootStatus === 'granted',
+      nameAr: 'إذن التنبيه الدقيق (Exact Alarms)',
+      descAr: 'جدولة الأذان وتنبيهات الصلاة في الدقيقة واللحظة المضبوطة بدقة',
+      badgeLabelAr: formatShortPermissionBadgeAr(bootStatus),
     },
     overlay: {
       key: 'overlay',

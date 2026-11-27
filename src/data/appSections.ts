@@ -418,6 +418,16 @@ const APP_SECTIONS_MAP: Record<OfflineSectionId, AppSectionDefinition> = {
     estimatedMb: 45,
     estimatedMinutes: 2,
   },
+  permissions: {
+    id: 'permissions',
+    labelAr: 'أذونات التطبيق الحقيقية (النظام والخلفية)',
+    descAr: 'إدارة أذونات الإشعارات، الصوت بالخلفية، بدء التشغيل، وعدم الإزعاج',
+    moreDescAr: 'إدارة أذونات الإشعارات، الصوت بالخلفية، بدء التشغيل، وعدم الإزعاج',
+    iconKey: 'shield_check' as any,
+    inMoreMenu: true,
+    estimatedMb: 1,
+    estimatedMinutes: 1,
+  },
 };
 
 const APP_SECTION_ORDER: OfflineSectionId[] = [
@@ -443,10 +453,12 @@ const APP_SECTION_ORDER: OfflineSectionId[] = [
   'qibla',
   'calendar',
   'tracker',
+  'permissions',
 ];
 
 const MORE_MENU_ORDER: MoreMenuSectionId[] = [
   'adhan',
+  'permissions',
   'books',
   'rafiqi',
   'salawat',

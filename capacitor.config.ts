@@ -4,7 +4,6 @@ const config: CapacitorConfig = {
   appId: 'com.alzahabi.adhan.app',
   appName: 'تسبيح - البرنامج الإسلامي الذهبي',
   webDir: 'dist',
-  bundledWebRuntime: false,
   plugins: {
     LocalNotifications: {
       smallIcon: 'ic_stat_icon_config_sample',
