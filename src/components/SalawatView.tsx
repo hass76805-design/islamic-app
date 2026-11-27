@@ -26,6 +26,12 @@ import {
   cacheAudioUrl,
   resolveOfflinePlayableUrl,
 } from '../utils/offlineAudioCache';
+import {
+  OPEN_SETTINGS_STEPS_AR,
+  openNativeOrBrowserSettings,
+  requestRealNotificationPermission,
+  subscribePermissionChanges,
+} from '../utils/permissions';
 
 interface SalawatViewProps {
   settings: AppSettings;
@@ -275,6 +281,7 @@ export const SalawatView: React.FC<SalawatViewProps> = ({
   const [notifStatus, setNotifStatus] = useState<string>(() =>
     typeof Notification !== 'undefined' ? Notification.permission : 'unsupported',
   );
+  const [showNotifHelp, setShowNotifHelp] = useState(false);
   const [nextReminderText, setNextReminderText] = useState<string>('');
   const [testAlertNotice, setTestAlertNotice] = useState<string | null>(null);
   const [timePickerOpen, setTimePickerOpen] = useState(false);
@@ -292,8 +299,14 @@ export const SalawatView: React.FC<SalawatViewProps> = ({
     };
     sharedListeners.add(sync);
     sync();
+    const unsubPerms = subscribePermissionChanges(() => {
+      if (typeof Notification !== 'undefined') {
+        setNotifStatus(Notification.permission);
+      }
+    });
     return () => {
       sharedListeners.delete(sync);
+      unsubPerms();
     };
   }, []);
 
@@ -352,21 +365,12 @@ export const SalawatView: React.FC<SalawatViewProps> = ({
   };
 
   const ensureNotificationPermission = async (): Promise<boolean> => {
-    if (typeof Notification === 'undefined') {
-      setNotifStatus('unsupported');
-      return false;
+    const status = await requestRealNotificationPermission();
+    setNotifStatus(status === 'prompt' ? 'default' : status);
+    if (status === 'denied') {
+      setShowNotifHelp(true);
     }
-    if (Notification.permission === 'granted') {
-      setNotifStatus('granted');
-      return true;
-    }
-    try {
-      const result = await Notification.requestPermission();
-      setNotifStatus(result);
-      return result === 'granted';
-    } catch {
-      return false;
-    }
+    return status === 'granted';
   };
 
   const handleMainPlaySalawatButton = async () => {
@@ -585,7 +589,7 @@ export const SalawatView: React.FC<SalawatViewProps> = ({
                 منبّه الصلاة على النبي ﷺ في الخلفية
               </h3>
               <p className="mt-0.5 text-[11px] leading-relaxed text-zinc-300">
-                يستمر الصوت بالخلفية عند التنقل أو قفل الشاشة ويعمل بدون نت تلقائيًا حسب الوقت المحدد
+                يُذكّرك تلقائيًا بصوت عشوائي من القراء الثلاثة (العفاسي · الغامدي · عبد الباسط) ويعمل بالخلفية بدون نت
               </p>
             </div>
           </div>
@@ -628,7 +632,7 @@ export const SalawatView: React.FC<SalawatViewProps> = ({
           <div className="flex items-center justify-between rounded-2xl border border-emerald-500/45 bg-emerald-950/25 px-3 py-2 text-xs">
             <span className="flex items-center gap-1.5 font-bold text-emerald-300">
               <BellRing className="h-4 w-4 shrink-0" />
-              <span>المنبّه نشط كل {intervalMinutes} دقيقة</span>
+              <span>المنبّه نشط كل {intervalMinutes} دقيقة (تبديل عشوائي)</span>
             </span>
             {nextReminderText && (
               <span
@@ -641,7 +645,7 @@ export const SalawatView: React.FC<SalawatViewProps> = ({
           </div>
         )}
 
-        {/* Lock-screen Keep-Alive + Notification Permission + Test */}
+        {/* Lock-screen Keep-Alive + Real Notification Permission + Test */}
         <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[#C9A227]/25 pt-2.5">
           <button
             type="button"
@@ -670,14 +674,41 @@ export const SalawatView: React.FC<SalawatViewProps> = ({
             className="inline-flex min-h-[36px] items-center gap-1.5 rounded-xl border border-[#C9A227] bg-black px-3 text-[11px] font-bold text-[#FCE38A]"
           >
             <Volume2 className="h-3.5 w-3.5" />
-            <span>تجربة الصوت والتنبيه</span>
+            <span>تجربة صوت عشوائي وتنبيه</span>
           </button>
         </div>
 
-        {notifStatus === 'denied' && (
-          <p className="rounded-xl border border-rose-500/40 bg-rose-950/30 p-2 text-[11px] text-rose-300">
-            تم حظر الإشعارات في المتصفح — فعّل الإشعارات من إعدادات الموقع ليصلك التذكير عند إغلاق التطبيق.
-          </p>
+        {notifStatus !== 'granted' && (
+          <div className="space-y-2 rounded-xl border border-rose-500/45 bg-rose-950/30 p-2.5 text-[11px] text-rose-200">
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-bold">
+                {notifStatus === 'denied'
+                  ? 'حالة الإشعارات: ممنوع — تم حظر الإشعارات في المتصفح'
+                  : 'حالة الإشعارات: ممنوع - دوس للسماح لتنبيهات الخلفية'}
+              </span>
+              <button
+                type="button"
+                onClick={async () => {
+                  if (notifStatus === 'denied') {
+                    const opened = await openNativeOrBrowserSettings();
+                    if (!opened) setShowNotifHelp((v) => !v);
+                  } else {
+                    await ensureNotificationPermission();
+                  }
+                }}
+                className="shrink-0 rounded-lg bg-rose-600 px-2.5 py-1 text-[10px] font-extrabold text-white active:scale-95"
+              >
+                {notifStatus === 'denied' ? 'افتح الإعدادات واسمح' : 'تفعيل الآن'}
+              </button>
+            </div>
+            {showNotifHelp && (
+              <div className="space-y-1 border-t border-rose-500/30 pt-2 text-[10px] leading-relaxed text-rose-100">
+                {OPEN_SETTINGS_STEPS_AR.map((line) => (
+                  <p key={line}>{line}</p>
+                ))}
+              </div>
+            )}
+          </div>
         )}
 
         {testAlertNotice && (

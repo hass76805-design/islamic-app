@@ -27,7 +27,8 @@ export type MoreSubPageId =
   | 'calendar'
   | 'tracker'
   | 'downloads'
-  | 'settings';
+  | 'settings'
+  | 'permissions';
 
 export type ReciterId =
   | 'minshawi'

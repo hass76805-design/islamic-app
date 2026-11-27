@@ -36,6 +36,20 @@ import {
   resolvePreAdhanVoiceById,
 } from '../data/reciters';
 import {
+  formatShortPermissionBadgeAr,
+  OPEN_SETTINGS_STEPS_AR,
+  openNativeOrBrowserSettings,
+  readRealPermissionsSnapshot,
+  RealPermissionSnapshot,
+  requestAllRealPermissions,
+  requestRealBatteryPersistencePermission,
+  requestRealExactAlarmPermission,
+  requestRealLocationPermission,
+  requestRealNotificationPermission,
+  requestRealWakeLockPermission,
+  subscribePermissionChanges,
+} from '../utils/permissions';
+import {
   AdhanAlertMode,
   AdhanVoice,
   AppSettings,
@@ -77,15 +91,22 @@ interface AdhanMuezzinViewProps {
 
 type MuezzinPageStep = 'permissions' | 'setup' | 'per_prayer';
 
-interface PermissionStateFlags {
-  location: boolean;
-  notifications: boolean;
-  exactAlarm: boolean;
-  battery: boolean;
-  overlay: boolean;
-}
+const INITIAL_PERM_SNAPSHOT: RealPermissionSnapshot = {
+  location: {status: 'prompt', granted: false, labelAr: 'ممنوع - دوس للسماح'},
+  notifications: {
+    status: 'prompt',
+    granted: false,
+    labelAr: 'ممنوع - دوس للسماح',
+  },
+  exactAlarm: {
+    status: 'prompt',
+    granted: false,
+    labelAr: 'ممنوع - دوس للسماح',
+  },
+  battery: {status: 'prompt', granted: false, labelAr: 'ممنوع - دوس للسماح'},
+  overlay: {status: 'prompt', granted: false, labelAr: 'ممنوع - دوس للسماح'},
+};
 
-const PERM_STORAGE_KEY = 'alzahabi_muezzin_permissions_v1';
 const STEP_STORAGE_KEY = 'alzahabi_muezzin_step_v1';
 
 const SIX_PRAYERS: Array<{key: PrayerKey; nameAr: string}> = [
@@ -119,39 +140,6 @@ const ALERT_MODE_BUTTONS: Array<{
   {mode: 'visual', labelAr: 'مرئي', icon: Eye},
 ];
 
-function readSavedPerms(): PermissionStateFlags {
-  if (typeof window === 'undefined') {
-    return {
-      location: false,
-      notifications: false,
-      exactAlarm: false,
-      battery: false,
-      overlay: false,
-    };
-  }
-  try {
-    const raw = window.localStorage.getItem(PERM_STORAGE_KEY);
-    const parsed = raw ? (JSON.parse(raw) as Partial<PermissionStateFlags>) : {};
-    const notifGranted =
-      'Notification' in window && Notification.permission === 'granted';
-    return {
-      location: Boolean(parsed.location),
-      notifications: notifGranted || Boolean(parsed.notifications),
-      exactAlarm: Boolean(parsed.exactAlarm),
-      battery: Boolean(parsed.battery),
-      overlay: Boolean(parsed.overlay),
-    };
-  } catch {
-    return {
-      location: false,
-      notifications: false,
-      exactAlarm: false,
-      battery: false,
-      overlay: false,
-    };
-  }
-}
-
 export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
   now,
   location,
@@ -162,7 +150,10 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
   onUpdateSettings,
   onActivateAdhanEngine,
 }) => {
-  const [perms, setPerms] = useState<PermissionStateFlags>(() => readSavedPerms());
+  const [permSnapshot, setPermSnapshot] = useState<RealPermissionSnapshot>(
+    INITIAL_PERM_SNAPSHOT,
+  );
+  const [showSettingsGuide, setShowSettingsGuide] = useState(false);
   const [step, setStep] = useState<MuezzinPageStep>(() => {
     if (typeof window === 'undefined') return 'permissions';
     const saved = window.localStorage.getItem(STEP_STORAGE_KEY);
@@ -173,6 +164,7 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
   });
 
   const [citySearch, setCitySearch] = useState('');
+  const [voiceSearch, setVoiceSearch] = useState('');
   const [showMoreVoicesInPopup, setShowMoreVoicesInPopup] = useState(false);
   const [popupPrayer, setPopupPrayer] = useState<PrayerKey | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -187,11 +179,10 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
   const [videoPreview, setVideoPreview] = useState<{
     prayerNameAr: string;
     voice: AdhanVoice;
-    mode?: 'adhan' | 'iqamah' | 'dua' | 'tawasih' | 'eid';
+    mode?: 'adhan' | 'iqamah' | 'dua';
   } | null>(null);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const wakeLockRef = useRef<{release?: () => Promise<void>} | null>(null);
 
   useHardwareBack(popupPrayer !== null, () => setPopupPrayer(null));
   useHardwareBack(activeVoicePickerTab !== null, () =>
@@ -200,6 +191,7 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
   useHardwareBack(settingsOpen && activeVoicePickerTab === null, () =>
     setSettingsOpen(false),
   );
+  useHardwareBack(showSettingsGuide, () => setShowSettingsGuide(false));
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -208,14 +200,22 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
   }, [step]);
 
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      try {
-        window.localStorage.setItem(PERM_STORAGE_KEY, JSON.stringify(perms));
-      } catch {
-        // ignore storage quota errors
+    let active = true;
+    const syncPermissions = async () => {
+      const snap = await readRealPermissionsSnapshot();
+      if (active) {
+        setPermSnapshot(snap);
       }
-    }
-  }, [perms]);
+    };
+    void syncPermissions();
+    const unsubscribe = subscribePermissionChanges(() => {
+      void syncPermissions();
+    });
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -224,14 +224,21 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
   }, []);
 
   const grantedCount = useMemo(
-    () => Object.values(perms).filter(Boolean).length,
-    [perms],
+    () => Object.values(permSnapshot).filter((item) => item.granted).length,
+    [permSnapshot],
+  );
+  const hasDeniedPermission = useMemo(
+    () =>
+      Object.values(permSnapshot).some((item) => item.status === 'denied'),
+    [permSnapshot],
   );
 
   const timeFormat: '12' | '24' = settings.timeFormat || '12';
   const dstEnabled = Boolean(settings.dstEnabled);
   const preAdhanEnabled = settings.preAdhanEnabled ?? settings.preAdhanMinutes > 0;
-  const preAdhanSliderMinutes = settings.preAdhanMinutes === 5 ? 5 : 10;
+  const preAdhanSliderMinutes = [10, 15, 30].includes(settings.preAdhanMinutes)
+    ? settings.preAdhanMinutes
+    : 10;
   const iqamahEnabled = settings.iqamahEnabled ?? true;
   const iqamahMinutes = Math.min(30, Math.max(5, settings.iqamahMinutes || 15));
   const postAdhanDuaEnabled = settings.postAdhanDuaEnabled ?? true;
@@ -466,68 +473,52 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
     });
   };
 
-  // Permission Grants (1..5)
-  const grantLocationPermission = () =>
-    new Promise<void>((resolve) => {
-      if (!('geolocation' in navigator)) {
-        setPerms((p) => ({...p, location: true}));
-        resolve();
-        return;
-      }
-      onRequestGps();
-      navigator.geolocation.getCurrentPosition(
-        () => {
-          setPerms((p) => ({...p, location: true}));
-          resolve();
-        },
-        () => {
-          // Even if blocked/unavailable in browser preview, unlock manual location fallback cleanly
-          setPerms((p) => ({...p, location: true}));
-          resolve();
-        },
-        {enableHighAccuracy: true, timeout: 6000},
+  const refreshRealPerms = async () => {
+    const snap = await readRealPermissionsSnapshot();
+    setPermSnapshot(snap);
+    return snap;
+  };
+
+  const handleOpenSettingsRecovery = async () => {
+    const openedNative = await openNativeOrBrowserSettings();
+    if (!openedNative) {
+      setShowSettingsGuide(true);
+    }
+  };
+
+  // REAL Permission Requests (no fake localStorage grants)
+  const grantLocationPermission = async () => {
+    onRequestGps();
+    const res = await requestRealLocationPermission();
+    await refreshRealPerms();
+    if (res === 'denied') {
+      setStatusNote(
+        'إذن الموقع مرفوض من المتصفح — اضغط «افتح الإعدادات واسمح» لتفعيله',
       );
-    });
+      setShowSettingsGuide(true);
+    } else if (res === 'granted') {
+      setStatusNote('تم السماح بالموقع الجغرافي وتحديد مدينتك ✓');
+    }
+  };
 
   const grantNotificationsPermission = async () => {
-    if (typeof window !== 'undefined' && 'Notification' in window) {
-      try {
-        const perm =
-          Notification.permission === 'granted'
-            ? 'granted'
-            : await Notification.requestPermission();
-        if (perm === 'granted') {
-          setPerms((p) => ({...p, notifications: true}));
-          return;
-        }
-      } catch {
-        // ignore
-      }
+    const res = await requestRealNotificationPermission();
+    await refreshRealPerms();
+    if (res === 'denied') {
+      setStatusNote(
+        'الإشعارات محظورة من المتصفح — اضغط «افتح الإعدادات واسمح» لتفعيلها',
+      );
+      setShowSettingsGuide(true);
+    } else if (res === 'granted') {
+      setStatusNote('تم السماح بالإشعارات الحقيقية ✓');
+    } else {
+      setStatusNote('اختر «سماح / Allow» عند ظهور نافذة المتصفح لتفعيل الإشعارات');
     }
-    setPerms((p) => ({...p, notifications: true}));
   };
 
   const grantExactAlarmPermission = async () => {
+    const res = await requestRealExactAlarmPermission();
     try {
-      if ('serviceWorker' in navigator) {
-        const reg = await navigator.serviceWorker.ready;
-        const regWithSync = reg as ServiceWorkerRegistration & {
-          sync?: {register: (tag: string) => Promise<void>};
-          periodicSync?: {
-            register: (tag: string, opts: {minInterval: number}) => Promise<void>;
-          };
-        };
-        if (regWithSync.sync) {
-          await regWithSync.sync.register('adhan-background-check').catch(() => {});
-        }
-        if (regWithSync.periodicSync) {
-          await regWithSync.periodicSync
-            .register('adhan-background-check', {minInterval: 15 * 60 * 1000})
-            .catch(() => {});
-        }
-        reg.active?.postMessage({type: 'PREWARM_MUEZZIN_SOUNDS'});
-        reg.active?.postMessage({type: 'CHECK_DUE_ADHAN_ALERTS'});
-      }
       precomputeMonthlyPrayerCache(
         location.latitude,
         location.longitude,
@@ -546,14 +537,20 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
       adhanEnabled: true,
       backgroundAlertsEnabled: true,
     }));
-    setPerms((p) => ({...p, exactAlarm: true}));
+    await refreshRealPerms();
+    if (res === 'denied') {
+      setStatusNote(
+        'إذن التنبيه الدقيق يتطلب السماح بالإشعارات — افتح الإعدادات واسمح',
+      );
+      setShowSettingsGuide(true);
+    } else if (res === 'granted') {
+      setStatusNote('تم تفعيل جدولة الأذان الدقيق في الخلفية ✓');
+    }
   };
 
   const grantBatteryPermission = async () => {
+    const res = await requestRealBatteryPersistencePermission();
     try {
-      if (navigator.storage && typeof navigator.storage.persist === 'function') {
-        await navigator.storage.persist().catch(() => false);
-      }
       void cacheBatchUrls(
         [
           ...MUEZZIN_POPUP_VOICES_5.map((v) => v.url),
@@ -570,42 +567,54 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
       // ignore
     }
     onUpdateSettings((s) => ({...s, lockScreenKeepAlive: true}));
-    setPerms((p) => ({...p, battery: true}));
+    await refreshRealPerms();
+    if (res === 'granted') {
+      setStatusNote('تم تفعيل التخزين الدائم وحماية الخلفية ✓');
+    } else {
+      setStatusNote(
+        'ثبّت التطبيق من القائمة (Add to Home screen) واسمح بالبطارية غير المقيدة',
+      );
+    }
   };
 
   const grantOverlayPermission = async () => {
-    try {
-      const navWithLock = navigator as Navigator & {
-        wakeLock?: {request: (type: 'screen') => Promise<{release?: () => Promise<void>}>};
-      };
-      if (navWithLock.wakeLock) {
-        wakeLockRef.current = await navWithLock.wakeLock
-          .request('screen')
-          .catch(() => null);
-      }
-    } catch {
-      // ignore
+    const res = await requestRealWakeLockPermission();
+    await refreshRealPerms();
+    if (res === 'denied') {
+      setShowSettingsGuide(true);
+    } else if (res === 'granted') {
+      setStatusNote('تم تفعيل إبقاء الشاشة نشطة عند الأذان ✓');
     }
-    setPerms((p) => ({...p, overlay: true}));
   };
 
   const grantAllRealBackgroundPermissions = async (advanceStep = false) => {
     setGrantingAll(true);
-    setStatusNote('جاري تفعيل أذونات الموقع والخلفية وتخزين الأصوات أوفلاين...');
+    setStatusNote('جاري طلب الأذونات الحقيقية من النظام...');
     try {
-      await grantLocationPermission();
-      await grantNotificationsPermission();
-      await grantExactAlarmPermission();
-      await grantBatteryPermission();
-      await grantOverlayPermission();
+      const snap = await requestAllRealPermissions();
+      setPermSnapshot(snap);
       if (onActivateAdhanEngine) {
         await onActivateAdhanEngine();
       }
-      if (advanceStep) {
-        setStep('setup');
-        setStatusNote(null);
+      const nextCount = Object.values(snap).filter((v) => v.granted).length;
+      const anyDenied = Object.values(snap).some(
+        (v) => v.status === 'denied',
+      );
+      if (anyDenied) {
+        setStatusNote(
+          `تم السماح بـ ${nextCount}/5 — توجد أذونات محظورة: اضغط «افتح الإعدادات واسمح»`,
+        );
+        setShowSettingsGuide(true);
+      } else if (nextCount === 5) {
+        setStatusNote('جميع الأذونات مسموحة بنجاح ✓');
+        if (advanceStep) {
+          setStep('setup');
+          setStatusNote(null);
+        }
       } else {
-        setStatusNote('تم تفعيل جميع أذونات الخلفية والموقع وتخزين الأصوات أوفلاين ✓');
+        setStatusNote(
+          `الحالة الحالية: ${nextCount}/5 مسموح — اضغط على الأذونات الحمراء لمنح الإذن من المتصفح`,
+        );
       }
     } finally {
       setGrantingAll(false);
@@ -721,7 +730,7 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
     SIX_PRAYERS.find((p) => p.key === popupPrayer)?.nameAr || 'الصلاة';
 
   const permissionCards: Array<{
-    key: keyof PermissionStateFlags;
+    key: keyof RealPermissionSnapshot;
     titleAr: string;
     descAr: string;
     icon: typeof MapPin;
@@ -751,7 +760,7 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
     {
       key: 'battery',
       titleAr: 'تجاهل توفير البطارية',
-      descAr: 'لمنع توقف منبه الأذان أو كتمه عندما يكون الهاتف مقفولاً',
+      descAr: 'لحفظ البيانات دائمًا ومنع توقف منبه الأذان في الخلفية',
       icon: BatteryCharging,
       onGrant: grantBatteryPermission,
     },
@@ -845,20 +854,22 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
         </div>
       </header>
 
-      {/* ==================== PAGE 1: PERMISSIONS (0/5 -> 5/5) ==================== */}
+      {/* ==================== PAGE 1: REAL SYSTEM PERMISSIONS ==================== */}
       {step === 'permissions' && (
         <section className="space-y-3.5">
           <div className="rounded-3xl bg-[#0F2225] p-4 text-white">
-            <h2 className="text-lg font-extrabold text-[#E8DCC8]">المؤذن</h2>
+            <h2 className="text-lg font-extrabold text-[#E8DCC8]">
+              الأذونات الحقيقية للنظام
+            </h2>
             <p className="mt-1 text-xs leading-relaxed text-[#E8DCC8]/85">
-              تحتاج بعض الأذونات لضمان وصول الأذان في وقته دون تأخير
+              تُعرض هنا حالة الأذونات الفعلية في المتصفح والنظام دون أي تزييف — اضغط على أي إذن لفتح نافذة السماح الحقيقية
             </p>
 
-            {/* Counter + Green Progress Bar */}
+            {/* Counter + Real Progress Bar */}
             <div className="mt-3 space-y-1.5">
               <div className="flex items-center justify-between text-xs font-extrabold">
                 <span className="text-[#1FA47A]">
-                  الأذونات المطلوبة {grantedCount}/5
+                  الأذونات المسموحة {grantedCount}/5
                 </span>
                 <span className="font-mono-num text-[#E8DCC8]">
                   {Math.round((grantedCount / 5) * 100)}%
@@ -873,28 +884,41 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
             </div>
           </div>
 
-          {/* 5 Permission Cards: Icon on Left (visually left in RTL row) + Grant Button on Right */}
+          {/* 5 Permission Cards with Live Real Badges */}
           <div className="space-y-2.5">
             {permissionCards.map((item) => {
               const Icon = item.icon;
-              const isGranted = perms[item.key];
+              const entry = permSnapshot[item.key];
+              const isGranted = entry.granted;
+              const badgeText = formatShortPermissionBadgeAr(entry.status);
               return (
                 <div
                   key={item.key}
-                  className="flex items-center justify-between gap-2.5 rounded-2xl bg-[#0F2225] p-3.5 text-white shadow"
+                  className={`flex items-center justify-between gap-2.5 rounded-2xl border p-3.5 text-white shadow ${
+                    isGranted
+                      ? 'border-[#1FA47A]/60 bg-[#0F2225]'
+                      : 'border-rose-500/60 bg-[#1B1012]'
+                  }`}
                 >
-                  {/* Right side: Grant Button + Title/Description */}
                   <div className="flex min-w-0 flex-1 items-center gap-2.5">
                     <button
                       type="button"
-                      onClick={() => void item.onGrant()}
-                      className={`inline-flex min-h-[38px] shrink-0 items-center justify-center rounded-xl px-3.5 text-xs font-extrabold transition active:scale-95 ${
+                      onClick={() => {
+                        if (entry.status === 'denied') {
+                          void handleOpenSettingsRecovery();
+                        } else {
+                          void item.onGrant();
+                        }
+                      }}
+                      className={`inline-flex min-h-[38px] shrink-0 items-center justify-center rounded-xl px-3 text-[11px] font-extrabold transition active:scale-95 ${
                         isGranted
                           ? 'border border-[#1FA47A] bg-[#1FA47A]/20 text-[#34D399]'
-                          : 'bg-gradient-to-l from-[#1FA47A] to-[#14835F] text-white'
+                          : 'border border-rose-400 bg-rose-600 text-white'
                       }`}
                     >
-                      {isGranted ? 'ممنوح ✓' : 'منح'}
+                      {entry.status === 'denied'
+                        ? 'افتح الإعدادات واسمح'
+                        : badgeText}
                     </button>
 
                     <div className="min-w-0">
@@ -907,8 +931,13 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
                     </div>
                   </div>
 
-                  {/* Left side icon */}
-                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/10 text-[#1FA47A]">
+                  <span
+                    className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${
+                      isGranted
+                        ? 'bg-[#1FA47A]/20 text-[#34D399]'
+                        : 'bg-rose-500/20 text-rose-400'
+                    }`}
+                  >
                     <Icon className="h-5 w-5" />
                   </span>
                 </div>
@@ -916,21 +945,46 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
             })}
           </div>
 
+          {hasDeniedPermission && (
+            <button
+              type="button"
+              onClick={() => void handleOpenSettingsRecovery()}
+              className="flex min-h-[46px] w-full items-center justify-center gap-2 rounded-2xl border-2 border-rose-400 bg-rose-950/90 px-4 text-xs font-extrabold text-rose-100 active:scale-[0.98]"
+            >
+              <Settings className="h-4 w-4" />
+              <span>افتح الإعدادات واسمح بالأذونات المحظورة</span>
+            </button>
+          )}
+
           {statusNote && (
-            <p className="rounded-2xl bg-[#0F2225] px-3 py-2 text-center text-xs font-bold text-[#1FA47A]">
+            <p className="rounded-2xl bg-[#0F2225] px-3 py-2 text-center text-xs font-bold text-[#34D399]">
               {statusNote}
             </p>
           )}
 
-          {/* Big Green "متابعة" Button */}
-          <button
-            type="button"
-            disabled={grantingAll}
-            onClick={() => void handleContinueFromPermissions()}
-            className="flex min-h-[52px] w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-l from-[#24B98A] via-[#1FA47A] to-[#137A59] text-base font-extrabold text-white shadow-lg active:scale-[0.99] disabled:opacity-70"
-          >
-            <span>{grantingAll ? 'جاري التفعيل...' : 'متابعة'}</span>
-          </button>
+          {/* Request All Real Permissions Button + Proceed */}
+          <div className="grid grid-cols-1 gap-2">
+            <button
+              type="button"
+              disabled={grantingAll}
+              onClick={() => void handleContinueFromPermissions()}
+              className="flex min-h-[52px] w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-l from-[#24B98A] via-[#1FA47A] to-[#137A59] text-base font-extrabold text-white shadow-lg active:scale-[0.99] disabled:opacity-70"
+            >
+              <span>
+                {grantingAll ? 'جاري طلب الأذونات...' : 'اطلب كل الأذونات وتفعيل'}
+              </span>
+            </button>
+
+            {grantedCount < 5 && (
+              <button
+                type="button"
+                onClick={() => setStep('setup')}
+                className="flex min-h-[42px] w-full items-center justify-center rounded-2xl border border-[#0F2225]/35 bg-[#0F2225]/10 text-xs font-extrabold text-[#0F2225]"
+              >
+                متابعة لإعداد المدينة والمواقيت
+              </button>
+            )}
+          </div>
         </section>
       )}
 
@@ -1193,8 +1247,8 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
               </div>
 
               {preAdhanEnabled && (
-                <div className="grid grid-cols-2 gap-2">
-                  {[5, 10].map((m) => (
+                <div className="grid grid-cols-3 gap-1.5">
+                  {[10, 15, 30].map((m) => (
                     <button
                       key={m}
                       type="button"
@@ -1211,7 +1265,7 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
                           : 'bg-white/10 text-[#E8DCC8]'
                       }`}
                     >
-                      قبل الصلاة بـ {m} دقائق
+                      {m} دقيقة
                     </button>
                   ))}
                 </div>
@@ -1409,7 +1463,7 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
         </section>
       )}
 
-      {/* ==================== VOICE SELECTION POPUP (5 OFFLINE VOICES + AUDIO & VIDEO PREVIEW) ==================== */}
+      {/* ==================== VOICE SELECTION POPUP (30 VERIFIED MUADHINS + SEARCH) ==================== */}
       {popupPrayer && (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/80 p-2 sm:items-center">
           <div className="animate-sheet-up flex max-h-[88dvh] w-full max-w-[390px] flex-col rounded-3xl border-2 border-[#1FA47A] bg-[#0F2225] p-4 text-white shadow-2xl">
@@ -1419,12 +1473,15 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
                   اختر صوت الأذان — {popupPrayerLabel}
                 </h3>
                 <p className="text-[11px] text-[#1FA47A]">
-                  يعمل أوفلاين بالكامل · يحفظ لهذه الصلاة فقط
+                  30 مؤذنًا من أشهر مؤذني العالم الإسلامي · روابط صوتية عالية الجودة
                 </p>
               </div>
               <button
                 type="button"
-                onClick={() => setPopupPrayer(null)}
+                onClick={() => {
+                  setVoiceSearch('');
+                  setPopupPrayer(null);
+                }}
                 aria-label="إغلاق"
                 className="flex h-9 w-9 items-center justify-center rounded-xl border border-[#1FA47A]/50 text-[#E8DCC8]"
               >
@@ -1432,11 +1489,29 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
               </button>
             </div>
 
-            <div className="mt-3 flex-1 space-y-2.5 overflow-y-auto pl-1 touch-pan-y">
-              {(showMoreVoicesInPopup
-                ? [...MUEZZIN_POPUP_VOICES_5, ...ADHAN_VOICES_30]
-                : MUEZZIN_POPUP_VOICES_5
-              ).map((voice) => {
+            <div className="relative mt-2.5">
+              <Search className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#1FA47A]" />
+              <input
+                type="text"
+                value={voiceSearch}
+                onChange={(e) => setVoiceSearch(e.target.value)}
+                placeholder="ابحث عن مؤذن (العفاسي، عبد الباسط، السديس...)"
+                className="min-h-[40px] w-full rounded-xl border border-[#1FA47A]/45 bg-black/35 py-1.5 pr-9 pl-3 text-xs font-bold text-[#E8DCC8] placeholder-[#E8DCC8]/50 outline-none focus:border-[#1FA47A]"
+              />
+            </div>
+
+            <div className="mt-2.5 flex-1 space-y-2.5 overflow-y-auto pl-1 touch-pan-y">
+              {(voiceSearch.trim()
+                ? ADHAN_VOICES_30.filter(
+                    (v) =>
+                      v.nameAr.includes(voiceSearch.trim()) ||
+                      v.muezzinAr.includes(voiceSearch.trim()) ||
+                      v.locationAr.includes(voiceSearch.trim()),
+                  )
+                : showMoreVoicesInPopup
+                  ? ADHAN_VOICES_30
+                  : MUEZZIN_POPUP_VOICES_5
+              ).map((voice, idx) => {
                 const isSelected = perPrayerVoiceMap[popupPrayer] === voice.id;
                 const isPreviewPlaying = playingId === `popup-${voice.id}`;
                 return (
@@ -1451,7 +1526,9 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
                     <div className="flex items-center justify-between gap-2">
                       <div className="min-w-0">
                         <h4 className="truncate text-sm font-extrabold text-[#E8DCC8]">
-                          {voice.nameAr}
+                          {showMoreVoicesInPopup || voiceSearch.trim()
+                            ? `${idx + 1}. ${voice.nameAr}`
+                            : voice.nameAr}
                         </h4>
                         <p className="truncate text-[11px] text-[#E8DCC8]/70">
                           {voice.muezzinAr} · {voice.locationAr}
@@ -1519,15 +1596,17 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
                 );
               })}
 
-              <button
-                type="button"
-                onClick={() => setShowMoreVoicesInPopup((v) => !v)}
-                className="w-full rounded-xl border border-white/15 bg-white/5 py-2 text-xs font-bold text-[#E8DCC8]"
-              >
-                {showMoreVoicesInPopup
-                  ? 'عرض الأصوات الأساسية الخمسة فقط'
-                  : 'عرض المزيد من المؤذنين (30 مؤذن)'}
-              </button>
+              {!voiceSearch.trim() && (
+                <button
+                  type="button"
+                  onClick={() => setShowMoreVoicesInPopup((v) => !v)}
+                  className="w-full rounded-xl border border-[#1FA47A]/40 bg-white/5 py-2.5 text-xs font-extrabold text-[#34D399]"
+                >
+                  {showMoreVoicesInPopup
+                    ? 'عرض الأصوات الأساسية الخمسة فقط'
+                    : `عرض جميع المؤذنين (${ADHAN_VOICES_30.length} مؤذنًا)`}
+                </button>
+              )}
             </div>
 
             {perPrayerVoiceMap[popupPrayer] && (
@@ -1546,7 +1625,7 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
         </div>
       )}
 
-      {/* ==================== ADHAN TOP SETTINGS MODAL (PRE-PRAYER / IQAMAH / POST-ADHAN DUA) ==================== */}
+      {/* ==================== ADHAN TOP SETTINGS MODAL (2 NOTIFICATION TYPES ONLY + IQAMAH + DUA) ==================== */}
       {settingsOpen && (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/85 p-2 sm:items-center">
           <div className="animate-sheet-up flex max-h-[90dvh] w-full max-w-[400px] flex-col rounded-3xl border-2 border-[#1FA47A] bg-[#0F2225] p-4 text-white shadow-2xl">
@@ -1556,7 +1635,7 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
                   إعدادات الأذان والتنبيهات
                 </h3>
                 <p className="text-[11px] text-[#1FA47A]">
-                  أصوات شيوخ حقيقية · يعمل في الخلفية وبدون نت
+                  تنبيه قبل الصلاة + تنبيه وقت الصلاة فقط · إقامة حقيقية · دعاء بعد الأذان
                 </p>
               </div>
               <button
@@ -1573,7 +1652,7 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
             </div>
 
             <div className="mt-3 flex-1 space-y-3 overflow-y-auto pl-1 touch-pan-y">
-              {/* Auto-Location & Real Background Permissions */}
+              {/* Auto-Location & LIVE Real Permissions Status */}
               <div className="space-y-2 rounded-2xl border border-[#1FA47A]/40 bg-black/30 p-3">
                 <div className="flex items-center justify-between gap-2">
                   <div className="min-w-0">
@@ -1584,7 +1663,7 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
                       </span>
                     </p>
                     <p className="text-[10px] text-[#E8DCC8]/70">
-                      تحديث تلقائي للمواقيت والقبلة والأذونات ({grantedCount}/5)
+                      الأذونات الحقيقية المسموحة حاليًا: {grantedCount}/5
                     </p>
                   </div>
                   <button
@@ -1598,19 +1677,66 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
                   </button>
                 </div>
 
-                <button
-                  type="button"
-                  disabled={grantingAll}
-                  onClick={() => void grantAllRealBackgroundPermissions(false)}
-                  className="flex min-h-[40px] w-full items-center justify-center gap-1.5 rounded-xl border border-[#1FA47A] bg-[#1FA47A]/20 px-3 text-xs font-extrabold text-[#34D399] active:scale-[0.98]"
-                >
-                  <ShieldCheck className="h-4 w-4" />
-                  <span>
-                    {grantingAll
-                      ? 'جاري تفعيل الأذونات...'
-                      : 'تفعيل أذونات الخلفية والإشعارات الحقيقية (أوفلاين)'}
-                  </span>
-                </button>
+                {/* Live Mini Status Grid inside Settings */}
+                <div className="space-y-1.5 text-[11px] font-bold">
+                  {(
+                    [
+                      {key: 'notifications' as const, label: 'إذن الإشعارات'},
+                      {key: 'backgroundAudio' as const, label: 'إذن الصوت في الخلفية'},
+                      {key: 'bootStartup' as const, label: 'إذن بدء التشغيل'},
+                      {key: 'doNotDisturb' as const, label: 'إذن عدم الإزعاج'},
+                      {key: 'battery' as const, label: 'إذن البطارية'},
+                      {key: 'location' as const, label: 'إذن الموقع (GPS)'},
+                    ]
+                  ).map((item) => {
+                    const st = permSnapshot[item.key];
+                    const isGranted = st?.granted;
+                    return (
+                      <div
+                        key={item.key}
+                        className="flex items-center justify-between rounded-xl bg-black/40 px-2.5 py-1.5"
+                      >
+                        <span className="text-[#E8DCC8]">{item.label}</span>
+                        <span
+                          className={`rounded-lg px-2 py-0.5 text-[10px] font-extrabold ${
+                            isGranted
+                              ? 'bg-emerald-600 text-white'
+                              : 'bg-red-600 text-white animate-pulse'
+                          }`}
+                        >
+                          {isGranted ? 'مفعل ✓' : 'غير مفعل'}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="grid grid-cols-1 gap-1.5">
+                  <button
+                    type="button"
+                    disabled={grantingAll}
+                    onClick={() => void grantAllRealBackgroundPermissions(false)}
+                    className="flex min-h-[40px] w-full items-center justify-center gap-1.5 rounded-xl border border-[#1FA47A] bg-[#1FA47A]/20 px-3 text-xs font-extrabold text-[#34D399] active:scale-[0.98]"
+                  >
+                    <ShieldCheck className="h-4 w-4" />
+                    <span>
+                      {grantingAll
+                        ? 'جاري طلب الأذونات...'
+                        : 'اطلب كل الأذونات الحقيقية الآن'}
+                    </span>
+                  </button>
+
+                  {hasDeniedPermission && (
+                    <button
+                      type="button"
+                      onClick={() => void handleOpenSettingsRecovery()}
+                      className="flex min-h-[38px] w-full items-center justify-center gap-1.5 rounded-xl border border-rose-400 bg-rose-950/70 px-3 text-xs font-extrabold text-rose-200 active:scale-[0.98]"
+                    >
+                      <Settings className="h-3.5 w-3.5" />
+                      <span>افتح الإعدادات واسمح بالأذونات المحظورة</span>
+                    </button>
+                  )}
+                </div>
 
                 {statusNote && (
                   <p className="text-center text-[11px] font-bold text-[#34D399]">
@@ -1619,7 +1745,20 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
                 )}
               </div>
 
-              {/* BUTTON 1: تنبيه قبل الصلاة — 5 أو 10 دقائق فقط بنغمة تنبيه قصيرة */}
+              {/* NOTIFICATION TYPES SUMMARY: ONLY 2 TYPES */}
+              <div className="space-y-1.5 rounded-2xl border border-[#1FA47A]/35 bg-black/30 p-3 text-[11px]">
+                <p className="font-extrabold text-[#E8DCC8]">
+                  نوعا الإشعارات المعتمدان فقط (بدون تواشيح أو تكبيرات):
+                </p>
+                <p className="text-[#34D399]">
+                  ١) قبل الصلاة بـ {preAdhanSliderMinutes} دقيقة: «اقتربت صلاة ...» بصوت شيخ حقيقي عالي وواضح (العفاسي، الغامدي، عبد الباسط، وإلا صلاتي)
+                </p>
+                <p className="text-[#34D399]">
+                  ٢) عند دخول الوقت: «حان الآن وقت صلاة الفجر / الظهر / العصر / المغرب / العشاء»
+                </p>
+              </div>
+
+              {/* BUTTON 1: تنبيه قبل الصلاة — 10، 15، 30 دقيقة بصوت شيخ حقيقي */}
               <div className="space-y-2.5 rounded-2xl border border-[#1FA47A]/45 bg-black/25 p-3">
                 <div className="flex items-center justify-between gap-2">
                   <div className="min-w-0">
@@ -1629,7 +1768,7 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
                     </h4>
                     <p className="text-[11px] text-[#1FA47A]">
                       {preAdhanEnabled
-                        ? `قبل الأذان بـ ${preAdhanSliderMinutes} دقائق · ${selectedPreVoice.nameAr}`
+                        ? `قبل الأذان بـ ${preAdhanSliderMinutes} دقيقة · ${selectedPreVoice.nameAr}`
                         : 'متوقف حاليًا'}
                     </p>
                   </div>
@@ -1659,8 +1798,8 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
                 </div>
 
                 {preAdhanEnabled && (
-                  <div className="grid grid-cols-2 gap-2">
-                    {[5, 10].map((m) => (
+                  <div className="grid grid-cols-3 gap-1.5">
+                    {[10, 15, 30].map((m) => (
                       <button
                         key={m}
                         type="button"
@@ -1677,7 +1816,7 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
                             : 'bg-white/10 text-[#E8DCC8]'
                         }`}
                       >
-                        قبل الصلاة بـ {m} دقائق
+                        {m} دقيقة
                       </button>
                     ))}
                   </div>
@@ -1690,10 +1829,10 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
                 >
                   <span className="flex items-center gap-1.5">
                     <Volume2 className="h-4 w-4" />
-                    <span>تنبيه قبل الصلاة — نغمة تنبيه قصيرة</span>
+                    <span>صوت التنبيه قبل الصلاة — بصوت شيخ حقيقي</span>
                   </span>
                   <span className="rounded-lg bg-black/25 px-2 py-0.5 text-[10px]">
-                    {PRE_ADHAN_VOICES_10.length} نغمات
+                    {PRE_ADHAN_VOICES_10.length} شيوخ
                   </span>
                 </button>
               </div>
@@ -2071,6 +2210,65 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
           postAdhanDuaDelaySeconds={postAdhanDuaDelaySeconds}
           onClose={() => setVideoPreview(null)}
         />
+      )}
+      {/* ==================== OPEN SETTINGS GUIDE MODAL WHEN DENIED ==================== */}
+      {showSettingsGuide && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="افتح الإعدادات واسمح"
+          className="fixed inset-0 z-[70] flex items-end justify-center bg-black/85 p-3 sm:items-center"
+        >
+          <div className="w-full max-w-sm space-y-3 rounded-3xl border-2 border-rose-400 bg-[#0F2225] p-4 text-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-white/15 pb-2.5">
+              <div className="flex items-center gap-2">
+                <Settings className="h-5 w-5 text-rose-400" />
+                <h3 className="text-sm font-extrabold text-[#E8DCC8]">
+                  افتح الإعدادات واسمح بالأذونات
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowSettingsGuide(false)}
+                aria-label="إغلاق"
+                className="flex h-8 w-8 items-center justify-center rounded-xl border border-white/20 text-[#E8DCC8]"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="space-y-2 text-xs leading-relaxed text-[#E8DCC8]/90">
+              {OPEN_SETTINGS_STEPS_AR.map((stepLine) => (
+                <p
+                  key={stepLine}
+                  className="rounded-xl border border-white/10 bg-black/30 p-2.5"
+                >
+                  {stepLine}
+                </p>
+              ))}
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => {
+                  void refreshRealPerms();
+                  setShowSettingsGuide(false);
+                }}
+                className="min-h-[42px] rounded-xl bg-[#1FA47A] px-3 text-xs font-extrabold text-white active:scale-95"
+              >
+                تحقق من الحالة الآن
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowSettingsGuide(false)}
+                className="min-h-[42px] rounded-xl border border-white/20 bg-black/30 px-3 text-xs font-bold text-[#E8DCC8] active:scale-95"
+              >
+                إغلاق
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

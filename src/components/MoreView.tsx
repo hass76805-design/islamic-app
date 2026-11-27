@@ -1,4 +1,4 @@
-import React from 'react';
+import React, {useEffect, useState} from 'react';
 import {
   ArrowRight,
   AudioLines,
@@ -24,6 +24,7 @@ import {
   Radio,
   ScrollText,
   Settings,
+  ShieldCheck,
   Sparkles,
   Sun,
 } from 'lucide-react';
@@ -44,6 +45,22 @@ import {
   TrackablePrayer,
   UserLocation,
 } from '../types';
+import {
+  formatShortPermissionBadgeAr,
+  OPEN_SETTINGS_STEPS_AR,
+  openNativeOrBrowserSettings,
+  readRealPermissionsSnapshot,
+  RealPermissionSnapshot,
+  requestAllRealPermissions,
+  requestRealBatteryPersistencePermission,
+  requestRealBackgroundAudioPermission,
+  requestRealBootStartupPermission,
+  requestRealDoNotDisturbPermission,
+  requestRealLocationPermission,
+  requestRealNotificationPermission,
+  requestRealWakeLockPermission,
+  subscribePermissionChanges,
+} from '../utils/permissions';
 import {CALCULATION_METHODS} from '../utils/prayerTimes';
 import {AdhanMuezzinView} from './AdhanMuezzinView';
 import {AudioLibraryView} from './AudioLibraryView';
@@ -64,6 +81,7 @@ import {StoriesView} from './StoriesView';
 import {TasbihView} from './TasbihView';
 import {VoiceTestView} from './VoiceTestView';
 import {WhoIsAllahView} from './WhoIsAllahView';
+import {PermissionsView} from './PermissionsView';
 
 interface MoreViewProps {
   subPage: MoreSubPageId;
@@ -138,6 +156,12 @@ const SUB_ITEMS: Array<{
     icon: renderSectionIcon(sec.iconKey),
   })),
   {
+    id: 'permissions',
+    titleAr: 'أذونات التطبيق (النظام والخلفية)',
+    descAr: 'الإشعارات، الصوت بالخلفية، بدء التشغيل، عدم الإزعاج، والبطارية',
+    icon: <ShieldCheck className="h-5 w-5" />,
+  },
+  {
     id: 'settings',
     titleAr: 'الحساب السحابي والإعدادات',
     descAr: 'المزامنة السحابية، القراء الثلاثون، العمل بدون نت، وطريقة الحساب',
@@ -164,6 +188,25 @@ export const MoreView: React.FC<MoreViewProps> = ({
   const {user, signingIn, authError, signInWithGoogle, signOutUser} =
     useFirebase();
   const isOnline = useOnlineStatus();
+  const [permSnap, setPermSnap] = useState<RealPermissionSnapshot | null>(null);
+  const [requestingPerms, setRequestingPerms] = useState(false);
+  const [showPermSteps, setShowPermSteps] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    const loadSnap = async () => {
+      const next = await readRealPermissionsSnapshot();
+      if (active) setPermSnap(next);
+    };
+    void loadSnap();
+    const unsub = subscribePermissionChanges(() => {
+      void loadSnap();
+    });
+    return () => {
+      active = false;
+      unsub();
+    };
+  }, []);
 
   if (subPage !== 'menu') {
     const activeItem = SUB_ITEMS.find((i) => i.id === subPage);
@@ -174,7 +217,8 @@ export const MoreView: React.FC<MoreViewProps> = ({
       subPage === 'rafiqi' ||
       subPage === 'salawat' ||
       subPage === 'seerah' ||
-      subPage === 'voice_test';
+      subPage === 'voice_test' ||
+      subPage === 'permissions';
     return (
       <div className="space-y-3">
         <div
@@ -269,8 +313,193 @@ export const MoreView: React.FC<MoreViewProps> = ({
           <PrayerTrackerView log={prayerLog} onSetStatus={onSetPrayerStatus} />
         )}
         {subPage === 'downloads' && <OfflineDownloadsView />}
+        {subPage === 'permissions' && (
+          <PermissionsView
+            onBack={() => onSelectSubPage('settings')}
+            onRequestGps={onRequestGps}
+            onActivateAdhanEngine={onActivateAdhanEngine}
+          />
+        )}
         {subPage === 'settings' && (
           <div className="space-y-3">
+            {/* Quick Navigate to Dedicated Permissions Page */}
+            <button
+              type="button"
+              onClick={() => onSelectSubPage('permissions')}
+              className="flex min-h-[56px] w-full items-center justify-between gap-3 rounded-3xl border-2 border-[#C9A227] bg-[#0A0802] p-4 text-right text-white shadow-xl active:scale-[0.98]"
+            >
+              <div className="flex items-center gap-3 min-w-0">
+                <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-[#C9A227] bg-[#C9A227]/20 text-[#FCE38A]">
+                  <ShieldCheck className="h-6 w-6" />
+                </span>
+                <div className="min-w-0">
+                  <h3 className="text-sm font-extrabold text-[#FCE38A]">
+                    صفحة «أذونات التطبيق» الكاملة
+                  </h3>
+                  <p className="truncate text-xs text-zinc-300">
+                    أذونات الإشعارات، الصوت بالخلفية، بدء التشغيل، عدم الإزعاج، والبطارية
+                  </p>
+                </div>
+              </div>
+              <ChevronLeft className="h-5 w-5 shrink-0 text-[#C9A227]" />
+            </button>
+
+            {/* Real System & Background Permissions Card */}
+            <div className="space-y-2.5 rounded-3xl border-2 border-[#C9A227] bg-white p-4 dark:bg-[#050505]">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2.5">
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-[#C9A227] bg-[#C9A227]/15 text-[#C9A227]">
+                    <ShieldCheck className="h-5 w-5" />
+                  </span>
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                      الأذونات الحقيقية للنظام والتشغيل بالخلفية
+                    </h3>
+                    <p className="text-[11px] text-slate-500 dark:text-zinc-400">
+                      حالة أذونات الهاتف الرسمية (مفعل بالأخضر / غير مفعل بالأحمر مع طلب الإذن)
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {permSnap && (
+                <div className="space-y-2 text-xs font-bold">
+                  {(
+                    [
+                      {
+                        key: 'notifications' as const,
+                        label: 'إذن الإشعارات',
+                        onReq: requestRealNotificationPermission,
+                      },
+                      {
+                        key: 'backgroundAudio' as const,
+                        label: 'إذن الصوت في الخلفية',
+                        onReq: async () => {
+                          await requestRealBackgroundAudioPermission();
+                          if (onActivateAdhanEngine) {
+                            await onActivateAdhanEngine();
+                          }
+                        },
+                      },
+                      {
+                        key: 'bootStartup' as const,
+                        label: 'إذن التشغيل عند بدء التشغيل',
+                        onReq: requestRealBootStartupPermission,
+                      },
+                      {
+                        key: 'doNotDisturb' as const,
+                        label: 'إذن عدم الإزعاج وتجاوز الصامت',
+                        onReq: requestRealDoNotDisturbPermission,
+                      },
+                      {
+                        key: 'battery' as const,
+                        label: 'إذن البطارية وتجاهل التوفير',
+                        onReq: requestRealBatteryPersistencePermission,
+                      },
+                      {
+                        key: 'location' as const,
+                        label: 'إذن الموقع الجغرافي (GPS)',
+                        onReq: async () => {
+                          onRequestGps();
+                          return requestRealLocationPermission();
+                        },
+                      },
+                      {
+                        key: 'overlay' as const,
+                        label: 'إذن إبقاء الشاشة نشطة',
+                        onReq: requestRealWakeLockPermission,
+                      },
+                    ]
+                  ).map((item) => {
+                    const st = permSnap[item.key];
+                    const isGranted = st?.granted;
+                    return (
+                      <div
+                        key={item.key}
+                        className="flex items-center justify-between gap-2 rounded-2xl border border-[#C9A227]/30 bg-black/40 p-2.5 text-right"
+                      >
+                        <span className="text-xs font-extrabold text-white">
+                          {item.label}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            if (st?.status === 'denied') {
+                              const opened = await openNativeOrBrowserSettings();
+                              if (!opened) setShowPermSteps(true);
+                            } else {
+                              await item.onReq();
+                              setPermSnap(await readRealPermissionsSnapshot());
+                            }
+                          }}
+                          className={`min-h-[38px] rounded-xl px-3 text-xs font-extrabold transition active:scale-95 ${
+                            isGranted
+                              ? 'bg-emerald-600 text-white shadow-[0_0_12px_rgba(16,185,129,0.3)]'
+                              : 'bg-red-600 text-white animate-pulse shadow-[0_0_12px_rgba(239,68,68,0.4)]'
+                          }`}
+                        >
+                          {isGranted ? 'مفعل ✓' : 'غير مفعل - اضغط للتفعيل'}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              <button
+                type="button"
+                disabled={requestingPerms}
+                onClick={async () => {
+                  setRequestingPerms(true);
+                  try {
+                    const next = await requestAllRealPermissions();
+                    setPermSnap(next);
+                    if (onActivateAdhanEngine) {
+                      await onActivateAdhanEngine();
+                    }
+                    if (
+                      Object.values(next).some((v) => v.status === 'denied')
+                    ) {
+                      setShowPermSteps(true);
+                    }
+                  } finally {
+                    setRequestingPerms(false);
+                  }
+                }}
+                className="flex min-h-[46px] w-full items-center justify-center gap-2 rounded-2xl bg-[#C9A227] px-4 text-xs font-extrabold text-black active:scale-[0.98] disabled:opacity-60"
+              >
+                <ShieldCheck className="h-4 w-4" />
+                <span>
+                  {requestingPerms
+                    ? 'جاري طلب الأذونات...'
+                    : 'اطلب كل الأذونات الآن'}
+                </span>
+              </button>
+
+              {permSnap &&
+                Object.values(permSnap).some((v) => v.status === 'denied') && (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const opened = await openNativeOrBrowserSettings();
+                      if (!opened) setShowPermSteps((v) => !v);
+                    }}
+                    className="flex min-h-[42px] w-full items-center justify-center gap-1.5 rounded-2xl border border-rose-500/70 bg-rose-950/30 px-3 text-xs font-extrabold text-rose-500 dark:text-rose-300"
+                  >
+                    <Settings className="h-4 w-4" />
+                    <span>افتح الإعدادات واسمح بالأذونات المحظورة</span>
+                  </button>
+                )}
+
+              {showPermSteps && (
+                <div className="space-y-1.5 rounded-2xl border border-rose-500/40 bg-rose-950/20 p-3 text-[11px] leading-relaxed text-slate-700 dark:text-zinc-200">
+                  {OPEN_SETTINGS_STEPS_AR.map((line) => (
+                    <p key={line}>{line}</p>
+                  ))}
+                </div>
+              )}
+            </div>
+
             {/* Google Sign-In & Firebase Cloud Sync Card */}
             <div className="rounded-3xl border-2 border-[#C9A227] bg-white p-4 dark:bg-[#050505]">
               <div className="flex items-center gap-2.5">

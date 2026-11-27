@@ -1233,22 +1233,20 @@ function buildNotificationOptions(item) {
   const alertType = item.type || 'adhan';
   const actionTitle =
     alertType === 'pre-adhan'
-      ? 'قربت الصلاة — فتح المؤذن'
-      : alertType === 'tawasih'
-        ? 'تشغيل ابتهال النقشبندي'
-        : alertType === 'qiyam'
-          ? 'تنبيه قيام الليل'
-          : alertType === 'post-adhan-dua'
-            ? 'سماع دعاء ما بعد الأذان'
-            : alertType === 'salawat'
-              ? 'استمع: صلِّ على النبي ﷺ'
-              : alertType === 'prayconfirm'
-                ? 'فتح الأذكار والصلاة'
-                : alertType === 'post-prayer-azkar' ||
-                    alertType === 'morning-azkar' ||
-                    alertType === 'evening-azkar'
-                  ? 'تشغيل الأذكار'
-                  : 'تشغيل الصوت الآن';
+      ? 'اقتربت الصلاة — فتح المؤذن'
+      : alertType === 'qiyam'
+        ? 'تنبيه قيام الليل'
+        : alertType === 'post-adhan-dua'
+          ? 'سماع دعاء ما بعد الأذان'
+          : alertType === 'salawat'
+            ? 'استمع: صلِّ على النبي ﷺ'
+            : alertType === 'prayconfirm'
+              ? 'فتح الأذكار والصلاة'
+              : alertType === 'post-prayer-azkar' ||
+                  alertType === 'morning-azkar' ||
+                  alertType === 'evening-azkar'
+                ? 'تشغيل الأذكار'
+                : 'تشغيل الصوت الآن';
 
   const actions = [
     {
@@ -1375,10 +1373,8 @@ async function syncNativeTimestampTriggers(alerts) {
           n.tag.startsWith('dua-') ||
           n.tag.startsWith('prayconfirm-') ||
           n.tag.startsWith('qiyam-') ||
-          n.tag.startsWith('tawasih-') ||
           n.tag.startsWith('azkar-') ||
           n.tag.startsWith('kahf-') ||
-          n.tag.startsWith('eid-') ||
           n.tag.startsWith('salawat-'))
       ) {
         n.close();

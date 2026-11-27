@@ -38,11 +38,11 @@ import {
   POST_ADHAN_DUA_VOICES_10,
   POST_PRAYER_AZKAR_AUDIO_URLS,
   PRE_ADHAN_VOICES_10,
+  getPreAdhanAudioUrl,
   resolveAdhanVoiceById,
   resolveIqamahVoiceById,
   resolvePostAdhanDuaVoiceById,
   resolvePreAdhanVoiceById,
-  resolveSalawatTrackById,
   SALAWAT_AUDIO_TRACKS,
 } from './data/reciters';
 import {useLocalStorage} from './hooks/useLocalStorage';
@@ -105,6 +105,14 @@ import {
 } from './utils/prayerTimes';
 import {processPendingDownloadsIfReady} from './services/downloadManager';
 import {playRamadanCannonSound} from './utils/ramadanCannon';
+import {
+  OPEN_SETTINGS_STEPS_AR,
+  getOrCreateGlobalAudioContext,
+  openNativeOrBrowserSettings,
+  requestAllRealPermissions,
+  setSessionAudioUnlocked,
+  subscribePermissionChanges,
+} from './utils/permissions';
 
 let splashPlayedThisLaunch = false;
 const FIRED_ALERTS_STORAGE_KEY = 'alzahabi_fired_alerts_v1';
@@ -243,7 +251,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   preferredPostAdhanDua: 'dua-makkah',
   postAdhanDuaDelaySeconds: 135,
   qiyamEnabled: true,
-  preferredPreAdhanSound: 'pre-chime',
+  preferredPreAdhanSound: 'pre-sheikh-alafasy',
   preferredTawasih: 'tawasih-naqshabandi-1',
   preferredEidTakbeer: 'eid-makkah-1',
   preferredFridayKahf: 'kahf-alafasy',
@@ -345,6 +353,8 @@ function AppContent({
   );
   const [audioUnlocked, setAudioUnlocked] = useState(false);
   const [permBannerDismissed, setPermBannerDismissed] = useState(false);
+  const [showDeniedRecoveryDialog, setShowDeniedRecoveryDialog] =
+    useState(false);
   const [bgPromptDismissed, setBgPromptDismissed] = useState<boolean>(() => {
     if (typeof window === 'undefined') return true;
     try {
@@ -355,6 +365,16 @@ function AppContent({
       return false;
     }
   });
+
+  useEffect(() => {
+    const syncNotif = () => {
+      if (typeof window !== 'undefined' && 'Notification' in window) {
+        setNotifPermState(Notification.permission);
+      }
+    };
+    syncNotif();
+    return subscribePermissionChanges(syncNotif);
+  }, []);
 
   const [bookmarks, setBookmarks] = useLocalStorage<QuranBookmark[]>(
     'ana_muslim_bookmarks',
@@ -693,8 +713,11 @@ function AppContent({
       if (keepAliveAudioRef.current && keepAliveAudioRef.current.paused) {
         keepAliveAudioRef.current.play().catch(() => {});
       }
+      getOrCreateGlobalAudioContext();
+      setSessionAudioUnlocked(true);
       setAudioUnlocked(true);
     } catch {
+      setSessionAudioUnlocked(true);
       setAudioUnlocked(true);
     }
   }, []);
@@ -1225,10 +1248,10 @@ function AppContent({
         if (isPrayerEnabled && ts > nowMs) {
           alerts.push({
             tag: `adhan-${dayKey}-${item.key}`,
-            title: `حان الآن أذان ${item.nameAr}`,
+            title: `حان الآن وقت صلاة ${item.nameAr}`,
             body:
               alertMode === 'silent'
-                ? `موعد أذان ${item.nameAr} (تنبيه صامت)`
+                ? `حان الآن وقت صلاة ${item.nameAr} (تنبيه صامت)`
                 : `البرنامج الإسلامي الذهبي — ${voice.nameAr}`,
             prayerName: item.nameAr,
             voiceId: voice.id,
@@ -1247,14 +1270,18 @@ function AppContent({
         ) {
           const preTs = ts - settings.preAdhanMinutes * 60 * 1000;
           if (preTs > nowMs) {
+            const preAudioUrl = getPreAdhanAudioUrl(
+              settings.preferredPreAdhanSound,
+              prayerKey,
+            );
             alerts.push({
               tag: `preadhan-${dayKey}-${item.key}`,
-              title: `قربت صلاة ${item.nameAr}`,
-              body: `تنبيه: متبقي ${settings.preAdhanMinutes} دقائق على أذان ${item.nameAr} (${activePreSound.muezzinAr})`,
+              title: `اقتربت صلاة ${item.nameAr}`,
+              body: `اقتربت صلاة ${item.nameAr} — متبقي ${settings.preAdhanMinutes} دقيقة (${activePreSound.nameAr})`,
               prayerName: item.nameAr,
               voiceId: activePreSound.id,
               timestamp: preTs,
-              audioUrl: activePreSound.url,
+              audioUrl: preAudioUrl,
               type: 'pre-adhan',
               dateKey: dayKey,
               prayerKey,
@@ -1423,7 +1450,7 @@ function AppContent({
       }
     }
 
-    // Recurring background Salawat reminders (every 10, 30, or 60 minutes)
+    // Recurring background Salawat reminders (every 10, 30, or 60 minutes) — random among 3 voices
     if (settings.salawatReminderEnabled) {
       const intervalMin = settings.salawatIntervalMinutes || 10;
       const intervalMs = intervalMin * 60 * 1000;
@@ -1432,16 +1459,14 @@ function AppContent({
         1,
         Math.ceil((nowMs + 3000 - anchorMs) / intervalMs),
       );
-      const preferredSalawatTrack = resolveSalawatTrackById(
-        settings.preferredSalawatTrack,
-      );
       for (let idx = 0; idx < 48; idx++) {
         const slotIndex = firstFutureSlot + idx;
         const slotTs = anchorMs + slotIndex * intervalMs;
+        const randomIndex = Math.floor(
+          Math.random() * SALAWAT_AUDIO_TRACKS.length,
+        );
         const track =
-          idx === 0
-            ? preferredSalawatTrack
-            : SALAWAT_AUDIO_TRACKS[slotIndex % SALAWAT_AUDIO_TRACKS.length];
+          SALAWAT_AUDIO_TRACKS[randomIndex] || SALAWAT_AUDIO_TRACKS[0];
         alerts.push({
           tag: `salawat-${intervalMin}-${slotIndex}`,
           title: 'صلِّ على النبي ﷺ — تذكير',
@@ -1625,16 +1650,16 @@ function AppContent({
         const voice = resolveAdhanVoiceById(voiceId);
 
         showSystemNotification(
-          'البرنامج الإسلامي الذهبي — حان وقت الأذان',
+          `حان الآن وقت صلاة ${item.nameAr}`,
           alertMode === 'silent'
-            ? `حان الآن موعد أذان ${item.nameAr} (تنبيه صامت)`
-            : `حان الآن موعد أذان ${item.nameAr} (${voice.nameAr})`,
+            ? `حان الآن وقت صلاة ${item.nameAr} (تنبيه صامت)`
+            : `حان الآن وقت صلاة ${item.nameAr} (${voice.nameAr})`,
           exactKey,
         );
 
         if (alertMode === 'silent') {
           setAdhanBanner({
-            text: `حان الآن أذان ${item.nameAr}`,
+            text: `حان الآن وقت صلاة ${item.nameAr}`,
           });
         } else if (
           settings.ramadanCannonEnabled &&
@@ -1729,15 +1754,19 @@ function AppContent({
           !triggeredAlertsRef.current.has(preKey)
         ) {
           markAlertHandled(preKey);
+          const preAudioUrl = getPreAdhanAudioUrl(
+            settings.preferredPreAdhanSound,
+            prayerKey,
+          );
           setAdhanBanner({
-            text: `قربت صلاة ${item.nameAr} — متبقي ${settings.preAdhanMinutes} دقائق على الأذان (${activePreAdhanVoice.muezzinAr})`,
+            text: `اقتربت صلاة ${item.nameAr} — متبقي ${settings.preAdhanMinutes} دقيقة (${activePreAdhanVoice.nameAr})`,
           });
           showSystemNotification(
-            `قربت صلاة ${item.nameAr}`,
-            `تنبيه: متبقي ${settings.preAdhanMinutes} دقائق على أذان ${item.nameAr} (${activePreAdhanVoice.muezzinAr})`,
+            `اقتربت صلاة ${item.nameAr}`,
+            `اقتربت صلاة ${item.nameAr} — متبقي ${settings.preAdhanMinutes} دقيقة (${activePreAdhanVoice.nameAr})`,
             preKey,
           );
-          playManagedAudio(activePreAdhanVoice.url);
+          playManagedAudio(preAudioUrl);
         }
       }
 
@@ -1831,14 +1860,16 @@ function AppContent({
         ) {
           markAlertHandled(salawatKey);
           const track =
-            SALAWAT_AUDIO_TRACKS[currentSlot % SALAWAT_AUDIO_TRACKS.length];
+            SALAWAT_AUDIO_TRACKS[
+              Math.floor(Math.random() * SALAWAT_AUDIO_TRACKS.length)
+            ] || SALAWAT_AUDIO_TRACKS[0];
           showSystemNotification(
             'صلِّ على النبي ﷺ — تذكير',
             `${track.textAr} (${track.reciterAr})`,
             salawatKey,
           );
           setAdhanBanner({
-            text: `تذكير: صلِّ على النبي ﷺ · ${track.textAr}`,
+            text: `تذكير: صلِّ على النبي ﷺ · ${track.textAr} (${track.reciterAr})`,
             actionLabel: 'استماع للشيخ',
             onAction: () => playManagedAudio(track.url),
           });
@@ -1980,63 +2011,38 @@ function AppContent({
       );
       void cacheBatchUrls(coreAdhanUrls, undefined, 4);
     }
-    if (navigator.storage && typeof navigator.storage.persist === 'function') {
-      void navigator.storage.persist().catch(() => false);
-    }
-    if (typeof window !== 'undefined' && 'Notification' in window) {
-      try {
-        const perm = await Notification.requestPermission();
-        setNotifPermState(perm);
-        if (perm === 'granted' && 'serviceWorker' in navigator) {
-          const reg = await navigator.serviceWorker.ready;
-          const regWithSync = reg as ServiceWorkerRegistration & {
-            sync?: {register: (tag: string) => Promise<void>};
-            periodicSync?: {
-              register: (tag: string, opts: {minInterval: number}) => Promise<void>;
-            };
-          };
-          reg.active?.postMessage({type: 'CHECK_DUE_ADHAN_ALERTS'});
-          if (regWithSync.sync) {
-            await regWithSync.sync
-              .register('adhan-background-check')
-              .catch(() => {});
-          }
-          if (regWithSync.periodicSync) {
-            await regWithSync.periodicSync
-              .register('adhan-background-check', {
-                minInterval: 15 * 60 * 1000,
-              })
-              .catch(() => {});
-          }
+
+    setGpsLoading(true);
+    try {
+      const snap = await requestAllRealPermissions(({latitude, longitude}) => {
+        const nearest = findNearestCity(latitude, longitude);
+        setLocation({
+          latitude,
+          longitude,
+          city: nearest.city,
+          country: nearest.country,
+          isGps: true,
+        });
+        if (nearest.country === 'مصر') {
+          setSettings((s) => ({...s, calculationMethod: 'Egyptian'}));
         }
-      } catch {
-        // ignore notification errors
+      });
+      const liveNotif =
+        typeof window !== 'undefined' && 'Notification' in window
+          ? Notification.permission
+          : snap.notifications.status === 'granted'
+            ? 'granted'
+            : snap.notifications.status === 'denied'
+              ? 'denied'
+              : 'unsupported';
+      setNotifPermState(liveNotif);
+      if (snap.notifications.status === 'denied') {
+        setShowDeniedRecoveryDialog(true);
       }
+    } finally {
+      setGpsLoading(false);
     }
-    if ('geolocation' in navigator) {
-      setGpsLoading(true);
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          const {latitude, longitude} = pos.coords;
-          const nearest = findNearestCity(latitude, longitude);
-          setLocation({
-            latitude,
-            longitude,
-            city: nearest.city,
-            country: nearest.country,
-            isGps: true,
-          });
-          if (nearest.country === 'مصر') {
-            setSettings((s) => ({...s, calculationMethod: 'Egyptian'}));
-          }
-          setGpsLoading(false);
-        },
-        () => {
-          setGpsLoading(false);
-        },
-        {enableHighAccuracy: true, timeout: 10000, maximumAge: 300000},
-      );
-    }
+
     setSettings((s) => ({
       ...s,
       adhanEnabled: true,
@@ -2046,7 +2052,9 @@ function AppContent({
       iqamahEnabled: true,
       prayerConfirmReminderEnabled: true,
       salawatReminderEnabled: true,
-      preAdhanMinutes: s.preAdhanMinutes === 5 ? 5 : 10,
+      preAdhanMinutes: [10, 15, 30].includes(s.preAdhanMinutes)
+        ? s.preAdhanMinutes
+        : 10,
     }));
   }, [unlockAudioEngine, setLocation, setSettings]);
 
@@ -2326,7 +2334,10 @@ function AppContent({
 
   const showHomePermBanner =
     !permBannerDismissed &&
-    (notifPermState === 'default' || !location.isGps || !audioUnlocked);
+    (notifPermState === 'default' ||
+      notifPermState === 'denied' ||
+      !location.isGps ||
+      !audioUnlocked);
 
   const showPostSplashBgPermPrompt =
     !showSplash && !bgPromptDismissed && notifPermState === 'default';
@@ -2389,6 +2400,67 @@ function AppContent({
                   className="flex min-h-[46px] items-center justify-center rounded-2xl border border-[#C9A227]/45 bg-black px-3 text-xs font-bold text-zinc-300 active:scale-95"
                 >
                   لاحقًا
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {showDeniedRecoveryDialog && (
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="الإشعارات محظورة — افتح الإعدادات واسمح"
+            className="fixed inset-0 z-[9100] flex items-end justify-center bg-black/90 p-3 sm:items-center"
+          >
+            <div className="w-full max-w-md space-y-4 rounded-3xl border-2 border-red-500/70 bg-[#120707] p-5 text-white shadow-[0_0_48px_rgba(239,68,68,0.3)]">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-start gap-3">
+                  <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-red-500/70 bg-red-500/15 text-red-300">
+                    <BellRing className="h-5 w-5" />
+                  </span>
+                  <div className="space-y-1">
+                    <h2 className="text-sm font-extrabold text-red-200">
+                      ممنوع — الإشعارات محظورة من المتصفح
+                    </h2>
+                    <p className="text-xs leading-relaxed text-zinc-300">
+                      النظام منع نافذة السماح التلقائية لأن الإذن مرفوض مسبقاً. اتبع الخطوات لفتحه يدوياً:
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowDeniedRecoveryDialog(false)}
+                  aria-label="إغلاق"
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-zinc-700 bg-black text-zinc-300"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              <ol className="space-y-1.5 rounded-2xl border border-red-500/35 bg-black/70 p-3 text-xs leading-relaxed text-zinc-200">
+                {OPEN_SETTINGS_STEPS_AR.map((step, idx) => (
+                  <li key={idx}>{step}</li>
+                ))}
+              </ol>
+
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    void openNativeOrBrowserSettings();
+                  }}
+                  className="flex min-h-[46px] items-center justify-center gap-1.5 rounded-2xl bg-red-500 px-3 text-xs font-extrabold text-white active:scale-95"
+                >
+                  <Settings className="h-4 w-4" />
+                  <span>افتح الإعدادات واسمح</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowDeniedRecoveryDialog(false)}
+                  className="flex min-h-[46px] items-center justify-center rounded-2xl border border-zinc-700 bg-black px-3 text-xs font-bold text-zinc-300 active:scale-95"
+                >
+                  حسناً
                 </button>
               </div>
             </div>
@@ -2664,6 +2736,7 @@ function AppContent({
               onOpenMoreSubPage={handleOpenMoreSubPage}
               showPermBanner={showHomePermBanner}
               notifPermGranted={notifPermState === 'granted'}
+              notifPermStatus={notifPermState}
               onActivateAllPermissions={handleActivateAllPermissions}
               onDismissPermBanner={() => setPermBannerDismissed(true)}
             />
@@ -2895,8 +2968,8 @@ export default function App() {
       preAdhanMinutes:
         rawSettings?.preAdhanMinutes === 0
           ? 0
-          : rawSettings?.preAdhanMinutes === 5
-            ? 5
+          : [10, 15, 30].includes(rawSettings?.preAdhanMinutes ?? 10)
+            ? (rawSettings?.preAdhanMinutes ?? 10)
             : 10,
       preferredIqamah:
         rawSettings?.preferredIqamah &&

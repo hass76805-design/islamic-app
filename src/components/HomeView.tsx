@@ -68,6 +68,11 @@ import {
   subscribeOfflineDownloadState,
 } from '../utils/offlineAudioCache';
 
+import {
+  OPEN_SETTINGS_STEPS_AR,
+  openNativeOrBrowserSettings,
+} from '../utils/permissions';
+
 interface HomeViewProps {
   now: Date;
   location: UserLocation;
@@ -85,6 +90,7 @@ interface HomeViewProps {
   onOpenMoreSubPage: (sub: MoreSubPageId, storyCat?: StoryCategoryId) => void;
   showPermBanner?: boolean;
   notifPermGranted?: boolean;
+  notifPermStatus?: NotificationPermission | 'unsupported';
   onActivateAllPermissions?: () => Promise<void> | void;
   onDismissPermBanner?: () => void;
 }
@@ -115,9 +121,11 @@ export const HomeView: React.FC<HomeViewProps> = ({
   onOpenMoreSubPage,
   showPermBanner = false,
   notifPermGranted = false,
+  notifPermStatus = 'default',
   onActivateAllPermissions,
   onDismissPermBanner,
 }) => {
+  const [showPermGuide, setShowPermGuide] = useState(false);
   const [cityPickerOpen, setCityPickerOpen] = useState(false);
   const [citySearch, setCitySearch] = useState('');
   const [shareModalOpen, setShareModalOpen] = useState(false);
@@ -496,7 +504,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
 
   return (
     <div className="space-y-3">
-      {/* One-Tap Background Adhan & Permissions Android Card */}
+      {/* One-Tap Real Background Adhan & Permissions Card */}
       {showPermBanner && onActivateAllPermissions && (
         <section className="space-y-2.5 rounded-3xl border-2 border-[#C9A227] bg-[#0B0802] p-3.5 text-white">
           <div className="flex items-start justify-between gap-2">
@@ -508,9 +516,22 @@ export const HomeView: React.FC<HomeViewProps> = ({
                 <p className="text-xs font-extrabold text-[#FCE38A]">
                   تفعيل الأذان التلقائي والعمل في الخلفية
                 </p>
-                <p className="mt-0.5 text-[11px] leading-snug text-zinc-300">
-                  {location.isGps ? `GPS: ${location.city}` : location.city} ·{' '}
-                  {notifPermGranted ? 'الإشعارات مفعّلة ✓' : 'فعّل الإشعارات والهاتف مقفول'}
+                <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] leading-snug text-zinc-300">
+                  <span>
+                    {location.isGps ? `GPS: ${location.city}` : location.city}
+                  </span>
+                  <span>·</span>
+                  <span
+                    className={`rounded-md px-1.5 py-0.5 text-[10px] font-extrabold ${
+                      notifPermGranted
+                        ? 'bg-emerald-950/70 text-emerald-300'
+                        : 'bg-rose-950/80 text-rose-300'
+                    }`}
+                  >
+                    {notifPermGranted
+                      ? 'الإشعارات: مفعل ✓'
+                      : 'الإشعارات: غير مفعل - اضغط للتفعيل'}
+                  </span>
                 </p>
               </div>
             </div>
@@ -526,14 +547,36 @@ export const HomeView: React.FC<HomeViewProps> = ({
             )}
           </div>
 
-          <button
-            type="button"
-            onClick={() => void onActivateAllPermissions()}
-            className="flex min-h-[46px] w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-l from-[#FCE38A] via-[#C9A227] to-[#9A7415] px-4 text-xs font-extrabold text-black active:scale-[0.98]"
-          >
-            <Check className="h-4 w-4" />
-            <span>تفعيل الموقع والإشعارات والأذان بالخلفية</span>
-          </button>
+          {notifPermStatus === 'denied' ? (
+            <div className="space-y-2">
+              <button
+                type="button"
+                onClick={async () => {
+                  const opened = await openNativeOrBrowserSettings();
+                  if (!opened) setShowPermGuide((v) => !v);
+                }}
+                className="flex min-h-[46px] w-full items-center justify-center gap-2 rounded-2xl border border-rose-400 bg-rose-600 px-4 text-xs font-extrabold text-white active:scale-[0.98]"
+              >
+                <span>افتح الإعدادات واسمح بالإشعارات والموقع</span>
+              </button>
+              {showPermGuide && (
+                <div className="space-y-1 rounded-2xl border border-rose-500/40 bg-rose-950/40 p-2.5 text-[11px] leading-relaxed text-rose-100">
+                  {OPEN_SETTINGS_STEPS_AR.map((line) => (
+                    <p key={line}>{line}</p>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => void onActivateAllPermissions()}
+              className="flex min-h-[46px] w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-l from-[#FCE38A] via-[#C9A227] to-[#9A7415] px-4 text-xs font-extrabold text-black active:scale-[0.98]"
+            >
+              <Check className="h-4 w-4" />
+              <span>تفعيل الموقع والإشعارات والأذان بالخلفية</span>
+            </button>
+          )}
         </section>
       )}
 
