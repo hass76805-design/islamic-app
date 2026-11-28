@@ -209,7 +209,7 @@ export default defineConfig(() => {
       }),
       {
         name: 'copy-unbundled-src-assets',
-        apply: 'build',
+        apply: 'build' as const,
         closeBundle(error?: Error): void {
           if (error) {
             return;
@@ -220,6 +220,26 @@ export default defineConfig(() => {
           if (fs.existsSync(distDir) && fs.existsSync(srcAssets)) {
             fs.cpSync(srcAssets, distAssets, {recursive: true, force: true});
           }
+        },
+      },
+      {
+        name: 'disable-hmr-websocket-connect',
+        apply: 'serve' as const,
+        enforce: 'post' as const,
+        transform(code: string, id: string) {
+          if (
+            id.includes('vite/dist/client/client.mjs') &&
+            code.includes('transport.connect(createHMRHandler(handleMessage))')
+          ) {
+            return {
+              code: code.replace(
+                'transport.connect(createHMRHandler(handleMessage));',
+                '/* HMR WebSocket disabled */',
+              ),
+              map: null,
+            };
+          }
+          return null;
         },
       },
     ],
@@ -235,7 +255,8 @@ export default defineConfig(() => {
       sourcemap: false,
     },
     server: {
-      hmr: process.env.DISABLE_HMR !== 'true',
+      hmr: false as const,
+      ws: false as const,
       watch: process.env.DISABLE_HMR === 'true' ? null : {},
     },
   };

@@ -36,17 +36,20 @@ import {
   resolvePreAdhanVoiceById,
 } from '../data/reciters';
 import {
+  AppPermissionKey,
   formatShortPermissionBadgeAr,
+  INITIAL_REAL_PERMISSION_SNAPSHOT,
   OPEN_SETTINGS_STEPS_AR,
   openNativeOrBrowserSettings,
   readRealPermissionsSnapshot,
   RealPermissionSnapshot,
   requestAllRealPermissions,
+  requestPermissionByKey,
   requestRealBatteryPersistencePermission,
   requestRealExactAlarmPermission,
   requestRealLocationPermission,
   requestRealNotificationPermission,
-  requestRealWakeLockPermission,
+  requestRealOverlayPermission,
   subscribePermissionChanges,
 } from '../utils/permissions';
 import {
@@ -91,72 +94,8 @@ interface AdhanMuezzinViewProps {
 
 type MuezzinPageStep = 'permissions' | 'setup' | 'per_prayer';
 
-const INITIAL_PERM_SNAPSHOT: RealPermissionSnapshot = {
-  notifications: {
-    key: 'notifications',
-    status: 'prompt',
-    granted: false,
-    nameAr: 'إذن الإشعارات',
-    descAr: 'إرسال إشعار الأذان',
-    badgeLabelAr: 'غير مفعل',
-  },
-  backgroundAudio: {
-    key: 'backgroundAudio',
-    status: 'prompt',
-    granted: false,
-    nameAr: 'إذن الصوت في الخلفية',
-    descAr: 'استمرار الصوت',
-    badgeLabelAr: 'غير مفعل',
-  },
-  bootStartup: {
-    key: 'bootStartup',
-    status: 'prompt',
-    granted: false,
-    nameAr: 'إذن بدء التشغيل',
-    descAr: 'جدولة مواقيت الصلوات',
-    badgeLabelAr: 'غير مفعل',
-  },
-  doNotDisturb: {
-    key: 'doNotDisturb',
-    status: 'prompt',
-    granted: false,
-    nameAr: 'إذن عدم الإزعاج',
-    descAr: 'تجاوز الوضع الصامت',
-    badgeLabelAr: 'غير مفعل',
-  },
-  battery: {
-    key: 'battery',
-    status: 'prompt',
-    granted: false,
-    nameAr: 'إذن البطارية',
-    descAr: 'تجاهل التوفير',
-    badgeLabelAr: 'غير مفعل',
-  },
-  location: {
-    key: 'location',
-    status: 'prompt',
-    granted: false,
-    nameAr: 'إذن الموقع',
-    descAr: 'تحديد الإحداثيات',
-    badgeLabelAr: 'غير مفعل',
-  },
-  exactAlarm: {
-    key: 'exactAlarm',
-    status: 'prompt',
-    granted: false,
-    nameAr: 'إذن التنبيه الدقيق',
-    descAr: 'جدولة دقيقة',
-    badgeLabelAr: 'غير مفعل',
-  },
-  overlay: {
-    key: 'overlay',
-    status: 'prompt',
-    granted: false,
-    nameAr: 'إذن إبقاء الشاشة نشطة',
-    descAr: 'WakeLock',
-    badgeLabelAr: 'غير مفعل',
-  },
-};
+const INITIAL_PERM_SNAPSHOT: RealPermissionSnapshot =
+  INITIAL_REAL_PERMISSION_SNAPSHOT;
 
 const STEP_STORAGE_KEY = 'alzahabi_muezzin_step_v2';
 
@@ -274,8 +213,8 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
     };
   }, []);
 
-  const grantedCount = useMemo(
-    () => Object.values(permSnapshot).filter((item) => item.granted).length,
+  const allPermissionsGranted = useMemo(
+    () => Object.values(permSnapshot).every((item) => item.granted),
     [permSnapshot],
   );
   const hasDeniedPermission = useMemo(
@@ -629,12 +568,16 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
   };
 
   const grantOverlayPermission = async () => {
-    const res = await requestRealWakeLockPermission();
+    const res = await requestRealOverlayPermission();
     await refreshRealPerms();
     if (res === 'denied') {
       setShowSettingsGuide(true);
     } else if (res === 'granted') {
-      setStatusNote('تم تفعيل إبقاء الشاشة نشطة عند الأذان ✓');
+      setStatusNote('تم تفعيل الظهور فوق التطبيقات الأخرى ✓');
+    } else if (res === 'unsupported') {
+      setStatusNote(
+        'هذا الإذن خاص بتطبيق الأندرويد (Capacitor APK) ويفتح شاشة النظام على الهاتف',
+      );
     }
   };
 
@@ -644,27 +587,27 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
     try {
       const snap = await requestAllRealPermissions();
       setPermSnapshot(snap);
-      if (onActivateAdhanEngine) {
+      if (snap.notifications.granted && onActivateAdhanEngine) {
         await onActivateAdhanEngine();
       }
-      const nextCount = Object.values(snap).filter((v) => v.granted).length;
+      const allOk = Object.values(snap).every((v) => v.granted);
       const anyDenied = Object.values(snap).some(
         (v) => v.status === 'denied',
       );
       if (anyDenied) {
         setStatusNote(
-          `تم السماح بـ ${nextCount}/5 — توجد أذونات محظورة: اضغط «افتح الإعدادات واسمح»`,
+          'توجد أذونات محظورة من النظام — اضغط «افتح الإعدادات واسمح»',
         );
         setShowSettingsGuide(true);
-      } else if (nextCount === 5) {
-        setStatusNote('جميع الأذونات مسموحة بنجاح ✓');
+      } else if (allOk) {
+        setStatusNote('جميع الأذونات مسموحة من النظام بنجاح ✓');
         if (advanceStep) {
           setStep('setup');
           setStatusNote(null);
         }
       } else {
         setStatusNote(
-          `الحالة الحالية: ${nextCount}/5 مسموح — اضغط على الأذونات الحمراء لمنح الإذن من المتصفح`,
+          'تم تحديث الحالة الحقيقية من النظام — اضغط على أي إذن غير مفعل لطلب صلاحيته',
         );
       }
     } finally {
@@ -880,7 +823,7 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
                 : 'text-[#E8DCC8]/80'
             }`}
           >
-            ١. الأذونات ({grantedCount}/5)
+            ١. الأذونات
           </button>
           <button
             type="button"
@@ -910,37 +853,33 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
         <section className="space-y-3.5">
           <div className="rounded-3xl bg-[#0F2225] p-4 text-white">
             <h2 className="text-lg font-extrabold text-[#E8DCC8]">
-              الأذونات الحقيقية للنظام
+              الأذونات الحقيقية للنظام (Capacitor)
             </h2>
             <p className="mt-1 text-xs leading-relaxed text-[#E8DCC8]/85">
-              تُعرض هنا حالة الأذونات الفعلية في المتصفح والنظام دون أي تزييف — اضغط على أي إذن لفتح نافذة السماح الحقيقية
+              تُعرض هنا حالة أذونات النظام الحقيقية مباشرة — اضغط على أي إذن لفتح نافذة السماح الرسمية في أندرويد.
             </p>
 
-            {/* Counter + Real Progress Bar */}
-            <div className="mt-3 space-y-1.5">
-              <div className="flex items-center justify-between text-xs font-extrabold">
-                <span className="text-[#1FA47A]">
-                  الأذونات المسموحة {grantedCount}/5
-                </span>
-                <span className="font-mono-num text-[#E8DCC8]">
-                  {Math.round((grantedCount / 5) * 100)}%
-                </span>
-              </div>
-              <div className="h-2.5 w-full overflow-hidden rounded-full bg-white/15">
-                <div
-                  className="h-full rounded-full bg-gradient-to-l from-[#34D399] to-[#1FA47A] transition-all duration-300"
-                  style={{width: `${(grantedCount / 5) * 100}%`}}
-                />
-              </div>
+            <div className="mt-3 flex items-center justify-between rounded-2xl border border-white/15 bg-black/30 px-3 py-2 text-xs font-extrabold">
+              <span className="text-[#E8DCC8]">حالة النظام الحالية:</span>
+              <span
+                className={
+                  allPermissionsGranted ? 'text-[#34D399]' : 'text-amber-300'
+                }
+              >
+                {allPermissionsGranted
+                  ? 'جميع الأذونات مفعلة ✓'
+                  : 'يوجد أذونات بانتظار السماح'}
+              </span>
             </div>
           </div>
 
-          {/* 5 Permission Cards with Live Real Badges */}
+          {/* Permission Cards with Live Real Badges */}
           <div className="space-y-2.5">
             {permissionCards.map((item) => {
               const Icon = item.icon;
               const entry = permSnapshot[item.key];
               const isGranted = entry.granted;
+              const isUnsupported = entry.status === 'unsupported';
               const badgeText = formatShortPermissionBadgeAr(entry.status);
               return (
                 <div
@@ -948,7 +887,9 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
                   className={`flex items-center justify-between gap-2.5 rounded-2xl border p-3.5 text-white shadow ${
                     isGranted
                       ? 'border-[#1FA47A]/60 bg-[#0F2225]'
-                      : 'border-rose-500/60 bg-[#1B1012]'
+                      : isUnsupported
+                        ? 'border-amber-500/50 bg-[#1B160B]'
+                        : 'border-rose-500/60 bg-[#1B1012]'
                   }`}
                 >
                   <div className="flex min-w-0 flex-1 items-center gap-2.5">
@@ -964,7 +905,9 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
                       className={`inline-flex min-h-[38px] shrink-0 items-center justify-center rounded-xl px-3 text-[11px] font-extrabold transition active:scale-95 ${
                         isGranted
                           ? 'border border-[#1FA47A] bg-[#1FA47A]/20 text-[#34D399]'
-                          : 'border border-rose-400 bg-rose-600 text-white'
+                          : isUnsupported
+                            ? 'border border-amber-400/60 bg-amber-950/60 text-amber-200'
+                            : 'border border-rose-400 bg-rose-600 text-white'
                       }`}
                     >
                       {entry.status === 'denied'
@@ -986,7 +929,9 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
                     className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${
                       isGranted
                         ? 'bg-[#1FA47A]/20 text-[#34D399]'
-                        : 'bg-rose-500/20 text-rose-400'
+                        : isUnsupported
+                          ? 'bg-amber-500/20 text-amber-300'
+                          : 'bg-rose-500/20 text-rose-400'
                     }`}
                   >
                     <Icon className="h-5 w-5" />
@@ -1022,11 +967,11 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
               className="flex min-h-[52px] w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-l from-[#24B98A] via-[#1FA47A] to-[#137A59] text-base font-extrabold text-white shadow-lg active:scale-[0.99] disabled:opacity-70"
             >
               <span>
-                {grantingAll ? 'جاري طلب الأذونات...' : 'اطلب كل الأذونات وتفعيل'}
+                {grantingAll ? 'جاري فتح نوافذ الأذونات...' : 'اطلب كل الأذونات'}
               </span>
             </button>
 
-            {grantedCount < 5 && (
+            {!allPermissionsGranted && (
               <button
                 type="button"
                 onClick={() => setStep('setup')}
@@ -1714,7 +1659,9 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
                       </span>
                     </p>
                     <p className="text-[10px] text-[#E8DCC8]/70">
-                      الأذونات الحقيقية المسموحة حاليًا: {grantedCount}/5
+                      {allPermissionsGranted
+                        ? 'جميع أذونات النظام مفعلة ✓'
+                        : 'اضغط على أي إذن غير مفعل لطلب الصلاحية من النظام'}
                     </p>
                   </div>
                   <button
@@ -1732,31 +1679,51 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
                 <div className="space-y-1.5 text-[11px] font-bold">
                   {(
                     [
-                      {key: 'notifications' as const, label: 'إذن الإشعارات'},
-                      {key: 'backgroundAudio' as const, label: 'إذن الصوت في الخلفية'},
-                      {key: 'bootStartup' as const, label: 'إذن بدء التشغيل'},
-                      {key: 'doNotDisturb' as const, label: 'إذن عدم الإزعاج'},
-                      {key: 'battery' as const, label: 'إذن البطارية'},
-                      {key: 'location' as const, label: 'إذن الموقع (GPS)'},
+                      {key: 'notifications' as AppPermissionKey, label: 'إذن الإشعارات'},
+                      {key: 'location' as AppPermissionKey, label: 'إذن الموقع (GPS)'},
+                      {key: 'exactAlarm' as AppPermissionKey, label: 'إذن المنبه الدقيق'},
+                      {key: 'battery' as AppPermissionKey, label: 'تجاهل توفير البطارية'},
+                      {key: 'overlay' as AppPermissionKey, label: 'العرض فوق التطبيقات'},
+                      {key: 'doNotDisturb' as AppPermissionKey, label: 'تجاوز عدم الإزعاج'},
                     ]
                   ).map((item) => {
                     const st = permSnapshot[item.key];
                     const isGranted = st?.granted;
+                    const badgeLabel = st
+                      ? formatShortPermissionBadgeAr(st.status)
+                      : 'غير مفعل';
                     return (
                       <div
                         key={item.key}
-                        className="flex items-center justify-between rounded-xl bg-black/40 px-2.5 py-1.5"
+                        className="flex items-center justify-between gap-2 rounded-xl bg-black/40 px-2.5 py-1.5"
                       >
                         <span className="text-[#E8DCC8]">{item.label}</span>
-                        <span
-                          className={`rounded-lg px-2 py-0.5 text-[10px] font-extrabold ${
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            if (st?.status === 'denied') {
+                              await handleOpenSettingsRecovery();
+                            } else {
+                              if (item.key === 'location') {
+                                onRequestGps();
+                              }
+                              const res = await requestPermissionByKey(item.key);
+                              if (res === 'denied') {
+                                setShowSettingsGuide(true);
+                              }
+                              await refreshRealPerms();
+                            }
+                          }}
+                          className={`rounded-lg px-2 py-1 text-[10px] font-extrabold active:scale-95 ${
                             isGranted
                               ? 'bg-emerald-600 text-white'
-                              : 'bg-red-600 text-white animate-pulse'
+                              : st?.status === 'unsupported'
+                                ? 'bg-amber-900/70 text-amber-200'
+                                : 'bg-red-600 text-white'
                           }`}
                         >
-                          {isGranted ? 'مفعل ✓' : 'غير مفعل'}
-                        </span>
+                          {badgeLabel}
+                        </button>
                       </div>
                     );
                   })}
@@ -1772,8 +1739,8 @@ export const AdhanMuezzinView: React.FC<AdhanMuezzinViewProps> = ({
                     <ShieldCheck className="h-4 w-4" />
                     <span>
                       {grantingAll
-                        ? 'جاري طلب الأذونات...'
-                        : 'اطلب كل الأذونات الحقيقية الآن'}
+                        ? 'جاري فتح نوافذ الأذونات...'
+                        : 'اطلب كل الأذونات'}
                     </span>
                   </button>
 

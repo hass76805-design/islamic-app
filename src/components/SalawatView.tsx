@@ -29,6 +29,7 @@ import {
 import {
   OPEN_SETTINGS_STEPS_AR,
   openNativeOrBrowserSettings,
+  readRealPermissionsSnapshot,
   requestRealNotificationPermission,
   subscribePermissionChanges,
 } from '../utils/permissions';
@@ -293,18 +294,22 @@ export const SalawatView: React.FC<SalawatViewProps> = ({
   const lastTapRef = useRef(0);
 
   useEffect(() => {
+    let active = true;
     const sync = () => {
       setPlayingTrackId(sharedPlayingTrackId);
       setContinuousLoop(sharedLoopEnabled);
     };
+    const syncPerm = () => {
+      void readRealPermissionsSnapshot().then((snap) => {
+        if (active) setNotifStatus(snap.notifications.status);
+      });
+    };
     sharedListeners.add(sync);
     sync();
-    const unsubPerms = subscribePermissionChanges(() => {
-      if (typeof Notification !== 'undefined') {
-        setNotifStatus(Notification.permission);
-      }
-    });
+    syncPerm();
+    const unsubPerms = subscribePermissionChanges(syncPerm);
     return () => {
+      active = false;
       sharedListeners.delete(sync);
       unsubPerms();
     };

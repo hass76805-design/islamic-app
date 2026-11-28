@@ -109,6 +109,7 @@ import {
   OPEN_SETTINGS_STEPS_AR,
   getOrCreateGlobalAudioContext,
   openNativeOrBrowserSettings,
+  readRealPermissionsSnapshot,
   requestAllRealPermissions,
   setSessionAudioUnlocked,
   subscribePermissionChanges,
@@ -367,13 +368,35 @@ function AppContent({
   });
 
   useEffect(() => {
-    const syncNotif = () => {
-      if (typeof window !== 'undefined' && 'Notification' in window) {
-        setNotifPermState(Notification.permission);
+    let active = true;
+    const syncNotif = async () => {
+      try {
+        const snap = await readRealPermissionsSnapshot();
+        if (!active) return;
+        const nStatus = snap.notifications.status;
+        setNotifPermState(
+          nStatus === 'granted'
+            ? 'granted'
+            : nStatus === 'denied'
+              ? 'denied'
+              : nStatus === 'unsupported'
+                ? 'unsupported'
+                : 'default',
+        );
+      } catch {
+        if (typeof window !== 'undefined' && 'Notification' in window) {
+          setNotifPermState(Notification.permission);
+        }
       }
     };
-    syncNotif();
-    return subscribePermissionChanges(syncNotif);
+    void syncNotif();
+    const unsub = subscribePermissionChanges(() => {
+      void syncNotif();
+    });
+    return () => {
+      active = false;
+      unsub();
+    };
   }, []);
 
   const [bookmarks, setBookmarks] = useLocalStorage<QuranBookmark[]>(
@@ -2027,14 +2050,14 @@ function AppContent({
           setSettings((s) => ({...s, calculationMethod: 'Egyptian'}));
         }
       });
-      const liveNotif =
-        typeof window !== 'undefined' && 'Notification' in window
-          ? Notification.permission
-          : snap.notifications.status === 'granted'
-            ? 'granted'
-            : snap.notifications.status === 'denied'
-              ? 'denied'
-              : 'unsupported';
+      const liveNotif: NotificationPermission | 'unsupported' =
+        snap.notifications.status === 'granted'
+          ? 'granted'
+          : snap.notifications.status === 'denied'
+            ? 'denied'
+            : snap.notifications.status === 'unsupported'
+              ? 'unsupported'
+              : 'default';
       setNotifPermState(liveNotif);
       if (snap.notifications.status === 'denied') {
         setShowDeniedRecoveryDialog(true);

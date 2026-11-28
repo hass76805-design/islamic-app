@@ -46,19 +46,14 @@ import {
   UserLocation,
 } from '../types';
 import {
+  AppPermissionKey,
   formatShortPermissionBadgeAr,
   OPEN_SETTINGS_STEPS_AR,
   openNativeOrBrowserSettings,
   readRealPermissionsSnapshot,
   RealPermissionSnapshot,
   requestAllRealPermissions,
-  requestRealBatteryPersistencePermission,
-  requestRealBackgroundAudioPermission,
-  requestRealBootStartupPermission,
-  requestRealDoNotDisturbPermission,
-  requestRealLocationPermission,
-  requestRealNotificationPermission,
-  requestRealWakeLockPermission,
+  requestPermissionByKey,
   subscribePermissionChanges,
 } from '../utils/permissions';
 import {CALCULATION_METHODS} from '../utils/prayerTimes';
@@ -366,60 +361,26 @@ export const MoreView: React.FC<MoreViewProps> = ({
                 <div className="space-y-2 text-xs font-bold">
                   {(
                     [
-                      {
-                        key: 'notifications' as const,
-                        label: 'إذن الإشعارات',
-                        onReq: requestRealNotificationPermission,
-                      },
-                      {
-                        key: 'backgroundAudio' as const,
-                        label: 'إذن الصوت في الخلفية',
-                        onReq: async () => {
-                          await requestRealBackgroundAudioPermission();
-                          if (onActivateAdhanEngine) {
-                            await onActivateAdhanEngine();
-                          }
-                        },
-                      },
-                      {
-                        key: 'bootStartup' as const,
-                        label: 'إذن التشغيل عند بدء التشغيل',
-                        onReq: requestRealBootStartupPermission,
-                      },
-                      {
-                        key: 'doNotDisturb' as const,
-                        label: 'إذن عدم الإزعاج وتجاوز الصامت',
-                        onReq: requestRealDoNotDisturbPermission,
-                      },
-                      {
-                        key: 'battery' as const,
-                        label: 'إذن البطارية وتجاهل التوفير',
-                        onReq: requestRealBatteryPersistencePermission,
-                      },
-                      {
-                        key: 'location' as const,
-                        label: 'إذن الموقع الجغرافي (GPS)',
-                        onReq: async () => {
-                          onRequestGps();
-                          return requestRealLocationPermission();
-                        },
-                      },
-                      {
-                        key: 'overlay' as const,
-                        label: 'إذن إبقاء الشاشة نشطة',
-                        onReq: requestRealWakeLockPermission,
-                      },
-                    ]
-                  ).map((item) => {
-                    const st = permSnap[item.key];
+                      'notifications',
+                      'location',
+                      'exactAlarm',
+                      'battery',
+                      'overlay',
+                      'doNotDisturb',
+                    ] as AppPermissionKey[]
+                  ).map((key) => {
+                    const st = permSnap[key];
                     const isGranted = st?.granted;
+                    const badgeLabel = st
+                      ? formatShortPermissionBadgeAr(st.status)
+                      : 'غير مفعل - اضغط للتفعيل';
                     return (
                       <div
-                        key={item.key}
+                        key={key}
                         className="flex items-center justify-between gap-2 rounded-2xl border border-[#C9A227]/30 bg-black/40 p-2.5 text-right"
                       >
                         <span className="text-xs font-extrabold text-white">
-                          {item.label}
+                          {st?.nameAr || key}
                         </span>
                         <button
                           type="button"
@@ -428,17 +389,32 @@ export const MoreView: React.FC<MoreViewProps> = ({
                               const opened = await openNativeOrBrowserSettings();
                               if (!opened) setShowPermSteps(true);
                             } else {
-                              await item.onReq();
+                              if (key === 'location') {
+                                onRequestGps();
+                              }
+                              const res = await requestPermissionByKey(key);
+                              if (
+                                res === 'granted' &&
+                                key === 'notifications' &&
+                                onActivateAdhanEngine
+                              ) {
+                                await onActivateAdhanEngine();
+                              }
+                              if (res === 'denied') {
+                                setShowPermSteps(true);
+                              }
                               setPermSnap(await readRealPermissionsSnapshot());
                             }
                           }}
-                          className={`min-h-[38px] rounded-xl px-3 text-xs font-extrabold transition active:scale-95 ${
+                          className={`min-h-[38px] shrink-0 rounded-xl px-3 text-xs font-extrabold transition active:scale-95 ${
                             isGranted
                               ? 'bg-emerald-600 text-white shadow-[0_0_12px_rgba(16,185,129,0.3)]'
-                              : 'bg-red-600 text-white animate-pulse shadow-[0_0_12px_rgba(239,68,68,0.4)]'
+                              : st?.status === 'unsupported'
+                                ? 'border border-amber-500/50 bg-amber-950/60 text-amber-200'
+                                : 'bg-red-600 text-white shadow-[0_0_12px_rgba(239,68,68,0.4)]'
                           }`}
                         >
-                          {isGranted ? 'مفعل ✓' : 'غير مفعل - اضغط للتفعيل'}
+                          {badgeLabel}
                         </button>
                       </div>
                     );
@@ -454,7 +430,7 @@ export const MoreView: React.FC<MoreViewProps> = ({
                   try {
                     const next = await requestAllRealPermissions();
                     setPermSnap(next);
-                    if (onActivateAdhanEngine) {
+                    if (next.notifications.granted && onActivateAdhanEngine) {
                       await onActivateAdhanEngine();
                     }
                     if (
@@ -471,8 +447,8 @@ export const MoreView: React.FC<MoreViewProps> = ({
                 <ShieldCheck className="h-4 w-4" />
                 <span>
                   {requestingPerms
-                    ? 'جاري طلب الأذونات...'
-                    : 'اطلب كل الأذونات الآن'}
+                    ? 'جاري فتح نوافذ أذونات النظام...'
+                    : 'اطلب كل الأذونات'}
                 </span>
               </button>
 
